@@ -12,7 +12,6 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use presto_server::auth::{Auth, Capability};
-use presto_server::registry::SessionRegistry;
 use presto_server::{AppState, app};
 
 type Ws =
@@ -25,10 +24,7 @@ struct Server {
 
 async fn spawn_server() -> Server {
     let auth = Arc::new(Auth::generate());
-    let state = AppState {
-        registry: SessionRegistry::new(),
-        auth: auth.clone(),
-    };
+    let state = AppState::in_memory(auth.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

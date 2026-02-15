@@ -21,6 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 parking_lot = "0.12.5"
 biscuit-auth = "6.0.0"
+async-trait = "0.1.89"
 
 [dev-dependencies]
 futures-util = "0.3.32"
