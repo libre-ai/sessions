@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/server"]
+members = ["crates/core", "crates/rag", "crates/server"]
 
 [workspace.package]
 edition = "2024"
@@ -11,7 +11,10 @@ repository = "https://github.com/constantin-jais/Presto-Matic"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 presto-core = { path = "crates/core" }
+presto-rag = { path = "crates/rag" }
 
 [profile.release]
 strip = true
