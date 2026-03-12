@@ -87,7 +87,6 @@ async fn sustains_200_participants_under_200ms_p99() {
                                 let ans = ClientMessage::SubmitAnswer {
                                     question_id: qid,
                                     choice: 0,
-                                    elapsed_ms: 500,
                                 };
                                 let _ = ws
                                     .send(Message::text(serde_json::to_string(&ans).unwrap()))

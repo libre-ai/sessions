@@ -89,6 +89,20 @@ async fn handle_socket(
         }
     }
 
+    // Late join / reconnect: deliver the currently open question, if any, so a
+    // participant who connects mid-question is in sync rather than waiting for
+    // the next broadcast.
+    if let Ok(Some(question)) = state.store.snapshot(&session_id).await
+        && socket
+            .send(Message::Text(to_text(&ServerMessage::QuestionOpened {
+                question,
+            })))
+            .await
+            .is_err()
+    {
+        return;
+    }
+
     loop {
         tokio::select! {
             incoming = socket.recv() => {
@@ -171,10 +185,9 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
         ClientMessage::SubmitAnswer {
             question_id: _,
             choice,
-            elapsed_ms,
         } => match state
             .store
-            .submit_answer(session_id, pid, choice, elapsed_ms)
+            .submit_answer(session_id, pid, choice, now_ms())
             .await
         {
             Ok(()) => broadcast(ServerMessage::AnswerReceived {
@@ -234,10 +247,21 @@ async fn push_question(
     question: presto_core::protocol::Question,
 ) -> Applied {
     let public = question.public();
-    match state.store.push_question(session_id, &question).await {
+    match state
+        .store
+        .push_question(session_id, &question, now_ms())
+        .await
+    {
         Ok(()) => broadcast(ServerMessage::QuestionOpened { question: public }),
         Err(e) => reply(ServerMessage::Error {
             reason: e.to_string(),
         }),
     }
+}
+
+/// Server clock in epoch milliseconds, the authority for answer timing.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }

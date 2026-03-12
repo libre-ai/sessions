@@ -113,7 +113,7 @@ async fn cross_instance_scoring_is_correct() {
     // Participant on B receives it and answers correctly (recorded in shared Postgres).
     recv_until(&mut p1, "question_opened").await;
     p1.send(Message::text(
-        r#"{"type":"submit_answer","question_id":"q1","choice":1,"elapsed_ms":1000}"#.to_string(),
+        r#"{"type":"submit_answer","question_id":"q1","choice":1}"#.to_string(),
     ))
     .await
     .unwrap();
