@@ -48,6 +48,17 @@ async fn recv_until(ws: &mut Ws, kind: &str) -> Value {
 }
 
 #[tokio::test]
+async fn joining_an_unknown_session_is_rejected() {
+    let addr = spawn().await;
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/sessions/NOPE42/participants"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn http_session_api_drives_a_full_round() {
     let addr = spawn().await;
     let base = format!("http://{addr}");

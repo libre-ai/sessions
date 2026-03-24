@@ -71,6 +71,9 @@ pub trait SessionStore: Send + Sync {
     /// The currently open question (public projection), for a participant joining
     /// or reconnecting mid-question.
     async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>>;
+    /// Whether the session exists (so a participant token is only minted for a
+    /// real session).
+    async fn exists(&self, session_id: &str) -> StoreResult<bool>;
     /// Score the round and return the leaderboard + heatmap; enters `Revealed`.
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult>;
 }
@@ -145,6 +148,10 @@ impl SessionStore for InMemorySessionStore {
 
     async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>> {
         Ok(self.get_or_create(session_id, "").lock().open_question())
+    }
+
+    async fn exists(&self, session_id: &str) -> StoreResult<bool> {
+        Ok(self.sessions.lock().contains_key(session_id))
     }
 
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {

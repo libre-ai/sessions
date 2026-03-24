@@ -75,6 +75,15 @@ pub(crate) async fn join_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Envelope<JoinedSession>>, StatusCode> {
+    // Only mint a token for a real session (no tokens for arbitrary ids).
+    if !state
+        .store
+        .exists(&session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let participant_id = format!("p-{}", code(6));
     let participant_token = state
         .auth

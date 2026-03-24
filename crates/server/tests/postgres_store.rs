@@ -41,6 +41,8 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
     let s = format!("pgt-{nanos}");
 
     store.ensure(&s, "host").await.unwrap();
+    assert!(store.exists(&s).await.unwrap());
+    assert!(!store.exists("no-such-session").await.unwrap());
     store.join(&s, "p1", "Alice").await.unwrap();
     store.join(&s, "p2", "Bob").await.unwrap();
 

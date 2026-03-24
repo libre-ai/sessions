@@ -3,6 +3,17 @@
 //! the [`SessionStore`](crate::store) async operations (in-memory or Postgres),
 //! then fan out via the [`Fanout`](crate::fanout) seam (tokio broadcast today,
 //! Redis across instances).
+//!
+//! # Token transport & CSWSH
+//!
+//! Browsers cannot set headers on a WebSocket, so the token rides in the query
+//! string. This is acceptable because: it is a **short-TTL, session-scoped
+//! capability** (not a long-lived credential or cookie); deployments serve over
+//! **wss://** (TLS encrypts the URL in transit) and must not log WS URLs with
+//! their query string. The token being the capability also covers cross-site
+//! hijacking (CSWSH): an attacker on another origin cannot connect without the
+//! token. Future hardening: pass the token via `Sec-WebSocket-Protocol` (needs a
+//! token-charset-safe encoding) and add an optional `ALLOWED_ORIGIN` allowlist.
 
 use std::time::SystemTime;
 

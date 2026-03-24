@@ -215,6 +215,15 @@ impl SessionStore for PostgresSessionStore {
         Ok(self.current_question(session_id).await?.map(|q| q.public()))
     }
 
+    async fn exists(&self, session_id: &str) -> StoreResult<bool> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM presto_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(count > 0)
+    }
+
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {
         let Some(question) = self.current_question(session_id).await? else {
             return Err(StoreError::Session(SessionError::NoQuestion));
