@@ -83,6 +83,11 @@ pub enum ClientMessage {
     },
     /// Host reveals answers and the leaderboard (host-only).
     Reveal,
+    /// Host opens a grounded clarification for a confused source section
+    /// (retrieve → clarify; host-only).
+    Breakout {
+        section_id: String,
+    },
     Ping,
 }
 
@@ -105,6 +110,11 @@ pub enum ServerMessage {
         leaderboard: Vec<LeaderboardEntry>,
         /// Per source-section confusion ratio in `[0.0, 1.0]`.
         heatmap: BTreeMap<String, f32>,
+    },
+    /// A grounded clarification of a confused source section (the breakout).
+    BreakoutOpened {
+        section_id: String,
+        explanation: String,
     },
     Error {
         reason: String,

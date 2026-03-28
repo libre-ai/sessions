@@ -6,6 +6,7 @@
 
 use presto_core::protocol::Question;
 
+use crate::clarify::clarify;
 use crate::corpus::{Chunk, Retriever};
 use crate::generate::generate_from_chunk;
 use crate::provider::AiProvider;
@@ -56,6 +57,17 @@ pub async fn grounded_question(
         .next()
 }
 
+/// A grounded clarification (breakout) for a confused source section, or `None`
+/// if the section is not in the corpus or clarification fails.
+pub async fn grounded_breakout(
+    section_id: &str,
+    retriever: &dyn Retriever,
+    provider: &dyn AiProvider,
+) -> Option<String> {
+    let chunk = retriever.fetch_section(section_id).await.ok()??;
+    clarify(&chunk, provider).await.ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +89,17 @@ mod tests {
             _provider: &dyn AiProvider,
         ) -> Result<Vec<Retrieved>, CorpusError> {
             Ok(self.chunks.iter().take(k).cloned().collect())
+        }
+
+        async fn fetch_section(&self, section_id: &str) -> Result<Option<Chunk>, CorpusError> {
+            Ok(self
+                .chunks
+                .iter()
+                .find(|c| c.source_section_id == section_id)
+                .map(|c| Chunk {
+                    source_section_id: c.source_section_id.clone(),
+                    text: c.text.clone(),
+                }))
         }
     }
 
@@ -152,6 +175,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn breakout_clarifies_a_known_section() {
+        let provider = PipelineFake {
+            verifier_supports: true,
+        };
+        let out = grounded_breakout("d#p0", &retriever(), &provider).await;
+        assert!(out.is_some_and(|s| !s.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn breakout_is_none_for_an_unknown_section() {
+        let provider = PipelineFake {
+            verifier_supports: true,
+        };
+        assert!(
+            grounded_breakout("nope#p9", &retriever(), &provider)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn skips_questions_when_verifier_returns_malformed_json() {
         struct MalformedVerifierFake;
         #[async_trait]
@@ -167,6 +211,10 @@ mod tests {
                     text: "test".into(),
                     distance: 0.0,
                 }])
+            }
+
+            async fn fetch_section(&self, _section_id: &str) -> Result<Option<Chunk>, CorpusError> {
+                Ok(None)
             }
         }
 

@@ -95,6 +95,9 @@ pub trait Retriever: Send + Sync {
         k: usize,
         provider: &dyn AiProvider,
     ) -> Result<Vec<Retrieved>, CorpusError>;
+
+    /// Fetch a chunk by its exact source-section id (for grounded breakouts).
+    async fn fetch_section(&self, section_id: &str) -> Result<Option<Chunk>, CorpusError>;
 }
 
 /// Corpus storage in Postgres + pgvector.
@@ -190,6 +193,20 @@ impl Retriever for CorpusStore {
                 distance: r.get::<f64, _>("distance") as f32,
             })
             .collect())
+    }
+
+    async fn fetch_section(&self, section_id: &str) -> Result<Option<Chunk>, CorpusError> {
+        let row = sqlx::query(
+            "SELECT source_section_id, text FROM presto_chunks \
+             WHERE source_section_id = $1 LIMIT 1",
+        )
+        .bind(section_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| Chunk {
+            source_section_id: r.get("source_section_id"),
+            text: r.get("text"),
+        }))
     }
 }
 

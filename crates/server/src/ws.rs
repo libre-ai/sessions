@@ -240,6 +240,20 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
                 }),
             }
         }
+        ClientMessage::Breakout { section_id } => {
+            if !is_host {
+                return reply(host_only());
+            }
+            match state.breakout.breakout(&section_id).await {
+                Some(explanation) => broadcast(ServerMessage::BreakoutOpened {
+                    section_id,
+                    explanation,
+                }),
+                None => reply(ServerMessage::Error {
+                    reason: "no breakout available for that section".into(),
+                }),
+            }
+        }
         ClientMessage::Ping => reply(ServerMessage::Pong),
     }
 }

@@ -12,6 +12,7 @@ const postJSON = (path) => fetch(path, { method: "POST" }).then((r) => r.json())
 let ws;
 let sessionId;
 let currentQid;
+let isHost = false;
 
 function wsUrl(token, name) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -40,6 +41,9 @@ function onMessage(m) {
       break;
     case "answers_revealed":
       renderLeaderboard(m);
+      break;
+    case "breakout_opened":
+      renderBreakout(m);
       break;
     case "error":
       log("erreur : " + m.reason);
@@ -75,10 +79,29 @@ function renderLeaderboard(m) {
     li.textContent = `${e.name || e.participant_id} — ${e.score}`;
     board.appendChild(li);
   });
+
+  // The host can open a grounded breakout for any confused section.
+  const heatmap = $("#heatmap");
+  heatmap.innerHTML = "";
+  if (isHost && m.heatmap) {
+    Object.entries(m.heatmap).forEach(([section, confusion]) => {
+      const b = document.createElement("button");
+      b.textContent = `Clarifier ${section} (confusion ${Math.round(confusion * 100)}%)`;
+      b.onclick = () => ws.send(JSON.stringify({ type: "breakout", section_id: section }));
+      heatmap.appendChild(b);
+    });
+  }
+}
+
+function renderBreakout(m) {
+  show("breakout");
+  $("#breakout-section").textContent = m.section_id;
+  $("#breakout-text").textContent = m.explanation;
 }
 
 async function createSession() {
   const { data } = await postJSON("/sessions");
+  isHost = true;
   sessionId = data.session_id;
   $("#code").textContent = data.session_id;
   const a = $("#joinlink");

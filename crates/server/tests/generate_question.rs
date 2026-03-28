@@ -69,6 +69,16 @@ impl Retriever for MockRetriever {
             distance: 0.0,
         }])
     }
+
+    async fn fetch_section(
+        &self,
+        section_id: &str,
+    ) -> Result<Option<presto_rag::corpus::Chunk>, CorpusError> {
+        Ok((section_id == "doc#p0").then(|| presto_rag::corpus::Chunk {
+            source_section_id: "doc#p0".into(),
+            text: "The sky is blue.".into(),
+        }))
+    }
 }
 
 /// Mock AI provider: simulates generation and verification responses.
@@ -106,6 +116,7 @@ async fn spawn(quiz: Arc<dyn QuizSource>, auth: Arc<Auth>) -> std::net::SocketAd
         fanout: Arc::new(BroadcastFanout::new()),
         auth,
         quiz,
+        breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -412,4 +423,65 @@ async fn generated_question_preserves_correct_choice_through_reveal() {
     // Verify the leaderboard is populated.
     assert_eq!(revealed["leaderboard"][0]["participant_id"], "p1");
     assert!(revealed["leaderboard"][0]["score"].as_u64().unwrap() >= 500);
+}
+
+#[tokio::test]
+async fn host_breakout_reaches_participants() {
+    let auth = Arc::new(Auth::generate());
+    let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
+    let session = "s-breakout";
+    let host_token = auth
+        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .unwrap();
+    let p_token = auth
+        .mint(
+            session,
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(600),
+        )
+        .unwrap();
+
+    let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
+        .await
+        .unwrap();
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // The host opens a grounded breakout for a confused section; participants get it.
+    host.send(Message::text(
+        r#"{"type":"breakout","section_id":"doc#p0"}"#.to_string(),
+    ))
+    .await
+    .unwrap();
+    let bo = recv_until(&mut p1, "breakout_opened").await;
+    assert_eq!(bo["section_id"], "doc#p0");
+    assert!(bo["explanation"].as_str().unwrap().contains("doc#p0"));
+}
+
+#[tokio::test]
+async fn participant_cannot_open_a_breakout() {
+    let auth = Arc::new(Auth::generate());
+    let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
+    let session = "s-breakout2";
+    let p_token = auth
+        .mint(
+            session,
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(600),
+        )
+        .unwrap();
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+        .await
+        .unwrap();
+    p1.send(Message::text(
+        r#"{"type":"breakout","section_id":"doc#p0"}"#.to_string(),
+    ))
+    .await
+    .unwrap();
+    let err = recv_until(&mut p1, "error").await;
+    assert_eq!(err["reason"], "host only");
 }

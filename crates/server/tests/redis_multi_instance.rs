@@ -28,6 +28,7 @@ async fn instance(url: &str, auth: Arc<Auth>) -> SocketAddr {
         fanout,
         auth,
         quiz: Arc::new(presto_server::quiz::FixtureQuizSource),
+        breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

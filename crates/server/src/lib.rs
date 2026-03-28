@@ -24,30 +24,32 @@ use axum::routing::{get, post};
 
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
-use quiz::{FixtureQuizSource, QuizSource};
+use quiz::{BreakoutSource, FixtureBreakoutSource, FixtureQuizSource, QuizSource};
 use store::{InMemorySessionStore, SessionStore};
 
 /// Shared application state: the session-state store, the fanout, the token
-/// authority, and the quiz source. The store/fanout/quiz are trait objects so a
-/// deployment chooses single-instance (in-memory) or multi-instance
-/// (Redis/Postgres), and fixture or RAG-backed questions, at startup.
+/// authority, and the quiz/breakout content sources. The trait objects let a
+/// deployment choose single- vs multi-instance (Redis/Postgres) and fixture vs
+/// RAG-backed content at startup.
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn SessionStore>,
     pub fanout: Arc<dyn Fanout>,
     pub auth: Arc<Auth>,
     pub quiz: Arc<dyn QuizSource>,
+    pub breakout: Arc<dyn BreakoutSource>,
 }
 
 impl AppState {
     /// Single-instance state: in-memory store + tokio-broadcast fanout +
-    /// fixture-backed quiz (no AI provider or corpus required).
+    /// fixture-backed content (no AI provider or corpus required).
     pub fn in_memory(auth: Arc<Auth>) -> Self {
         Self {
             store: Arc::new(InMemorySessionStore::new()),
             fanout: Arc::new(BroadcastFanout::new()),
             auth,
             quiz: Arc::new(FixtureQuizSource),
+            breakout: Arc::new(FixtureBreakoutSource),
         }
     }
 }
