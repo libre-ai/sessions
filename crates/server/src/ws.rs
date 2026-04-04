@@ -254,6 +254,21 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
                 }),
             }
         }
+        ClientMessage::Flashcards => match state.store.mastery(session_id, pid).await {
+            Ok(mastery) => {
+                // Weak = scored below 60% on a section that was actually answered.
+                let weak: Vec<String> = mastery
+                    .into_iter()
+                    .filter(|m| m.total > 0 && (m.correct as f32) / (m.total as f32) < 0.6)
+                    .map(|m| m.section_id)
+                    .collect();
+                let cards = state.flashcards.deck(&weak).await;
+                reply(ServerMessage::FlashcardsReady { cards })
+            }
+            Err(e) => reply(ServerMessage::Error {
+                reason: e.to_string(),
+            }),
+        },
         ClientMessage::Ping => reply(ServerMessage::Pong),
     }
 }

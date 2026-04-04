@@ -65,6 +65,17 @@ pub struct QuestionPublic {
     pub timer_sec: u32,
 }
 
+/// A spaced-repetition flashcard generated from a confused source section,
+/// carrying an initial SM-2 state for an external SRS scheduler.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Flashcard {
+    pub section_id: String,
+    pub front: String,
+    pub back: String,
+    pub ease_factor: f32,
+    pub interval_days: u32,
+}
+
 /// One row of the live leaderboard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeaderboardEntry {
@@ -103,6 +114,9 @@ pub enum ClientMessage {
     Breakout {
         section_id: String,
     },
+    /// The requester asks for their own post-session spaced-repetition deck,
+    /// generated from the sections they struggled with.
+    Flashcards,
     Ping,
 }
 
@@ -130,6 +144,10 @@ pub enum ServerMessage {
     BreakoutOpened {
         section_id: String,
         explanation: String,
+    },
+    /// The requester's spaced-repetition deck for their weak sections.
+    FlashcardsReady {
+        cards: Vec<Flashcard>,
     },
     Error {
         reason: String,

@@ -15,8 +15,8 @@ use presto_server::auth::Auth;
 use presto_server::fanout::{BroadcastFanout, Fanout};
 use presto_server::postgres_store::PostgresSessionStore;
 use presto_server::quiz::{
-    BreakoutSource, FixtureBreakoutSource, FixtureQuizSource, QuizSource, RagBreakoutSource,
-    RagQuizSource,
+    BreakoutSource, FixtureBreakoutSource, FixtureFlashcardSource, FixtureQuizSource,
+    FlashcardSource, QuizSource, RagBreakoutSource, RagFlashcardSource, RagQuizSource,
 };
 use presto_server::redis_fanout::RedisFanout;
 use presto_server::store::{InMemorySessionStore, SessionStore};
@@ -76,26 +76,38 @@ async fn build_fanout() -> Result<Arc<dyn Fanout>, Box<dyn Error>> {
 /// Quiz + breakout content from the RAG pipeline when a corpus database and an
 /// AI provider are configured (sharing one corpus + provider); otherwise the
 /// fixture sources.
-async fn build_content() -> (Arc<dyn QuizSource>, Arc<dyn BreakoutSource>) {
+type Content = (
+    Arc<dyn QuizSource>,
+    Arc<dyn BreakoutSource>,
+    Arc<dyn FlashcardSource>,
+);
+
+async fn build_content() -> Content {
+    let fixture: Content = (
+        Arc::new(FixtureQuizSource),
+        Arc::new(FixtureBreakoutSource),
+        Arc::new(FixtureFlashcardSource),
+    );
     let (Ok(database_url), Ok(provider)) =
         (std::env::var("DATABASE_URL"), OpenAiCompatible::from_env())
     else {
         println!("content: fixture (set DATABASE_URL + AI_BASE_URL + AI_API_KEY for RAG)");
-        return (Arc::new(FixtureQuizSource), Arc::new(FixtureBreakoutSource));
+        return fixture;
     };
     match CorpusStore::connect(&database_url).await {
         Ok(corpus) => {
-            println!("content: RAG quiz + breakout (pgvector corpus + AI provider)");
+            println!("content: RAG quiz + breakout + flashcards (pgvector corpus + AI provider)");
             let retriever: Arc<dyn Retriever> = Arc::new(corpus);
             let provider: Arc<dyn AiProvider> = Arc::new(provider);
             (
                 Arc::new(RagQuizSource::new(retriever.clone(), provider.clone())),
-                Arc::new(RagBreakoutSource::new(retriever, provider)),
+                Arc::new(RagBreakoutSource::new(retriever.clone(), provider.clone())),
+                Arc::new(RagFlashcardSource::new(retriever, provider)),
             )
         }
         Err(e) => {
             eprintln!("corpus unavailable ({e}); falling back to fixture content");
-            (Arc::new(FixtureQuizSource), Arc::new(FixtureBreakoutSource))
+            fixture
         }
     }
 }
@@ -108,13 +120,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let (quiz, breakout) = build_content().await;
+    let (quiz, breakout, flashcards) = build_content().await;
     let state = AppState {
         store: build_store().await?,
         fanout: build_fanout().await?,
         auth: build_auth()?,
         quiz,
         breakout,
+        flashcards,
     };
 
     // Clever Cloud injects `PORT`; default to 8080 for local runs.

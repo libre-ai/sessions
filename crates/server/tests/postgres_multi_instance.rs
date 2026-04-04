@@ -36,6 +36,7 @@ async fn instance(db: &str, redis: &str, auth: Arc<Auth>) -> std::net::SocketAdd
         auth,
         quiz: Arc::new(presto_server::quiz::FixtureQuizSource),
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),
+        flashcards: Arc::new(presto_server::quiz::FixtureFlashcardSource),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
