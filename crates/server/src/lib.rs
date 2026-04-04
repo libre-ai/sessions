@@ -24,7 +24,10 @@ use axum::routing::{get, post};
 
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
-use quiz::{BreakoutSource, FixtureBreakoutSource, FixtureQuizSource, QuizSource};
+use quiz::{
+    BreakoutSource, FixtureBreakoutSource, FixtureFlashcardSource, FixtureQuizSource,
+    FlashcardSource, QuizSource,
+};
 use store::{InMemorySessionStore, SessionStore};
 
 /// Shared application state: the session-state store, the fanout, the token
@@ -38,6 +41,7 @@ pub struct AppState {
     pub auth: Arc<Auth>,
     pub quiz: Arc<dyn QuizSource>,
     pub breakout: Arc<dyn BreakoutSource>,
+    pub flashcards: Arc<dyn FlashcardSource>,
 }
 
 impl AppState {
@@ -50,6 +54,7 @@ impl AppState {
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
+            flashcards: Arc::new(FixtureFlashcardSource),
         }
     }
 }

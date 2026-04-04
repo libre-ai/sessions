@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use presto_core::protocol::Question;
+use presto_core::protocol::{Flashcard, Question};
 use presto_rag::corpus::Retriever;
+use presto_rag::flashcards::flashcards;
 use presto_rag::pipeline::{grounded_breakout, grounded_question};
 use presto_rag::provider::AiProvider;
 
@@ -92,5 +93,52 @@ impl BreakoutSource for FixtureBreakoutSource {
             "(demo) Review the source for section {section_id} — connect a corpus + AI provider \
              for a grounded clarification."
         ))
+    }
+}
+
+/// Produces a spaced-repetition flashcard deck for a set of weak sections.
+#[async_trait]
+pub trait FlashcardSource: Send + Sync {
+    async fn deck(&self, sections: &[String]) -> Vec<Flashcard>;
+}
+
+/// Backed by the RAG pipeline: fetch each section → grounded flashcard.
+pub struct RagFlashcardSource {
+    retriever: Arc<dyn Retriever>,
+    provider: Arc<dyn AiProvider>,
+}
+
+impl RagFlashcardSource {
+    pub fn new(retriever: Arc<dyn Retriever>, provider: Arc<dyn AiProvider>) -> Self {
+        Self {
+            retriever,
+            provider,
+        }
+    }
+}
+
+#[async_trait]
+impl FlashcardSource for RagFlashcardSource {
+    async fn deck(&self, sections: &[String]) -> Vec<Flashcard> {
+        flashcards(sections, self.retriever.as_ref(), self.provider.as_ref()).await
+    }
+}
+
+/// Fixture flashcards for runs without a corpus or AI provider.
+pub struct FixtureFlashcardSource;
+
+#[async_trait]
+impl FlashcardSource for FixtureFlashcardSource {
+    async fn deck(&self, sections: &[String]) -> Vec<Flashcard> {
+        sections
+            .iter()
+            .map(|s| Flashcard {
+                section_id: s.clone(),
+                front: format!("Review section {s}"),
+                back: "(demo) connect a corpus + AI provider for a grounded card.".into(),
+                ease_factor: 2.5,
+                interval_days: 0,
+            })
+            .collect()
     }
 }

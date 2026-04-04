@@ -68,5 +68,10 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
     // After reveal, the snapshot is empty again.
     store.reveal(&s).await.unwrap();
     assert!(store.snapshot(&s).await.unwrap().is_none());
-    eprintln!("postgres deadline + snapshot behave correctly ✅");
+
+    // Reveal accumulated per-section mastery: p1 answered doc#p0 correctly (1/1).
+    let mastery = store.mastery(&s, "p1").await.unwrap();
+    let doc = mastery.iter().find(|m| m.section_id == "doc#p0").unwrap();
+    assert_eq!((doc.correct, doc.total), (1, 1));
+    eprintln!("postgres deadline + snapshot + mastery behave correctly ✅");
 }

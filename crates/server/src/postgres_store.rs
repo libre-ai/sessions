@@ -12,7 +12,9 @@ use sqlx::postgres::PgPool;
 
 use presto_core::protocol::{LeaderboardEntry, Question, QuestionPublic};
 
-use crate::session::{ANSWER_GRACE_MS, RevealResult, SessionError, is_correct, score};
+use crate::session::{
+    ANSWER_GRACE_MS, RevealResult, SectionMastery, SessionError, is_correct, score,
+};
 use crate::store::{SessionStore, StoreError, StoreResult};
 
 /// Encode/decode the selected choice indices as a comma-separated string.
@@ -53,6 +55,14 @@ CREATE TABLE IF NOT EXISTS presto_answers (
     choices        TEXT   NOT NULL,
     elapsed_ms     BIGINT NOT NULL,
     PRIMARY KEY (session_id, question_id, participant_id)
+);
+CREATE TABLE IF NOT EXISTS presto_mastery (
+    session_id     TEXT   NOT NULL,
+    participant_id TEXT   NOT NULL,
+    section_id     TEXT   NOT NULL,
+    correct        BIGINT NOT NULL DEFAULT 0,
+    total          BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, participant_id, section_id)
 );
 -- Migration-safe: add opened_at to sessions tables created before this column existed.
 ALTER TABLE presto_sessions ADD COLUMN IF NOT EXISTS opened_at BIGINT;
@@ -240,6 +250,30 @@ impl SessionStore for PostgresSessionStore {
         Ok(count > 0)
     }
 
+    async fn mastery(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Vec<SectionMastery>> {
+        let rows = sqlx::query(
+            "SELECT section_id, correct, total FROM presto_mastery \
+             WHERE session_id = $1 AND participant_id = $2 ORDER BY section_id",
+        )
+        .bind(session_id)
+        .bind(participant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(rows
+            .iter()
+            .map(|r| SectionMastery {
+                section_id: r.get("section_id"),
+                correct: u32::try_from(r.get::<i64, _>("correct")).unwrap_or(u32::MAX),
+                total: u32::try_from(r.get::<i64, _>("total")).unwrap_or(u32::MAX),
+            })
+            .collect())
+    }
+
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {
         let Some(question) = self.current_question(session_id).await? else {
             return Err(StoreError::Session(SessionError::NoQuestion));
@@ -257,10 +291,11 @@ impl SessionStore for PostgresSessionStore {
         let total = answers.len();
         let mut wrong = 0usize;
         for a in &answers {
+            let pid: String = a.get("participant_id");
             let submitted = decode_choices(&a.get::<String, _>("choices"));
             let elapsed: i64 = a.get("elapsed_ms");
-            if is_correct(&submitted, &correct) {
-                let pid: String = a.get("participant_id");
+            let ok = is_correct(&submitted, &correct);
+            if ok {
                 let elapsed_ms = u32::try_from(elapsed).unwrap_or(u32::MAX);
                 let points = i64::from(score(true, elapsed_ms));
                 sqlx::query("UPDATE presto_participants SET score = score + $1 WHERE session_id = $2 AND participant_id = $3")
@@ -272,6 +307,23 @@ impl SessionStore for PostgresSessionStore {
                     .map_err(backend)?;
             } else {
                 wrong += 1;
+            }
+            // Accumulate per-section mastery for spaced-repetition follow-up.
+            let inc = i64::from(ok);
+            for section in &question.source_section_ids {
+                sqlx::query(
+                    "INSERT INTO presto_mastery (session_id, participant_id, section_id, correct, total) \
+                     VALUES ($1, $2, $3, $4, 1) \
+                     ON CONFLICT (session_id, participant_id, section_id) \
+                     DO UPDATE SET correct = presto_mastery.correct + $4, total = presto_mastery.total + 1",
+                )
+                .bind(session_id)
+                .bind(&pid)
+                .bind(section)
+                .bind(inc)
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
             }
         }
 

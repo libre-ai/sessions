@@ -118,6 +118,7 @@ async fn spawn(quiz: Arc<dyn QuizSource>, auth: Arc<Auth>) -> std::net::SocketAd
         auth,
         quiz,
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),
+        flashcards: Arc::new(presto_server::quiz::FixtureFlashcardSource),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -485,4 +486,61 @@ async fn participant_cannot_open_a_breakout() {
     .unwrap();
     let err = recv_until(&mut p1, "error").await;
     assert_eq!(err["reason"], "host only");
+}
+
+#[tokio::test]
+async fn participant_gets_flashcards_for_weak_sections() {
+    let auth = Arc::new(Auth::generate());
+    let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
+    let session = "s-flash";
+    let host_token = auth
+        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .unwrap();
+    let p_token = auth
+        .mint(
+            session,
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(600),
+        )
+        .unwrap();
+
+    let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
+        .await
+        .unwrap();
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Host opens a question on section doc#p0; the participant answers wrong.
+    host.send(Message::text(
+        r#"{"type":"generate_question","query":"x"}"#.to_string(),
+    ))
+    .await
+    .unwrap();
+    let q = recv_until(&mut p1, "question_opened").await;
+    let qid = q["question"]["id"].as_str().unwrap().to_string();
+    p1.send(Message::text(format!(
+        r#"{{"type":"submit_answer","question_id":"{qid}","choices":[1]}}"#
+    )))
+    .await
+    .unwrap();
+    recv_until(&mut host, "answer_received").await;
+
+    // Reveal accumulates mastery (0/1 on doc#p0 → weak).
+    host.send(Message::text(r#"{"type":"reveal"}"#.to_string()))
+        .await
+        .unwrap();
+    recv_until(&mut p1, "answers_revealed").await;
+
+    // The participant requests their spaced-repetition deck.
+    p1.send(Message::text(r#"{"type":"flashcards"}"#.to_string()))
+        .await
+        .unwrap();
+    let deck = recv_until(&mut p1, "flashcards_ready").await;
+    let cards = deck["cards"].as_array().unwrap();
+    assert_eq!(cards.len(), 1, "one weak section → one card");
+    assert_eq!(cards[0]["section_id"], "doc#p0");
+    assert_eq!(cards[0]["ease_factor"], 2.5);
 }

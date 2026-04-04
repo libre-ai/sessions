@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 
 use presto_core::protocol::{Question, QuestionPublic};
 
-use crate::session::{RevealResult, Session, SessionError};
+use crate::session::{RevealResult, SectionMastery, Session, SessionError};
 
 /// A store operation failure.
 #[derive(Debug)]
@@ -74,6 +74,12 @@ pub trait SessionStore: Send + Sync {
     /// Whether the session exists (so a participant token is only minted for a
     /// real session).
     async fn exists(&self, session_id: &str) -> StoreResult<bool>;
+    /// A participant's per-section mastery accumulated across the session.
+    async fn mastery(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Vec<SectionMastery>>;
     /// Score the round and return the leaderboard + heatmap; enters `Revealed`.
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult>;
 }
@@ -152,6 +158,17 @@ impl SessionStore for InMemorySessionStore {
 
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {
         Ok(self.sessions.lock().contains_key(session_id))
+    }
+
+    async fn mastery(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Vec<SectionMastery>> {
+        Ok(self
+            .get_or_create(session_id, "")
+            .lock()
+            .mastery(participant_id))
     }
 
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {
