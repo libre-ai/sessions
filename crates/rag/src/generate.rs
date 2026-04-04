@@ -5,15 +5,16 @@
 
 use serde::Deserialize;
 
-use presto_core::protocol::Question;
+use presto_core::protocol::{Question, QuestionKind};
 
 use crate::corpus::Chunk;
 use crate::extract_json;
 use crate::provider::{AiError, AiProvider};
 
-const SYSTEM: &str = "You write exactly one multiple-choice quiz question grounded ONLY in the \
-    provided source text. Reply with strict JSON: {\"text\": string, \"choices\": array of 4 \
-    strings, \"correct_choice\": 0-based integer index}. No prose, no markdown.";
+const SYSTEM: &str = "You write exactly one quiz question grounded ONLY in the provided source \
+    text. It may have a single correct answer or several. Reply with strict JSON: {\"text\": \
+    string, \"choices\": array of 3-5 strings, \"correct_choices\": array of 0-based integer \
+    indices (one for single-answer, several for multi-answer)}. No prose, no markdown.";
 
 /// A generation failure (provider error or unparseable output).
 #[derive(Debug)]
@@ -37,7 +38,7 @@ impl From<AiError> for GenError {
 struct Generated {
     text: String,
     choices: Vec<String>,
-    correct_choice: u8,
+    correct_choices: Vec<u8>,
 }
 
 /// Generate one grounded question from a chunk. The returned question cites the
@@ -57,14 +58,29 @@ pub async fn generate_from_chunk(
                 if parsed.choices.len() < 2 {
                     return Err(GenError("a question needs at least two choices".into()));
                 }
-                if usize::from(parsed.correct_choice) >= parsed.choices.len() {
-                    return Err(GenError("correct_choice index is out of range".into()));
+                if parsed.correct_choices.is_empty() {
+                    return Err(GenError(
+                        "a question needs at least one correct choice".into(),
+                    ));
                 }
+                if parsed
+                    .correct_choices
+                    .iter()
+                    .any(|&c| usize::from(c) >= parsed.choices.len())
+                {
+                    return Err(GenError("a correct_choice index is out of range".into()));
+                }
+                let kind = if parsed.correct_choices.len() > 1 {
+                    QuestionKind::Multi
+                } else {
+                    QuestionKind::Single
+                };
                 return Ok(Question {
                     id: format!("q:{}", chunk.source_section_id),
                     text: parsed.text,
+                    kind,
                     choices: parsed.choices,
-                    correct_choice: parsed.correct_choice,
+                    correct_choices: parsed.correct_choices,
                     source_section_ids: vec![chunk.source_section_id.clone()],
                     timer_sec: 20,
                 });
@@ -93,7 +109,7 @@ mod tests {
             // Wrapped in a markdown fence to exercise `extract_json`.
             Ok("```json\n{\"text\":\"What does Rust enforce?\",\
                 \"choices\":[\"GC pauses\",\"memory safety\",\"slow builds\",\"nothing\"],\
-                \"correct_choice\":1}\n```"
+                \"correct_choices\":[1]}\n```"
                 .to_string())
         }
     }
@@ -107,9 +123,32 @@ mod tests {
         let q = generate_from_chunk(&chunk, &QuizFake).await.unwrap();
         assert_eq!(q.id, "q:doc#p2");
         assert_eq!(q.source_section_ids, vec!["doc#p2".to_string()]);
-        assert_eq!(q.correct_choice, 1);
+        assert_eq!(q.kind, presto_core::protocol::QuestionKind::Single);
+        assert_eq!(q.correct_choices, vec![1]);
         assert_eq!(q.choices.len(), 4);
         assert!(q.text.contains("Rust"));
+    }
+
+    #[tokio::test]
+    async fn generates_a_multi_select_question() {
+        struct MultiFake;
+        #[async_trait]
+        impl AiProvider for MultiFake {
+            async fn embed(&self, _t: &[String]) -> Result<Vec<Vec<f32>>, AiError> {
+                Ok(vec![])
+            }
+            async fn complete(&self, _s: &str, _u: &str) -> Result<String, AiError> {
+                Ok("{\"text\":\"q\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],\"correct_choices\":[0,2]}"
+                    .into())
+            }
+        }
+        let chunk = Chunk {
+            source_section_id: "d#p0".into(),
+            text: "x".into(),
+        };
+        let q = generate_from_chunk(&chunk, &MultiFake).await.unwrap();
+        assert_eq!(q.kind, presto_core::protocol::QuestionKind::Multi);
+        assert_eq!(q.correct_choices, vec![0, 2]);
     }
 
     #[tokio::test]
@@ -121,7 +160,7 @@ mod tests {
                 Ok(vec![])
             }
             async fn complete(&self, _s: &str, _u: &str) -> Result<String, AiError> {
-                Ok("{\"text\":\"q\",\"choices\":[\"a\",\"b\"],\"correct_choice\":5}".into())
+                Ok("{\"text\":\"q\",\"choices\":[\"a\",\"b\"],\"correct_choices\":[5]}".into())
             }
         }
         let chunk = Chunk {

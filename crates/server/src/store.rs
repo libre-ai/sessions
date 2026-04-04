@@ -65,7 +65,7 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &str,
         participant_id: &str,
-        choice: u8,
+        choices: Vec<u8>,
         now_ms: u64,
     ) -> StoreResult<()>;
     /// The currently open question (public projection), for a participant joining
@@ -137,12 +137,12 @@ impl SessionStore for InMemorySessionStore {
         &self,
         session_id: &str,
         participant_id: &str,
-        choice: u8,
+        choices: Vec<u8>,
         now_ms: u64,
     ) -> StoreResult<()> {
         self.get_or_create(session_id, "")
             .lock()
-            .submit_answer(participant_id, choice, now_ms)?;
+            .submit_answer(participant_id, choices, now_ms)?;
         Ok(())
     }
 
@@ -163,14 +163,15 @@ impl SessionStore for InMemorySessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use presto_core::protocol::Question;
+    use presto_core::protocol::{Question, QuestionKind};
 
     fn question() -> Question {
         Question {
             id: "q1".into(),
             text: "?".into(),
+            kind: QuestionKind::Single,
             choices: vec!["a".into(), "b".into()],
-            correct_choice: 1,
+            correct_choices: vec![1],
             source_section_ids: vec!["s1".into()],
             timer_sec: 20,
         }
@@ -184,11 +185,14 @@ mod tests {
         store.push_question("s1", &question(), 0).await.unwrap();
         // The open question is available as a snapshot for late joiners.
         assert!(store.snapshot("s1").await.unwrap().is_some());
-        store.submit_answer("s1", "p1", 1, 1000).await.unwrap();
+        store
+            .submit_answer("s1", "p1", vec![1], 1000)
+            .await
+            .unwrap();
         // double answer is rejected by the engine, surfaced as a store error.
-        assert!(store.submit_answer("s1", "p1", 0, 1).await.is_err());
+        assert!(store.submit_answer("s1", "p1", vec![0], 1).await.is_err());
         let reveal = store.reveal("s1").await.unwrap();
-        assert_eq!(reveal.correct_choice, 1);
+        assert_eq!(reveal.correct_choices, vec![1]);
         assert_eq!(reveal.leaderboard[0].participant_id, "p1");
         assert!(reveal.leaderboard[0].score >= 500);
         // After reveal, there is no open question to snapshot.

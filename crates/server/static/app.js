@@ -51,23 +51,48 @@ function onMessage(m) {
   }
 }
 
+function submitAnswer(choicesArr, container) {
+  ws.send(JSON.stringify({ type: "submit_answer", question_id: currentQid, choices: choicesArr }));
+  [...container.children].forEach((x) => (x.disabled = true));
+}
+
 function renderQuestion(q) {
   currentQid = q.id;
   hide("leaderboard");
+  hide("breakout");
   show("play");
   $("#question").textContent = q.text;
   const choices = $("#choices");
   choices.innerHTML = "";
+  const multi = q.kind === "multi";
+  const selected = new Set();
+
   q.choices.forEach((choice, i) => {
     const b = document.createElement("button");
     b.textContent = choice;
     b.onclick = () => {
-      ws.send(JSON.stringify({ type: "submit_answer", question_id: currentQid, choice: i }));
-      [...choices.children].forEach((x) => (x.disabled = true));
-      b.textContent = "✓ " + choice;
+      if (multi) {
+        if (selected.has(i)) {
+          selected.delete(i);
+          b.textContent = choice;
+        } else {
+          selected.add(i);
+          b.textContent = "☑ " + choice;
+        }
+      } else {
+        submitAnswer([i], choices);
+        b.textContent = "✓ " + choice;
+      }
     };
     choices.appendChild(b);
   });
+
+  if (multi) {
+    const validate = document.createElement("button");
+    validate.textContent = "Valider";
+    validate.onclick = () => submitAnswer([...selected], choices);
+    choices.appendChild(validate);
+  }
 }
 
 function renderLeaderboard(m) {

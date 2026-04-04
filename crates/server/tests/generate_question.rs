@@ -34,8 +34,9 @@ impl QuizSource for OneQuestionQuiz {
         Some(Question {
             id: "gen:doc#p0".into(),
             text: format!("What about {query}?"),
+            kind: presto_core::protocol::QuestionKind::Single,
             choices: vec!["yes".into(), "no".into()],
-            correct_choice: 0,
+            correct_choices: vec![0],
             source_section_ids: vec!["doc#p0".into()],
             timer_sec: 20,
         })
@@ -103,7 +104,7 @@ impl AiProvider for MockAiProvider {
         } else {
             // Generator response: always generate a valid question.
             Ok(
-                "{\"text\":\"What is the color of the sky?\",\"choices\":[\"blue\",\"red\",\"green\",\"yellow\"],\"correct_choice\":0}"
+                "{\"text\":\"What is the color of the sky?\",\"choices\":[\"blue\",\"red\",\"green\",\"yellow\"],\"correct_choices\":[0]}"
                     .to_string(),
             )
         }
@@ -180,7 +181,7 @@ async fn host_generate_question_reaches_participants() {
     let opened = recv_until(&mut p1, "question_opened").await;
     assert_eq!(opened["question"]["text"], "What about rust?");
     // The public projection must not leak the correct answer to participants.
-    assert!(opened["question"].get("correct_choice").is_none());
+    assert!(opened["question"].get("correct_choices").is_none());
 }
 
 #[tokio::test]
@@ -353,7 +354,7 @@ async fn rag_pipeline_accepts_grounded_question() {
     // Participant must receive the grounded question broadcast.
     let opened = recv_until(&mut p1, "question_opened").await;
     assert_eq!(opened["question"]["text"], "What is the color of the sky?");
-    assert!(opened["question"].get("correct_choice").is_none());
+    assert!(opened["question"].get("correct_choices").is_none());
 }
 
 #[tokio::test]
@@ -398,11 +399,11 @@ async fn generated_question_preserves_correct_choice_through_reveal() {
     let opened = recv_until(&mut p1, "question_opened").await;
     let q_id = opened["question"]["id"].as_str().unwrap();
     assert_eq!(opened["question"]["text"], "What about rust?");
-    assert!(opened["question"].get("correct_choice").is_none());
+    assert!(opened["question"].get("correct_choices").is_none());
 
     // Participant answers (the OneQuestionQuiz has correct_choice=0, so answering 0 is correct).
     p1.send(Message::text(format!(
-        r#"{{"type":"submit_answer","question_id":"{}","choice":0}}"#,
+        r#"{{"type":"submit_answer","question_id":"{}","choices":[0]}}"#,
         q_id
     )))
     .await
@@ -419,7 +420,7 @@ async fn generated_question_preserves_correct_choice_through_reveal() {
 
     let revealed = recv_until(&mut p1, "answers_revealed").await;
     // The core assertion: the server still knows the correct_choice.
-    assert_eq!(revealed["correct_choice"], 0);
+    assert_eq!(revealed["correct_choices"], serde_json::json!([0]));
     // Verify the leaderboard is populated.
     assert_eq!(revealed["leaderboard"][0]["participant_id"], "p1");
     assert!(revealed["leaderboard"][0]["score"].as_u64().unwrap() >= 500);

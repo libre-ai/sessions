@@ -76,7 +76,7 @@ async fn fanout_crosses_instances_via_redis() {
     tokio::time::sleep(Duration::from_millis(400)).await;
 
     host.send(Message::text(
-        r#"{"type":"push_question","question":{"id":"q1","text":"x?","choices":["a","b"],"correct_choice":1}}"#
+        r#"{"type":"push_question","question":{"id":"q1","text":"x?","choices":["a","b"],"correct_choices":[1]}}"#
             .to_string(),
     ))
     .await

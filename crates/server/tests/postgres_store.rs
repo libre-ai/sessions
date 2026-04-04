@@ -19,8 +19,9 @@ fn question() -> Question {
     Question {
         id: "q1".into(),
         text: "?".into(),
+        kind: presto_core::protocol::QuestionKind::Single,
         choices: vec!["a".into(), "b".into()],
-        correct_choice: 1,
+        correct_choices: vec![1],
         source_section_ids: vec!["doc#p0".into()],
         timer_sec: 30, // close at 30_000 + grace (1_500) ms
     }
@@ -55,14 +56,14 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
     assert_eq!(snap.unwrap().id, "q1");
 
     // Past the timer + grace: the server closes the question to answers.
-    let closed = store.submit_answer(&s, "p2", 1, 31_501).await;
+    let closed = store.submit_answer(&s, "p2", vec![1], 31_501).await;
     assert!(matches!(
         closed,
         Err(StoreError::Session(SessionError::Closed))
     ));
 
     // Within the window: accepted (server-timed).
-    store.submit_answer(&s, "p1", 1, 1_000).await.unwrap();
+    store.submit_answer(&s, "p1", vec![1], 1_000).await.unwrap();
 
     // After reveal, the snapshot is empty again.
     store.reveal(&s).await.unwrap();

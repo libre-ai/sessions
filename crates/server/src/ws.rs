@@ -195,10 +195,10 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
         },
         ClientMessage::SubmitAnswer {
             question_id: _,
-            choice,
+            choices,
         } => match state
             .store
-            .submit_answer(session_id, pid, choice, now_ms())
+            .submit_answer(session_id, pid, choices, now_ms())
             .await
         {
             Ok(()) => broadcast(ServerMessage::AnswerReceived {
@@ -231,7 +231,7 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
             }
             match state.store.reveal(session_id).await {
                 Ok(r) => broadcast(ServerMessage::AnswersRevealed {
-                    correct_choice: r.correct_choice,
+                    correct_choices: r.correct_choices,
                     leaderboard: r.leaderboard,
                     heatmap: r.heatmap,
                 }),
