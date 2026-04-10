@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -44,7 +44,13 @@ async fn sustains_200_participants_under_200ms_p99() {
     // send commands — otherwise TCP backpressure on the host's unread inbound
     // would stall the server's host loop.
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(3600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
         .unwrap();
     let (host, _) = connect_async(format!("{base}?token={host_token}"))
         .await
@@ -64,6 +70,7 @@ async fn sustains_200_participants_under_200ms_p99() {
                 &pid,
                 Capability::Participant,
                 Duration::from_secs(3600),
+                SystemTime::now(),
             )
             .unwrap();
         let (mut ws, _) = connect_async(format!("{base}?token={token}"))

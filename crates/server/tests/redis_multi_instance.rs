@@ -9,7 +9,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -54,7 +54,13 @@ async fn fanout_crosses_instances_via_redis() {
     let session = format!("mi-{}", std::process::id());
 
     let host_token = auth
-        .mint(&session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            &session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -62,6 +68,7 @@ async fn fanout_crosses_instances_via_redis() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 

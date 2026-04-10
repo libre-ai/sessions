@@ -4,7 +4,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -73,7 +73,13 @@ async fn live_round_fans_out_host_events_to_participants() {
     let srv = spawn_server().await;
     let host_token = srv
         .auth
-        .mint("sess1", "host", Capability::Host, Duration::from_secs(3600))
+        .mint(
+            "sess1",
+            "host",
+            Capability::Host,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p1_token = srv
         .auth
@@ -82,6 +88,7 @@ async fn live_round_fans_out_host_events_to_participants() {
             "p1",
             Capability::Participant,
             Duration::from_secs(3600),
+            SystemTime::now(),
         )
         .unwrap();
     let base = format!("ws://{}/ws/sess1", srv.addr);
@@ -137,6 +144,7 @@ async fn late_joiner_receives_the_open_question() {
             "host",
             Capability::Host,
             Duration::from_secs(3600),
+            SystemTime::now(),
         )
         .unwrap();
     let p_token = srv
@@ -146,6 +154,7 @@ async fn late_joiner_receives_the_open_question() {
             "p1",
             Capability::Participant,
             Duration::from_secs(3600),
+            SystemTime::now(),
         )
         .unwrap();
     let base = format!("ws://{}/ws/sess-late", srv.addr);

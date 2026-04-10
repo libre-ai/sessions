@@ -5,7 +5,7 @@
 //! (OIDC/Keycloak) sits in front later. The token — not the session code — is the
 //! capability, so a short, human-typable code is fine.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -51,7 +51,13 @@ pub(crate) async fn create_session(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let host_token = state
         .auth
-        .mint(&session_id, &host_id, Capability::Host, TOKEN_TTL)
+        .mint(
+            &session_id,
+            &host_id,
+            Capability::Host,
+            TOKEN_TTL,
+            SystemTime::now(),
+        )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let join_url = format!("/?s={session_id}");
     Ok(Json(Envelope {
@@ -92,6 +98,7 @@ pub(crate) async fn join_session(
             &participant_id,
             Capability::Participant,
             TOKEN_TTL,
+            SystemTime::now(),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(Envelope {

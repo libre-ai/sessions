@@ -84,7 +84,13 @@ async fn cross_instance_scoring_is_correct() {
     let session = format!("pg-{nanos}");
 
     let host_token = auth
-        .mint(&session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            &session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -92,6 +98,7 @@ async fn cross_instance_scoring_is_correct() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 

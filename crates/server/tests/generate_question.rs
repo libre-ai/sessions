@@ -5,7 +5,7 @@
 //! logic is tested in `presto-rag`); host-only authorization is enforced here.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
@@ -154,7 +154,13 @@ async fn host_generate_question_reaches_participants() {
     let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
     let session = "s-gen";
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -162,6 +168,7 @@ async fn host_generate_question_reaches_participants() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 
@@ -196,6 +203,7 @@ async fn participant_cannot_generate_question() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 
@@ -219,7 +227,13 @@ async fn host_generate_question_with_no_grounding_returns_error() {
     let addr = spawn(Arc::new(NoQuestionQuiz), auth.clone()).await;
     let session = "s-gen-none";
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
 
     let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
@@ -255,7 +269,13 @@ async fn rag_pipeline_verifier_gate_drops_ungrounded_question() {
     let session = "s-gen-verifier-gate";
 
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -263,6 +283,7 @@ async fn rag_pipeline_verifier_gate_drops_ungrounded_question() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 
@@ -326,7 +347,13 @@ async fn rag_pipeline_accepts_grounded_question() {
     let session = "s-gen-accept";
 
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -334,6 +361,7 @@ async fn rag_pipeline_accepts_grounded_question() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 
@@ -368,7 +396,13 @@ async fn generated_question_preserves_correct_choice_through_reveal() {
     let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
     let session = "s-gen-reveal";
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -376,6 +410,7 @@ async fn generated_question_preserves_correct_choice_through_reveal() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 
@@ -433,7 +468,13 @@ async fn host_breakout_reaches_participants() {
     let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
     let session = "s-breakout";
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -441,6 +482,7 @@ async fn host_breakout_reaches_participants() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 
@@ -474,6 +516,7 @@ async fn participant_cannot_open_a_breakout() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
     let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
@@ -494,7 +537,13 @@ async fn participant_gets_flashcards_for_weak_sections() {
     let addr = spawn(Arc::new(OneQuestionQuiz), auth.clone()).await;
     let session = "s-flash";
     let host_token = auth
-        .mint(session, "host", Capability::Host, Duration::from_secs(600))
+        .mint(
+            session,
+            "host",
+            Capability::Host,
+            Duration::from_secs(600),
+            SystemTime::now(),
+        )
         .unwrap();
     let p_token = auth
         .mint(
@@ -502,6 +551,7 @@ async fn participant_gets_flashcards_for_weak_sections() {
             "p1",
             Capability::Participant,
             Duration::from_secs(600),
+            SystemTime::now(),
         )
         .unwrap();
 

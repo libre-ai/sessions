@@ -94,15 +94,20 @@ impl Auth {
         self.keypair.public()
     }
 
-    /// Mint a join token for `participant_id` in `session_id`, valid for `ttl`.
+    /// Mint a join token for `participant_id` in `session_id`, valid for `ttl`
+    /// starting at `now`. Taking `now` explicitly (rather than sampling
+    /// `SystemTime::now()` internally) keeps mint-time and verify-time on the
+    /// same clock, which callers — tests in particular — can pin to a fixed
+    /// instant for deterministic expiry behaviour.
     pub fn mint(
         &self,
         session_id: &str,
         participant_id: &str,
         capability: Capability,
         ttl: Duration,
+        now: SystemTime,
     ) -> Result<String, AuthError> {
-        let expiration = SystemTime::now() + ttl;
+        let expiration = now + ttl;
         let cap = capability.as_str();
         let builder = biscuit!(
             r#"
@@ -175,11 +180,20 @@ mod tests {
 
     #[test]
     fn mint_then_verify_roundtrips_capability_and_pid() {
+        // Pin mint-time and verify-time to one instant so the roundtrip never
+        // races the clock: expiration = t + 3600s is always strictly after t.
         let auth = Auth::generate();
+        let t = now();
         let token = auth
-            .mint("s1", "host-1", Capability::Host, Duration::from_secs(3600))
+            .mint(
+                "s1",
+                "host-1",
+                Capability::Host,
+                Duration::from_secs(3600),
+                t,
+            )
             .unwrap();
-        let claims = auth.verify(&token, "s1", now()).unwrap();
+        let claims = auth.verify(&token, "s1", t).unwrap();
         assert_eq!(claims.participant_id, "host-1");
         assert_eq!(claims.capability, Capability::Host);
         assert!(claims.capability.is_host());
@@ -190,9 +204,10 @@ mod tests {
                 "p1",
                 Capability::Participant,
                 Duration::from_secs(3600),
+                t,
             )
             .unwrap();
-        let pclaims = auth.verify(&ptoken, "s1", now()).unwrap();
+        let pclaims = auth.verify(&ptoken, "s1", t).unwrap();
         assert_eq!(pclaims.capability, Capability::Participant);
         assert!(!pclaims.capability.is_host());
     }
@@ -200,24 +215,33 @@ mod tests {
     #[test]
     fn token_for_one_session_cannot_open_another() {
         let auth = Auth::generate();
+        let t = now();
         let token = auth
             .mint(
                 "s1",
                 "p1",
                 Capability::Participant,
                 Duration::from_secs(3600),
+                t,
             )
             .unwrap();
-        assert!(auth.verify(&token, "s2", now()).is_err());
+        assert!(auth.verify(&token, "s2", t).is_err());
     }
 
     #[test]
     fn expired_token_is_rejected() {
         let auth = Auth::generate();
+        let t = now();
         let token = auth
-            .mint("s1", "p1", Capability::Participant, Duration::from_secs(1))
+            .mint(
+                "s1",
+                "p1",
+                Capability::Participant,
+                Duration::from_secs(1),
+                t,
+            )
             .unwrap();
-        let later = now() + Duration::from_secs(10);
+        let later = t + Duration::from_secs(10);
         assert!(auth.verify(&token, "s1", later).is_err());
     }
 
@@ -225,10 +249,11 @@ mod tests {
     fn token_signed_by_another_key_is_rejected() {
         let issuer = Auth::generate();
         let attacker = Auth::generate();
+        let t = now();
         let forged = attacker
-            .mint("s1", "p1", Capability::Host, Duration::from_secs(3600))
+            .mint("s1", "p1", Capability::Host, Duration::from_secs(3600), t)
             .unwrap();
-        assert!(issuer.verify(&forged, "s1", now()).is_err());
+        assert!(issuer.verify(&forged, "s1", t).is_err());
     }
 
     #[test]
@@ -236,10 +261,17 @@ mod tests {
         // Two instances loading the SAME hex key must accept each other's tokens.
         let a = Auth::generate();
         let b = Auth::from_private_key_hex(&a.private_key_hex()).unwrap();
+        let t = now();
         let token = a
-            .mint("s1", "p1", Capability::Participant, Duration::from_secs(60))
+            .mint(
+                "s1",
+                "p1",
+                Capability::Participant,
+                Duration::from_secs(60),
+                t,
+            )
             .unwrap();
-        let claims = b.verify(&token, "s1", now()).unwrap();
+        let claims = b.verify(&token, "s1", t).unwrap();
         assert_eq!(claims.participant_id, "p1");
         assert_eq!(claims.capability, Capability::Participant);
     }
