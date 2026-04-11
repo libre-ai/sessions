@@ -119,6 +119,7 @@ async fn spawn(quiz: Arc<dyn QuizSource>, auth: Arc<Auth>) -> std::net::SocketAd
         quiz,
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),
         flashcards: Arc::new(presto_server::quiz::FixtureFlashcardSource),
+        ingestor: Arc::new(presto_server::quiz::FixtureIngestor),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

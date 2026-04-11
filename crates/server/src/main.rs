@@ -15,8 +15,9 @@ use presto_server::auth::Auth;
 use presto_server::fanout::{BroadcastFanout, Fanout};
 use presto_server::postgres_store::PostgresSessionStore;
 use presto_server::quiz::{
-    BreakoutSource, FixtureBreakoutSource, FixtureFlashcardSource, FixtureQuizSource,
-    FlashcardSource, QuizSource, RagBreakoutSource, RagFlashcardSource, RagQuizSource,
+    BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
+    FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource, RagBreakoutSource,
+    RagFlashcardSource, RagIngestor, RagQuizSource,
 };
 use presto_server::redis_fanout::RedisFanout;
 use presto_server::store::{InMemorySessionStore, SessionStore};
@@ -80,6 +81,7 @@ type Content = (
     Arc<dyn QuizSource>,
     Arc<dyn BreakoutSource>,
     Arc<dyn FlashcardSource>,
+    Arc<dyn DocumentIngestor>,
 );
 
 async fn build_content() -> Content {
@@ -87,6 +89,7 @@ async fn build_content() -> Content {
         Arc::new(FixtureQuizSource),
         Arc::new(FixtureBreakoutSource),
         Arc::new(FixtureFlashcardSource),
+        Arc::new(FixtureIngestor),
     );
     let (Ok(database_url), Ok(provider)) =
         (std::env::var("DATABASE_URL"), OpenAiCompatible::from_env())
@@ -96,13 +99,19 @@ async fn build_content() -> Content {
     };
     match CorpusStore::connect(&database_url).await {
         Ok(corpus) => {
-            println!("content: RAG quiz + breakout + flashcards (pgvector corpus + AI provider)");
-            let retriever: Arc<dyn Retriever> = Arc::new(corpus);
+            println!(
+                "content: RAG quiz + breakout + flashcards + ingestion (pgvector corpus + AI provider)"
+            );
+            // Keep the concrete corpus for ingestion (which is not on the
+            // read-only `Retriever` seam), and reuse it as the retriever.
+            let corpus = Arc::new(corpus);
             let provider: Arc<dyn AiProvider> = Arc::new(provider);
+            let retriever: Arc<dyn Retriever> = corpus.clone();
             (
                 Arc::new(RagQuizSource::new(retriever.clone(), provider.clone())),
                 Arc::new(RagBreakoutSource::new(retriever.clone(), provider.clone())),
-                Arc::new(RagFlashcardSource::new(retriever, provider)),
+                Arc::new(RagFlashcardSource::new(retriever, provider.clone())),
+                Arc::new(RagIngestor::new(corpus, provider)),
             )
         }
         Err(e) => {
@@ -120,7 +129,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let (quiz, breakout, flashcards) = build_content().await;
+    let (quiz, breakout, flashcards, ingestor) = build_content().await;
     let state = AppState {
         store: build_store().await?,
         fanout: build_fanout().await?,
@@ -128,6 +137,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         quiz,
         breakout,
         flashcards,
+        ingestor,
     };
 
     // Clever Cloud injects `PORT`; default to 8080 for local runs.

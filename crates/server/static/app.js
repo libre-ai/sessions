@@ -180,6 +180,30 @@ function init() {
     ws.send(JSON.stringify({ type: "generate_question", query: $("#query").value || "general" }));
   $("#reveal").onclick = () => ws.send(JSON.stringify({ type: "reveal" }));
   $("#get-flashcards").onclick = () => ws.send(JSON.stringify({ type: "flashcards" }));
+  $("#do-ingest").onclick = ingestDocument;
+}
+
+async function ingestDocument() {
+  const id = $("#doc-id").value.trim();
+  const text = $("#doc-text").value;
+  if (!id || !text.trim()) {
+    $("#ingest-status").textContent = "Renseigne un ID et du texte.";
+    return;
+  }
+  $("#ingest-status").textContent = "Ingestion…";
+  try {
+    const r = await fetch(`/corpus/documents?document_id=${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "content-type": "text/markdown" },
+      body: text,
+    });
+    const j = await r.json().catch(() => ({}));
+    $("#ingest-status").textContent = r.ok
+      ? `${j.data.chunks_stored} chunks ingérés pour ${j.data.document_id}.`
+      : `Échec (${r.status}).`;
+  } catch {
+    $("#ingest-status").textContent = "Erreur réseau.";
+  }
 }
 
 init();

@@ -13,6 +13,7 @@ pub mod clarify;
 pub mod corpus;
 pub mod flashcards;
 pub mod generate;
+pub mod ingest;
 pub mod pipeline;
 pub mod provider;
 pub mod verify;

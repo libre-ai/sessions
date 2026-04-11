@@ -8,8 +8,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use presto_core::protocol::{Flashcard, Question};
-use presto_rag::corpus::Retriever;
+use presto_rag::corpus::{CorpusStore, Retriever};
 use presto_rag::flashcards::flashcards;
+use presto_rag::ingest::document_text;
 use presto_rag::pipeline::{grounded_breakout, grounded_question};
 use presto_rag::provider::AiProvider;
 
@@ -121,6 +122,76 @@ impl RagFlashcardSource {
 impl FlashcardSource for RagFlashcardSource {
     async fn deck(&self, sections: &[String]) -> Vec<Flashcard> {
         flashcards(sections, self.retriever.as_ref(), self.provider.as_ref()).await
+    }
+}
+
+/// Why an ingestion was refused. Separates client-safe document faults from
+/// backend failures whose detail must not leak to an untrusted uploader.
+pub enum IngestRejection {
+    /// The uploaded document is unusable (bad type, encoding, empty). The
+    /// message is safe to return to the client.
+    BadDocument(String),
+    /// No corpus + AI provider is configured on this deployment.
+    NotConfigured,
+    /// A backend failure (database, provider). Detail is logged, never returned.
+    Backend,
+}
+
+/// Ingests an uploaded document into the corpus (parse → chunk → embed → store),
+/// so the RAG question/breakout/flashcard sources can ground on it.
+#[async_trait]
+pub trait DocumentIngestor: Send + Sync {
+    /// Ingest `bytes` (typed by `content_type`) under `document_id`; returns the
+    /// number of chunks stored, or a typed rejection.
+    async fn ingest(
+        &self,
+        document_id: &str,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> Result<usize, IngestRejection>;
+}
+
+/// Parses the body to text, then ingests it into the pgvector corpus.
+pub struct RagIngestor {
+    corpus: Arc<CorpusStore>,
+    provider: Arc<dyn AiProvider>,
+}
+
+impl RagIngestor {
+    pub fn new(corpus: Arc<CorpusStore>, provider: Arc<dyn AiProvider>) -> Self {
+        Self { corpus, provider }
+    }
+}
+
+#[async_trait]
+impl DocumentIngestor for RagIngestor {
+    async fn ingest(
+        &self,
+        document_id: &str,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> Result<usize, IngestRejection> {
+        let text = document_text(content_type, bytes)
+            .map_err(|e| IngestRejection::BadDocument(e.to_string()))?;
+        self.corpus
+            .ingest(document_id, &text, self.provider.as_ref())
+            .await
+            .map_err(|e| {
+                // Log the detail; return an opaque rejection (no DB internals to
+                // an untrusted uploader).
+                eprintln!("ingest backend error for '{document_id}': {e}");
+                IngestRejection::Backend
+            })
+    }
+}
+
+/// Rejects ingestion when no corpus + AI provider is configured.
+pub struct FixtureIngestor;
+
+#[async_trait]
+impl DocumentIngestor for FixtureIngestor {
+    async fn ingest(&self, _doc: &str, _ct: &str, _bytes: &[u8]) -> Result<usize, IngestRejection> {
+        Err(IngestRejection::NotConfigured)
     }
 }
 

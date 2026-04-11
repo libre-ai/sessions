@@ -25,8 +25,8 @@ use axum::routing::{get, post};
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
 use quiz::{
-    BreakoutSource, FixtureBreakoutSource, FixtureFlashcardSource, FixtureQuizSource,
-    FlashcardSource, QuizSource,
+    BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
+    FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource,
 };
 use store::{InMemorySessionStore, SessionStore};
 
@@ -42,6 +42,7 @@ pub struct AppState {
     pub quiz: Arc<dyn QuizSource>,
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
+    pub ingestor: Arc<dyn DocumentIngestor>,
 }
 
 impl AppState {
@@ -55,6 +56,7 @@ impl AppState {
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
             flashcards: Arc::new(FixtureFlashcardSource),
+            ingestor: Arc::new(FixtureIngestor),
         }
     }
 }
@@ -70,6 +72,7 @@ pub fn app(state: AppState) -> Router {
             "/sessions/{session_id}/participants",
             post(http::join_session),
         )
+        .route("/corpus/documents", post(http::ingest_document))
         .route("/ws/{session_id}", get(ws::ws_handler))
         .with_state(state)
 }
@@ -98,5 +101,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    async fn ingest(uri: &str, content_type: &str, body: &'static str) -> StatusCode {
+        let state = AppState::in_memory(Arc::new(Auth::generate()));
+        app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", content_type)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn ingest_without_corpus_is_unavailable() {
+        // The default in-memory state uses FixtureIngestor → not configured (503,
+        // not a client error, and no backend detail leaked).
+        let status = ingest(
+            "/corpus/documents?document_id=doc1",
+            "text/markdown",
+            "# Hi\n\nBody",
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn ingest_requires_a_document_id() {
+        let status = ingest("/corpus/documents?document_id=", "text/plain", "x").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn ingest_rejects_an_overlong_document_id() {
+        let long = "a".repeat(200);
+        let status = ingest(
+            &format!("/corpus/documents?document_id={long}"),
+            "text/plain",
+            "x",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }
