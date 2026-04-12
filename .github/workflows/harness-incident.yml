@@ -1,0 +1,55 @@
+name: harness-incident
+
+# The "CI red → incident" watcher: when the `ci` workflow finishes with a
+# failure, build the Agent-O-Matic harness and let it open (idempotently) a
+# GitHub incident issue — closing the first link of the autonomous loop without a
+# human. The harness then drives dispatch → gate → merge from that issue.
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  open-incident:
+    # Only on a real failure (success / cancelled / skipped do nothing).
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the harness (Agent-O-Matic, public)
+        uses: actions/checkout@v4
+        with:
+          repository: constantin-jais/Agent-O-Matic
+          path: harness
+
+      - name: Cache the harness build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: harness
+
+      - name: Build aom
+        working-directory: harness
+        run: cargo build --release --bin aom
+
+      - name: Open an incident for the CI failure
+        working-directory: harness
+        # Dynamic values are passed via env (never interpolated into the script
+        # text) so an attacker-chosen branch name cannot inject shell.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WF_NAME: ${{ github.event.workflow_run.name }}
+        run: |
+          ./target/release/aom incident open \
+            --kind ci-failure \
+            --repo "$TARGET_REPO" \
+            --severity high \
+            --key "ci-failure:$HEAD_BRANCH" \
+            --title "ci: '$WF_NAME' failed on $HEAD_BRANCH" \
+            --body "Run $RUN_URL (commit $HEAD_SHA) concluded **failure**. Opened by the harness incident watcher; one issue is reused per branch until it is closed."
