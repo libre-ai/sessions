@@ -60,6 +60,11 @@ async fn sustains_200_participants_under_200ms_p99() {
 
     let push_times: Arc<Mutex<HashMap<String, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = mpsc::unbounded_channel::<u128>();
+    // Reveal latency (§3 SLO): reveal scores all 200 participants under the
+    // session lock before broadcasting — a distinct cost from a plain push. Track
+    // the most recent reveal-send instant + a channel of per-participant samples.
+    let reveal_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let (rtx, mut rrx) = mpsc::unbounded_channel::<u128>();
 
     let mut handles = Vec::with_capacity(PARTICIPANTS);
     for i in 0..PARTICIPANTS {
@@ -78,26 +83,38 @@ async fn sustains_200_participants_under_200ms_p99() {
             .unwrap();
         let push_times = push_times.clone();
         let tx = tx.clone();
+        let reveal_at = reveal_at.clone();
+        let rtx = rtx.clone();
         handles.push(tokio::spawn(async move {
-            let mut seen = 0usize;
+            // Wait until every reveal is seen (reveals follow questions, so this
+            // also covers every question delivery).
+            let mut reveals = 0usize;
             let run = async {
-                while seen < questions {
+                while reveals < questions {
                     match ws.next().await {
                         Some(Ok(Message::Text(t))) => {
                             let v: Value = serde_json::from_str(t.as_str()).unwrap();
-                            if v["type"] == "question_opened" {
-                                let qid = v["question"]["id"].as_str().unwrap().to_string();
-                                if let Some(p) = push_times.lock().unwrap().get(&qid).copied() {
-                                    let _ = tx.send(p.elapsed().as_micros());
+                            match v["type"].as_str() {
+                                Some("question_opened") => {
+                                    let qid = v["question"]["id"].as_str().unwrap().to_string();
+                                    if let Some(p) = push_times.lock().unwrap().get(&qid).copied() {
+                                        let _ = tx.send(p.elapsed().as_micros());
+                                    }
+                                    let ans = ClientMessage::SubmitAnswer {
+                                        question_id: qid,
+                                        choices: vec![0],
+                                    };
+                                    let _ = ws
+                                        .send(Message::text(serde_json::to_string(&ans).unwrap()))
+                                        .await;
                                 }
-                                seen += 1;
-                                let ans = ClientMessage::SubmitAnswer {
-                                    question_id: qid,
-                                    choices: vec![0],
-                                };
-                                let _ = ws
-                                    .send(Message::text(serde_json::to_string(&ans).unwrap()))
-                                    .await;
+                                Some("answers_revealed") => {
+                                    if let Some(at) = *reveal_at.lock().unwrap() {
+                                        let _ = rtx.send(at.elapsed().as_micros());
+                                    }
+                                    reveals += 1;
+                                }
+                                _ => {}
                             }
                         }
                         Some(Ok(_)) => {}
@@ -105,7 +122,7 @@ async fn sustains_200_participants_under_200ms_p99() {
                     }
                 }
             };
-            let _ = tokio::time::timeout(Duration::from_secs(20), run).await;
+            let _ = tokio::time::timeout(Duration::from_secs(30), run).await;
         }));
     }
 
@@ -125,6 +142,7 @@ async fn sustains_200_participants_under_200ms_p99() {
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(700)).await;
+        *reveal_at.lock().unwrap() = Some(Instant::now());
         host_tx
             .send(Message::text(r#"{"type":"reveal"}"#.to_string()))
             .await
@@ -136,6 +154,7 @@ async fn sustains_200_participants_under_200ms_p99() {
         let _ = h.await;
     }
     drop(tx);
+    drop(rtx);
     host_drain.abort();
 
     let mut samples: Vec<u128> = Vec::new();
@@ -143,27 +162,56 @@ async fn sustains_200_participants_under_200ms_p99() {
         samples.push(s);
     }
     samples.sort_unstable();
-    let pct = |p: f64| -> u128 {
-        if samples.is_empty() {
-            0
-        } else {
-            samples[(((samples.len() - 1) as f64) * p).round() as usize]
-        }
-    };
+    let mut reveal_samples: Vec<u128> = Vec::new();
+    while let Some(s) = rrx.recv().await {
+        reveal_samples.push(s);
+    }
+    reveal_samples.sort_unstable();
+
     let expected = PARTICIPANTS * questions;
     eprintln!(
-        "load: expected {expected} deliveries, got {} | p50={}µs p95={}µs p99={}µs",
+        "load delivery: got {}/{expected} | p50={}µs p95={}µs p99={}µs",
         samples.len(),
-        pct(0.50),
-        pct(0.95),
-        pct(0.99),
+        percentile(&samples, 0.50),
+        percentile(&samples, 0.95),
+        percentile(&samples, 0.99),
+    );
+    eprintln!(
+        "load reveal:   got {}/{expected} | p50={}µs p95={}µs p99={}µs",
+        reveal_samples.len(),
+        percentile(&reveal_samples, 0.50),
+        percentile(&reveal_samples, 0.95),
+        percentile(&reveal_samples, 0.99),
     );
 
+    // §3 SLO — delivery: zero loss, p99 < 200ms.
     assert_eq!(
         samples.len(),
         expected,
         "zero loss: every question must reach every participant"
     );
-    let p99_ms = pct(0.99) as f64 / 1000.0;
+    let p99_ms = percentile(&samples, 0.99) as f64 / 1000.0;
     assert!(p99_ms < 200.0, "p99 delivery {p99_ms:.1}ms must be < 200ms");
+
+    // §3 SLO — reveal: every reveal reaches everyone, p99 < 500ms (scoring 200
+    // participants under the lock + broadcast).
+    assert_eq!(
+        reveal_samples.len(),
+        expected,
+        "every reveal must reach every participant"
+    );
+    let reveal_p99_ms = percentile(&reveal_samples, 0.99) as f64 / 1000.0;
+    assert!(
+        reveal_p99_ms < 500.0,
+        "p99 reveal {reveal_p99_ms:.1}ms must be < 500ms"
+    );
+}
+
+/// The `p`-quantile of a pre-sorted sample slice (0 if empty).
+fn percentile(sorted: &[u128], p: f64) -> u128 {
+    if sorted.is_empty() {
+        0
+    } else {
+        sorted[(((sorted.len() - 1) as f64) * p).round() as usize]
+    }
 }
