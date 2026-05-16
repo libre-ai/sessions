@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod fanout;
 pub mod http;
+pub mod oidc;
 pub mod postgres_store;
 pub mod quiz;
 pub mod ratelimit;
