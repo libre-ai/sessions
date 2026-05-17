@@ -8,6 +8,7 @@
 //! Postgres) implementations plug in for multi-instance operation.
 
 pub mod auth;
+pub mod authz;
 pub mod fanout;
 pub mod http;
 pub mod oidc;
