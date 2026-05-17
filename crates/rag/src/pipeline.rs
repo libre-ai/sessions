@@ -7,7 +7,7 @@
 use presto_core::protocol::Question;
 
 use crate::clarify::clarify;
-use crate::corpus::{Chunk, Retriever};
+use crate::corpus::{Chunk, RetrievalScope, Retriever};
 use crate::generate::generate_from_chunk;
 use crate::provider::AiProvider;
 use crate::verify::verify_grounding;
@@ -16,12 +16,13 @@ use crate::verify::verify_grounding;
 /// failures and ungrounded candidates are skipped, so the result may be shorter
 /// than `count` (possibly empty).
 pub async fn grounded_quiz(
+    scope: &RetrievalScope,
     query: &str,
     count: usize,
     retriever: &dyn Retriever,
     provider: &dyn AiProvider,
 ) -> Vec<Question> {
-    let Ok(retrieved) = retriever.retrieve(query, count, provider).await else {
+    let Ok(retrieved) = retriever.retrieve(scope, query, count, provider).await else {
         return Vec::new();
     };
 
@@ -47,11 +48,12 @@ pub async fn grounded_quiz(
 /// One grounded question for `query`, or `None` if nothing relevant was found or
 /// the candidate failed grounding verification.
 pub async fn grounded_question(
+    scope: &RetrievalScope,
     query: &str,
     retriever: &dyn Retriever,
     provider: &dyn AiProvider,
 ) -> Option<Question> {
-    grounded_quiz(query, 1, retriever, provider)
+    grounded_quiz(scope, query, 1, retriever, provider)
         .await
         .into_iter()
         .next()
@@ -60,11 +62,12 @@ pub async fn grounded_question(
 /// A grounded clarification (breakout) for a confused source section, or `None`
 /// if the section is not in the corpus or clarification fails.
 pub async fn grounded_breakout(
+    scope: &RetrievalScope,
     section_id: &str,
     retriever: &dyn Retriever,
     provider: &dyn AiProvider,
 ) -> Option<String> {
-    let chunk = retriever.fetch_section(section_id).await.ok()??;
+    let chunk = retriever.fetch_section(scope, section_id).await.ok()??;
     clarify(&chunk, provider).await.ok()
 }
 
@@ -84,6 +87,7 @@ mod tests {
     impl Retriever for FakeRetriever {
         async fn retrieve(
             &self,
+            _scope: &RetrievalScope,
             _query: &str,
             k: usize,
             _provider: &dyn AiProvider,
@@ -91,7 +95,11 @@ mod tests {
             Ok(self.chunks.iter().take(k).cloned().collect())
         }
 
-        async fn fetch_section(&self, section_id: &str) -> Result<Option<Chunk>, CorpusError> {
+        async fn fetch_section(
+            &self,
+            _scope: &RetrievalScope,
+            section_id: &str,
+        ) -> Result<Option<Chunk>, CorpusError> {
             Ok(self
                 .chunks
                 .iter()
@@ -151,7 +159,14 @@ mod tests {
         let provider = PipelineFake {
             verifier_supports: true,
         };
-        let quiz = grounded_quiz("topic", 2, &retriever(), &provider).await;
+        let quiz = grounded_quiz(
+            &RetrievalScope::wedge(),
+            "topic",
+            2,
+            &retriever(),
+            &provider,
+        )
+        .await;
         assert_eq!(quiz.len(), 2);
         assert_eq!(quiz[0].source_section_ids, vec!["d#p0".to_string()]);
     }
@@ -161,7 +176,14 @@ mod tests {
         let provider = PipelineFake {
             verifier_supports: false,
         };
-        let quiz = grounded_quiz("topic", 2, &retriever(), &provider).await;
+        let quiz = grounded_quiz(
+            &RetrievalScope::wedge(),
+            "topic",
+            2,
+            &retriever(),
+            &provider,
+        )
+        .await;
         assert!(quiz.is_empty(), "ungrounded questions must be dropped");
     }
 
@@ -170,7 +192,7 @@ mod tests {
         let provider = PipelineFake {
             verifier_supports: true,
         };
-        let q = grounded_question("topic", &retriever(), &provider).await;
+        let q = grounded_question(&RetrievalScope::wedge(), "topic", &retriever(), &provider).await;
         assert_eq!(q.unwrap().source_section_ids, vec!["d#p0".to_string()]);
     }
 
@@ -179,7 +201,8 @@ mod tests {
         let provider = PipelineFake {
             verifier_supports: true,
         };
-        let out = grounded_breakout("d#p0", &retriever(), &provider).await;
+        let out =
+            grounded_breakout(&RetrievalScope::wedge(), "d#p0", &retriever(), &provider).await;
         assert!(out.is_some_and(|s| !s.is_empty()));
     }
 
@@ -189,7 +212,7 @@ mod tests {
             verifier_supports: true,
         };
         assert!(
-            grounded_breakout("nope#p9", &retriever(), &provider)
+            grounded_breakout(&RetrievalScope::wedge(), "nope#p9", &retriever(), &provider)
                 .await
                 .is_none()
         );
@@ -202,6 +225,7 @@ mod tests {
         impl Retriever for MalformedVerifierFake {
             async fn retrieve(
                 &self,
+                _scope: &RetrievalScope,
                 _query: &str,
                 _k: usize,
                 _provider: &dyn AiProvider,
@@ -213,7 +237,11 @@ mod tests {
                 }])
             }
 
-            async fn fetch_section(&self, _section_id: &str) -> Result<Option<Chunk>, CorpusError> {
+            async fn fetch_section(
+                &self,
+                _scope: &RetrievalScope,
+                _section_id: &str,
+            ) -> Result<Option<Chunk>, CorpusError> {
                 Ok(None)
             }
         }
@@ -239,6 +267,7 @@ mod tests {
         }
 
         let quiz = grounded_quiz(
+            &RetrievalScope::wedge(),
             "topic",
             1,
             &MalformedVerifierFake,

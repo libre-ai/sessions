@@ -14,7 +14,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use presto_core::protocol::Question;
-use presto_rag::corpus::{CorpusError, Retrieved, Retriever};
+use presto_rag::corpus::{CorpusError, RetrievalScope, Retrieved, Retriever};
 use presto_rag::provider::{AiError, AiProvider};
 use presto_server::auth::{Auth, Capability};
 use presto_server::fanout::BroadcastFanout;
@@ -60,6 +60,7 @@ struct MockRetriever;
 impl Retriever for MockRetriever {
     async fn retrieve(
         &self,
+        _scope: &RetrievalScope,
         _query: &str,
         _k: usize,
         _provider: &dyn AiProvider,
@@ -73,6 +74,7 @@ impl Retriever for MockRetriever {
 
     async fn fetch_section(
         &self,
+        _scope: &RetrievalScope,
         section_id: &str,
     ) -> Result<Option<presto_rag::corpus::Chunk>, CorpusError> {
         Ok((section_id == "doc#p0").then(|| presto_rag::corpus::Chunk {

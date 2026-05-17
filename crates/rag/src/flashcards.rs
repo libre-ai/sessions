@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use presto_core::protocol::Flashcard;
 
-use crate::corpus::{Chunk, Retriever};
+use crate::corpus::{Chunk, RetrievalScope, Retriever};
 use crate::extract_json;
 use crate::generate::GenError;
 use crate::provider::AiProvider;
@@ -48,13 +48,14 @@ pub async fn flashcard_from_chunk(
 /// Build a deck for the given (weak) sections, skipping sections absent from the
 /// corpus or whose generation fails.
 pub async fn flashcards(
+    scope: &RetrievalScope,
     sections: &[String],
     retriever: &dyn Retriever,
     provider: &dyn AiProvider,
 ) -> Vec<Flashcard> {
     let mut deck = Vec::new();
     for section in sections {
-        if let Ok(Some(chunk)) = retriever.fetch_section(section).await
+        if let Ok(Some(chunk)) = retriever.fetch_section(scope, section).await
             && let Ok(card) = flashcard_from_chunk(&chunk, provider).await
         {
             deck.push(card);
@@ -87,13 +88,18 @@ mod tests {
     impl Retriever for OneSectionRetriever {
         async fn retrieve(
             &self,
+            _scope: &RetrievalScope,
             _q: &str,
             _k: usize,
             _p: &dyn AiProvider,
         ) -> Result<Vec<Retrieved>, CorpusError> {
             Ok(vec![])
         }
-        async fn fetch_section(&self, section_id: &str) -> Result<Option<Chunk>, CorpusError> {
+        async fn fetch_section(
+            &self,
+            _scope: &RetrievalScope,
+            section_id: &str,
+        ) -> Result<Option<Chunk>, CorpusError> {
             Ok((section_id == "doc#p0").then(|| Chunk {
                 source_section_id: "doc#p0".into(),
                 text: "X is Y.".into(),
@@ -104,6 +110,7 @@ mod tests {
     #[tokio::test]
     async fn builds_a_deck_for_known_sections_only() {
         let deck = flashcards(
+            &RetrievalScope::wedge(),
             &["doc#p0".into(), "missing#p9".into()],
             &OneSectionRetriever,
             &CardFake,
