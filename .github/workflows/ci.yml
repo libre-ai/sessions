@@ -27,12 +27,17 @@ jobs:
 
   supply-chain:
     # Evolution Sec2: OSS-only licensing (ADR-0001) + vulnerability scan, gated.
+    # cargo-deny is the primary gate; cargo-audit is a second, independent RustSec
+    # scan (both read .cargo/audit.toml / deny.toml for the same justified ignores).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+      - uses: taiki-e/install-action@cargo-audit
+      - name: cargo-audit (RustSec advisory scan)
+        run: cargo audit
 
   guard:
     # Evolution gate: nothing machine-local, no internal/proprietary-employer
