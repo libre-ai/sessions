@@ -25,14 +25,14 @@ over it; SP-C consumes both). The evolution spec critiques the **built** product
 work _alongside_ the spec roadmap below.
 
 > **Implementation status (2026-06-29).** The `Status` column above is each
-> _spec document's_ status, not the code's. As of the `goal/moat-and-gatewall`
-> branch (CI-green, not yet merged): **SP-A inc-1/2** (OIDC validation,
-> space-scoped Biscuit tokens, anti-enumeration, MembershipStore + revocation
-> recheck) and **SP-B inc-1/3** (signed integrity hashes, signed PII verdict,
-> retrieval space/clearance scoping, live-generation gate) are **implemented and
-> tested**, plus the full evolution gate-wall (cargo-deny + cargo-audit +
-> guard-scan + coverage ≥ 80%). The §3 AI-latency SLOs and **SP-C (front)** remain
-> open. See [`status/2026-06-29-session-handoff.md`](status/2026-06-29-session-handoff.md)
+> _spec document's_ status, not the code's. The stable backend/RAG/live-session
+> baseline includes **SP-A inc-1/2** (OIDC validation, space-scoped Biscuit tokens,
+> anti-enumeration, MembershipStore + revocation recheck) and **SP-B inc-1/3**
+> (signed integrity hashes, signed PII verdict, retrieval space/clearance scoping,
+> live-generation gate), all **implemented and tested**, plus the full evolution
+> gate-wall (cargo-deny + cargo-audit + guard-scan + coverage ≥ 80%). The §3
+> AI-latency SLOs and **SP-C (front)** remain open. See
+> [`status/2026-06-29-session-handoff.md`](status/2026-06-29-session-handoff.md)
 > for the verified KPI-by-KPI status and the SP-C Increment 1 plan.
 
 ## The unified increment spine (risk-first, wedge-first)
@@ -58,7 +58,7 @@ P0/P1) lands with Increment 1 and protects the product that already exists.
 - **Token-is-not-a-cache.** The Biscuit encodes a capability minted _at access_ from OIDC identity + DB membership; Postgres stays the authority on _current_ membership (the basis of immediate revocation via the fanout-invalidated recheck cache).
 - **Biscuit emitter discipline.** Sole emitter, Ed25519 key shared across instances, injected-clock minting, authorizer policies, `check if time < expiration` self-expiry, errors never carry the token. SP-A generalizes `session→space`; SP-B adds signed third-party blocks (classifier + ingestion keys, independent of the server's trust).
 - **Token transport.** Web/PWA: `HttpOnly; Secure; SameSite=Strict` cookie + `Sec-Fetch-Site` check. Tauri: `Authorization` header + OS secure store. The wasm client never reads the token.
-- **Sovereignty.** OSS licensing only (MIT/Apache/MPL — to be enforced by the evolution `deny.toml` gate), EU residency, no US hyperscaler/gatekeeper, and no internal/proprietary-employer reference of any kind in any artifact (this is a clean-room sovereign OSS repo).
+- **Sovereignty.** OSS licensing only (MIT/Apache/MPL family, enforced by the `deny.toml` + `cargo-audit` gates), EU residency, no US hyperscaler/gatekeeper, and no internal/proprietary-employer reference of any kind in any artifact (this is a clean-room sovereign OSS repo).
 
 ## Cross-spec coherence ledger (open items spanning specs)
 
