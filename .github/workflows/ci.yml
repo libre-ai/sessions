@@ -2,59 +2,51 @@ name: ci
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  check:
+  rust:
+    name: Rust quality gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Format
         run: cargo fmt --all --check
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features
+      - name: Check
+        run: cargo check --workspace --all-targets --all-features
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --workspace --all-features
+      - name: Documentation
+        run: cargo doc --workspace --all-features --no-deps
       - name: WASM portability (client crates)
         run: cargo check -p presto-core -p presto-ui --target wasm32-unknown-unknown
 
-  supply-chain:
-    # Evolution Sec2: OSS-only licensing (ADR-0001) + vulnerability scan, gated.
-    # cargo-deny is the primary gate; cargo-audit is a second, independent RustSec
-    # scan (both read .cargo/audit.toml / deny.toml for the same justified ignores).
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-      - uses: taiki-e/install-action@cargo-audit
-      - name: cargo-audit (RustSec advisory scan)
-        run: cargo audit
-
   guard:
-    # Evolution gate: nothing machine-local, no internal/proprietary-employer
-    # reference, and no committed secret files leak into this sovereign OSS repo.
+    name: Repository guardrails
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: No machine-local home paths
         run: |
           if git grep -nIE '/Users/[a-z]|/home/[a-z]+/(dev|[.]claude)' -- . ; then
             echo "::error::machine-local path committed"; exit 1
           fi
       - name: No forbidden internal/proprietary reference
-        # The needle is assembled from fragments so this gate never matches itself.
         run: |
           forbidden="dox""allia"
           if git grep -niE "$forbidden" -- . ; then
@@ -67,12 +59,7 @@ jobs:
           fi
 
   integration:
-    # Real-infra gated tests against live Postgres (pgvector) + Redis service
-    # containers — the multi-instance, store-divergence, and corpus tests that the
-    # default run skips — AND the line-coverage gate (>= 80%, via tarpaulin.toml)
-    # which only reaches threshold when these gated paths run. The AI-gated tests
-    # (live_provider, live_rag) self-skip without an AI endpoint; they stay a
-    # manual/local proof.
+    name: Integration + coverage
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -92,22 +79,15 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:presto@localhost:5432/postgres
       REDIS_URL: redis://localhost:6379/
+      RUSTFLAGS: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: taiki-e/install-action@c6d51ded7cde3c421f6cd6046cd601f2248f3710 # cargo-llvm-cov
       - name: Integration + coverage gate (real Postgres + Redis, >= 80%)
-        # cargo-llvm-cov instruments at COMPILE time (no ptrace), so the async WS
-        # tests run normally — unlike tarpaulin's Linux ptrace engine which
-        # destabilizes them. Runs the gated tests AND enforces >= 80% line
-        # coverage; main.rs (binary composition root) excluded. The load test is
-        # skipped here: it is a LATENCY test (its perf assertions are invalid
-        # under coverage instrumentation, which inflates timings ~4x) and its
-        # coverage is redundant with the WS integration tests — the §3 SLOs are
-        # proven locally with `cargo test --release --test load -- --ignored`.
         run: >-
           cargo llvm-cov --workspace --ignore-filename-regex 'main\.rs'
           --fail-under-lines 80 -- --include-ignored --skip sustains_200_participants

@@ -40,6 +40,14 @@ Expected next evidence:
 
 Dogfooding claims should stay backed by visible commands, fixtures, CI workflows, generated reports, or linked docs.
 
+## Contributing
+
+See:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines;
+- [ROADMAP.md](ROADMAP.md) for current contribution priorities;
+- [issue templates](.github/ISSUE_TEMPLATE/) for bugs, docs issues, fixture/example requests, and design discussions.
+
 ## Usable today
 
 The Rust core and server expose contract/stub proofs for source-grounded learning sessions. They are useful to validate boundaries, privacy defaults, delegation limits, and citation workflow assumptions.
