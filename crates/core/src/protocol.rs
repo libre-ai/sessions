@@ -75,6 +75,11 @@ pub enum ClientMessage {
     PushQuestion {
         question: Question,
     },
+    /// Host opens a question generated from the corpus for `query`
+    /// (retrieve → generate → verify; host-only).
+    GenerateQuestion {
+        query: String,
+    },
     /// Host reveals answers and the leaderboard (host-only).
     Reveal,
     Ping,

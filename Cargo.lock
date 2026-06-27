@@ -1394,6 +1394,7 @@ dependencies = [
  "futures-util",
  "parking_lot",
  "presto-core",
+ "presto-rag",
  "redis",
  "serde",
  "serde_json",

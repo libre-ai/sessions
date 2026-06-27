@@ -4,7 +4,16 @@
 //! stored with a `vector` column; retrieval embeds the query and ranks chunks by
 //! cosine distance. Embeddings are passed as `[...]::vector` literals, so no
 //! extra binding crate is required.
+//!
+//! # Security: the corpus is trusted
+//!
+//! Ingested text flows verbatim into the generation and grounding-verifier
+//! prompts ([`crate::generate`], [`crate::verify`]); [`CorpusStore::ingest`] does
+//! NOT sanitize it for prompt injection. The corpus is therefore assumed to come
+//! from a trusted (admin) source. When user-supplied ingestion is added, that
+//! text must be treated as untrusted and isolated from prompt construction.
 
+use async_trait::async_trait;
 use sqlx::Row;
 use sqlx::postgres::PgPool;
 
@@ -75,6 +84,19 @@ fn vector_literal(v: &[f32]) -> String {
     out
 }
 
+/// Ranked retrieval over a corpus, abstracted so the generation pipeline can be
+/// tested without a database.
+#[async_trait]
+pub trait Retriever: Send + Sync {
+    /// Retrieve the `k` chunks closest to `query`.
+    async fn retrieve(
+        &self,
+        query: &str,
+        k: usize,
+        provider: &dyn AiProvider,
+    ) -> Result<Vec<Retrieved>, CorpusError>;
+}
+
 /// Corpus storage in Postgres + pgvector.
 pub struct CorpusStore {
     pool: PgPool,
@@ -135,9 +157,11 @@ impl CorpusStore {
         }
         Ok(chunks.len())
     }
+}
 
-    /// Retrieve the `k` chunks closest to `query` by cosine distance.
-    pub async fn retrieve(
+#[async_trait]
+impl Retriever for CorpusStore {
+    async fn retrieve(
         &self,
         query: &str,
         k: usize,

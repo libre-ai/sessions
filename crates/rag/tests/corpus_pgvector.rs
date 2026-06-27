@@ -9,7 +9,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use presto_rag::corpus::CorpusStore;
+use presto_rag::corpus::{CorpusStore, Retriever};
 use presto_rag::provider::FakeAiProvider;
 
 #[tokio::test]

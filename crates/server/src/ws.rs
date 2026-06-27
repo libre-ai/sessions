@@ -16,7 +16,6 @@ use presto_core::protocol::{ClientMessage, ServerMessage};
 
 use crate::AppState;
 use crate::auth::Claims;
-use crate::store::SessionStore;
 
 /// Query string for `GET /ws/{session_id}`: the Biscuit join token (carries the
 /// participant id + capability) plus an optional display name.
@@ -95,7 +94,7 @@ async fn handle_socket(
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        let applied = apply(text.as_str(), &claims, state.store.as_ref(), &session_id).await;
+                        let applied = apply(text.as_str(), &claims, &state, &session_id).await;
                         for msg in applied.broadcasts {
                             state.fanout.publish(&session_id, msg).await;
                         }
@@ -145,8 +144,8 @@ fn reply(msg: ServerMessage) -> Applied {
     }
 }
 
-/// Apply one client message via the store, returning what to send.
-async fn apply(text: &str, claims: &Claims, store: &dyn SessionStore, session_id: &str) -> Applied {
+/// Apply one client message against the shared state, returning what to send.
+async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) -> Applied {
     let pid = &claims.participant_id;
     let is_host = claims.capability.is_host();
 
@@ -160,7 +159,7 @@ async fn apply(text: &str, claims: &Claims, store: &dyn SessionStore, session_id
     };
 
     match msg {
-        ClientMessage::Join { name } => match store.join(session_id, pid, &name).await {
+        ClientMessage::Join { name } => match state.store.join(session_id, pid, &name).await {
             Ok(count) => broadcast(ServerMessage::Joined {
                 participant_id: pid.clone(),
                 participants: count,
@@ -173,7 +172,8 @@ async fn apply(text: &str, claims: &Claims, store: &dyn SessionStore, session_id
             question_id: _,
             choice,
             elapsed_ms,
-        } => match store
+        } => match state
+            .store
             .submit_answer(session_id, pid, choice, elapsed_ms)
             .await
         {
@@ -186,25 +186,26 @@ async fn apply(text: &str, claims: &Claims, store: &dyn SessionStore, session_id
         },
         ClientMessage::PushQuestion { question } => {
             if !is_host {
-                return reply(ServerMessage::Error {
-                    reason: "host only".into(),
-                });
+                return reply(host_only());
             }
-            let public = question.public();
-            match store.push_question(session_id, &question).await {
-                Ok(()) => broadcast(ServerMessage::QuestionOpened { question: public }),
-                Err(e) => reply(ServerMessage::Error {
-                    reason: e.to_string(),
+            push_question(state, session_id, question).await
+        }
+        ClientMessage::GenerateQuestion { query } => {
+            if !is_host {
+                return reply(host_only());
+            }
+            match state.quiz.next_question(&query).await {
+                Some(question) => push_question(state, session_id, question).await,
+                None => reply(ServerMessage::Error {
+                    reason: "no grounded question for query".into(),
                 }),
             }
         }
         ClientMessage::Reveal => {
             if !is_host {
-                return reply(ServerMessage::Error {
-                    reason: "host only".into(),
-                });
+                return reply(host_only());
             }
-            match store.reveal(session_id).await {
+            match state.store.reveal(session_id).await {
                 Ok(r) => broadcast(ServerMessage::AnswersRevealed {
                     correct_choice: r.correct_choice,
                     leaderboard: r.leaderboard,
@@ -216,5 +217,27 @@ async fn apply(text: &str, claims: &Claims, store: &dyn SessionStore, session_id
             }
         }
         ClientMessage::Ping => reply(ServerMessage::Pong),
+    }
+}
+
+fn host_only() -> ServerMessage {
+    ServerMessage::Error {
+        reason: "host only".into(),
+    }
+}
+
+/// Store a question and broadcast its public projection (shared by
+/// `PushQuestion` and `GenerateQuestion`; the correct answer is never broadcast).
+async fn push_question(
+    state: &AppState,
+    session_id: &str,
+    question: presto_core::protocol::Question,
+) -> Applied {
+    let public = question.public();
+    match state.store.push_question(session_id, &question).await {
+        Ok(()) => broadcast(ServerMessage::QuestionOpened { question: public }),
+        Err(e) => reply(ServerMessage::Error {
+            reason: e.to_string(),
+        }),
     }
 }

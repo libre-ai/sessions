@@ -11,6 +11,7 @@
 
 pub mod corpus;
 pub mod generate;
+pub mod pipeline;
 pub mod provider;
 pub mod verify;
 

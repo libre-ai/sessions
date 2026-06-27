@@ -129,4 +129,23 @@ mod tests {
         .unwrap();
         assert!(!v.supported);
     }
+
+    #[tokio::test]
+    async fn rejects_malformed_verdict_json() {
+        struct MalformedFake;
+        #[async_trait]
+        impl AiProvider for MalformedFake {
+            async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, AiError> {
+                Ok(vec![])
+            }
+            async fn complete(&self, _system: &str, _user: &str) -> Result<String, AiError> {
+                // Missing "reason" field — deserialization will fail
+                Ok("{\"supported\": true}".to_string())
+            }
+        }
+        let err = verify_grounding(&question(), "any text", &MalformedFake)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid verdict JSON"));
+    }
 }

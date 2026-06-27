@@ -17,6 +17,7 @@ path = "src/main.rs"
 axum = { version = "0.8.9", features = ["ws"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
 presto-core.workspace = true
+presto-rag.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 parking_lot = "0.12.5"
