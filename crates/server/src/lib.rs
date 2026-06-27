@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod fanout;
+pub mod postgres_store;
 pub mod redis_fanout;
 pub mod session;
 pub mod store;
