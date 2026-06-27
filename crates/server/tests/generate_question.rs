@@ -391,7 +391,7 @@ async fn generated_question_preserves_correct_choice_through_reveal() {
 
     // Participant answers (the OneQuestionQuiz has correct_choice=0, so answering 0 is correct).
     p1.send(Message::text(format!(
-        r#"{{"type":"submit_answer","question_id":"{}","choice":0,"elapsed_ms":1200}}"#,
+        r#"{{"type":"submit_answer","question_id":"{}","choice":0}}"#,
         q_id
     )))
     .await

@@ -5,7 +5,11 @@
 
 use std::collections::BTreeMap;
 
-use presto_core::protocol::{LeaderboardEntry, ParticipantId, Question};
+use presto_core::protocol::{LeaderboardEntry, ParticipantId, Question, QuestionPublic};
+
+/// Grace added to a question's timer before the server closes it to answers, to
+/// allow for network latency on an answer sent just before the deadline.
+pub const ANSWER_GRACE_MS: u64 = 1500;
 
 /// Where a session is in its lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +39,8 @@ pub enum SessionError {
     AlreadyAnswered,
     UnknownParticipant,
     NoQuestion,
+    /// The question's timer (plus grace) has elapsed; answers are closed.
+    Closed,
 }
 
 /// The outcome of a reveal: the correct choice, the sorted leaderboard, and a
@@ -53,6 +59,9 @@ pub struct Session {
     pub host_id: String,
     pub phase: Phase,
     pub current: Option<Question>,
+    /// Epoch-millis at which `current` was opened (server clock); the basis for
+    /// answer timing and the close deadline.
+    pub opened_at_ms: Option<u64>,
     pub participants: BTreeMap<ParticipantId, Participant>,
     pub answers: BTreeMap<ParticipantId, Answer>,
 }
@@ -64,6 +73,7 @@ impl Session {
             host_id: host_id.into(),
             phase: Phase::Lobby,
             current: None,
+            opened_at_ms: None,
             participants: BTreeMap::new(),
             answers: BTreeMap::new(),
         }
@@ -78,19 +88,33 @@ impl Session {
         self.participants.len() as u32
     }
 
-    /// Open a new question: clears prior answers and enters `Asking`.
-    pub fn push_question(&mut self, question: Question) {
+    /// Open a new question at `opened_at_ms` (server clock): clears prior answers
+    /// and enters `Asking`.
+    pub fn push_question(&mut self, question: Question, opened_at_ms: u64) {
         self.current = Some(question);
+        self.opened_at_ms = Some(opened_at_ms);
         self.answers.clear();
         self.phase = Phase::Asking;
     }
 
-    /// Record a participant's answer (once, while `Asking`).
+    /// The currently open question's public projection, if one is open (for a
+    /// participant joining or reconnecting mid-question).
+    pub fn open_question(&self) -> Option<QuestionPublic> {
+        if self.phase == Phase::Asking {
+            self.current.as_ref().map(Question::public)
+        } else {
+            None
+        }
+    }
+
+    /// Record a participant's answer (once, while `Asking`, before the deadline).
+    /// `now_ms` is the server clock; elapsed time is computed here, never trusted
+    /// from the client.
     pub fn submit_answer(
         &mut self,
         participant_id: &str,
         choice: u8,
-        elapsed_ms: u32,
+        now_ms: u64,
     ) -> Result<(), SessionError> {
         if self.phase != Phase::Asking {
             return Err(SessionError::NotAsking);
@@ -101,6 +125,15 @@ impl Session {
         if self.answers.contains_key(participant_id) {
             return Err(SessionError::AlreadyAnswered);
         }
+        let opened = self.opened_at_ms.ok_or(SessionError::NotAsking)?;
+        let timer_ms = self
+            .current
+            .as_ref()
+            .map_or(0, |q| u64::from(q.timer_sec) * 1000);
+        if now_ms > opened + timer_ms + ANSWER_GRACE_MS {
+            return Err(SessionError::Closed);
+        }
+        let elapsed_ms = u32::try_from(now_ms.saturating_sub(opened)).unwrap_or(u32::MAX);
         self.answers
             .insert(participant_id.to_string(), Answer { choice, elapsed_ms });
         Ok(())
@@ -214,7 +247,7 @@ mod tests {
     fn answer_validation() {
         let mut s = Session::new("s1", "host");
         s.join("p1", "Alice");
-        s.push_question(question());
+        s.push_question(question(), 0);
         assert!(s.submit_answer("p1", 1, 100).is_ok());
         assert_eq!(
             s.submit_answer("p1", 0, 200),
@@ -233,12 +266,35 @@ mod tests {
     }
 
     #[test]
+    fn answers_after_the_deadline_are_closed() {
+        let mut s = Session::new("s1", "host");
+        s.join("p1", "Alice");
+        s.join("p2", "Bob");
+        s.push_question(question(), 0); // timer_sec = 30 → close at 30_000 + grace
+        // Within the timer + grace window: accepted, server-timed.
+        assert!(s.submit_answer("p1", 1, 31_000).is_ok());
+        assert_eq!(s.answers["p1"].elapsed_ms, 31_000);
+        // Past timer + grace (30_000 + 1_500): rejected.
+        assert_eq!(s.submit_answer("p2", 1, 31_501), Err(SessionError::Closed));
+    }
+
+    #[test]
+    fn open_question_tracks_the_asking_phase() {
+        let mut s = Session::new("s1", "host");
+        assert!(s.open_question().is_none()); // Lobby
+        s.push_question(question(), 0);
+        assert_eq!(s.open_question().unwrap().id, "q1"); // Asking → public question
+        s.reveal().unwrap();
+        assert!(s.open_question().is_none()); // Revealed
+    }
+
+    #[test]
     fn full_round_scores_ranks_and_builds_heatmap() {
         let mut s = Session::new("s1", "host");
         s.join("p1", "Alice");
         s.join("p2", "Bob");
         s.join("p3", "Carol");
-        s.push_question(question());
+        s.push_question(question(), 0);
 
         s.submit_answer("p1", 1, 1_000).unwrap(); // correct, fast
         s.submit_answer("p2", 1, 20_000).unwrap(); // correct, slow
@@ -260,7 +316,7 @@ mod tests {
         assert!((confusion - 1.0 / 3.0).abs() < 1e-6);
 
         // A new question resets answers and re-enters Asking.
-        s.push_question(question());
+        s.push_question(question(), 0);
         assert_eq!(s.phase, Phase::Asking);
         assert!(s.answers.is_empty());
     }

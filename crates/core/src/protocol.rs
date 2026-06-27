@@ -66,10 +66,11 @@ pub enum ClientMessage {
     Join {
         name: String,
     },
+    /// Answer the open question. The server times the answer (from when the
+    /// question opened) — clients do not supply elapsed time.
     SubmitAnswer {
         question_id: QuestionId,
         choice: u8,
-        elapsed_ms: u32,
     },
     /// Host opens a question (host-only; enforced by the WS/Biscuit layer).
     PushQuestion {
@@ -142,7 +143,6 @@ mod tests {
         let msg = ClientMessage::SubmitAnswer {
             question_id: "q1".into(),
             choice: 1,
-            elapsed_ms: 3500,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"submit_answer\""));

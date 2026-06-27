@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use sqlx::Row;
 use sqlx::postgres::PgPool;
 
-use presto_core::protocol::{LeaderboardEntry, Question};
+use presto_core::protocol::{LeaderboardEntry, Question, QuestionPublic};
 
-use crate::session::{RevealResult, SessionError, score};
+use crate::session::{ANSWER_GRACE_MS, RevealResult, SessionError, score};
 use crate::store::{SessionStore, StoreError, StoreResult};
 
 const SCHEMA: &str = r#"
@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS presto_sessions (
     id               TEXT PRIMARY KEY,
     host_id          TEXT NOT NULL,
     phase            TEXT NOT NULL DEFAULT 'lobby',
-    current_question TEXT
+    current_question TEXT,
+    opened_at        BIGINT
 );
 CREATE TABLE IF NOT EXISTS presto_participants (
     session_id     TEXT   NOT NULL,
@@ -37,6 +38,8 @@ CREATE TABLE IF NOT EXISTS presto_answers (
     elapsed_ms     INTEGER  NOT NULL,
     PRIMARY KEY (session_id, question_id, participant_id)
 );
+-- Migration-safe: add opened_at to sessions tables created before this column existed.
+ALTER TABLE presto_sessions ADD COLUMN IF NOT EXISTS opened_at BIGINT;
 "#;
 
 fn backend<E: std::fmt::Display>(e: E) -> StoreError {
@@ -111,12 +114,19 @@ impl SessionStore for PostgresSessionStore {
         Ok(count as u32)
     }
 
-    async fn push_question(&self, session_id: &str, question: &Question) -> StoreResult<()> {
+    async fn push_question(
+        &self,
+        session_id: &str,
+        question: &Question,
+        opened_at_ms: u64,
+    ) -> StoreResult<()> {
         let json = serde_json::to_string(question).map_err(backend)?;
         sqlx::query(
-            "UPDATE presto_sessions SET current_question = $1, phase = 'asking' WHERE id = $2",
+            "UPDATE presto_sessions SET current_question = $1, phase = 'asking', opened_at = $2 \
+             WHERE id = $3",
         )
         .bind(json)
+        .bind(opened_at_ms as i64)
         .bind(session_id)
         .execute(&self.pool)
         .await
@@ -129,20 +139,34 @@ impl SessionStore for PostgresSessionStore {
         session_id: &str,
         participant_id: &str,
         choice: u8,
-        elapsed_ms: u32,
+        now_ms: u64,
     ) -> StoreResult<()> {
-        let phase: Option<String> =
-            sqlx::query_scalar("SELECT phase FROM presto_sessions WHERE id = $1")
-                .bind(session_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?;
-        if phase.as_deref() != Some("asking") {
-            return Err(StoreError::Session(SessionError::NotAsking));
-        }
-        let Some(question) = self.current_question(session_id).await? else {
+        let row = sqlx::query("SELECT phase, opened_at FROM presto_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        let Some(row) = row else {
             return Err(StoreError::Session(SessionError::NotAsking));
         };
+        let phase: String = row.get("phase");
+        let opened_at: Option<i64> = row.get("opened_at");
+        if phase != "asking" {
+            return Err(StoreError::Session(SessionError::NotAsking));
+        }
+        let (Some(opened_at), Some(question)) =
+            (opened_at, self.current_question(session_id).await?)
+        else {
+            return Err(StoreError::Session(SessionError::NotAsking));
+        };
+
+        // Server-side close deadline: timer plus a network-latency grace.
+        let opened = opened_at as u64;
+        let timer_ms = u64::from(question.timer_sec) * 1000;
+        if now_ms > opened + timer_ms + ANSWER_GRACE_MS {
+            return Err(StoreError::Session(SessionError::Closed));
+        }
+
         let exists: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM presto_participants WHERE session_id = $1 AND participant_id = $2",
         )
@@ -154,6 +178,9 @@ impl SessionStore for PostgresSessionStore {
         if exists == 0 {
             return Err(StoreError::Session(SessionError::UnknownParticipant));
         }
+
+        // Server times the answer; the client value (if any) is ignored.
+        let elapsed_ms = u32::try_from(now_ms.saturating_sub(opened)).unwrap_or(u32::MAX);
         let inserted = sqlx::query(
             "INSERT INTO presto_answers (session_id, question_id, participant_id, choice, elapsed_ms) \
              VALUES ($1, $2, $3, $4, $5) \
@@ -171,6 +198,19 @@ impl SessionStore for PostgresSessionStore {
             return Err(StoreError::Session(SessionError::AlreadyAnswered));
         }
         Ok(())
+    }
+
+    async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>> {
+        let phase: Option<String> =
+            sqlx::query_scalar("SELECT phase FROM presto_sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(backend)?;
+        if phase.as_deref() != Some("asking") {
+            return Ok(None);
+        }
+        Ok(self.current_question(session_id).await?.map(|q| q.public()))
     }
 
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {

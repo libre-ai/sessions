@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
-use presto_core::protocol::Question;
+use presto_core::protocol::{Question, QuestionPublic};
 
 use crate::session::{RevealResult, Session, SessionError};
 
@@ -51,16 +51,26 @@ pub trait SessionStore: Send + Sync {
     async fn ensure(&self, session_id: &str, host_id: &str) -> StoreResult<()>;
     /// Add (or re-add) a participant; returns the participant count.
     async fn join(&self, session_id: &str, participant_id: &str, name: &str) -> StoreResult<u32>;
-    /// Open a question (host action): clears prior answers, enters `Asking`.
-    async fn push_question(&self, session_id: &str, question: &Question) -> StoreResult<()>;
-    /// Record a participant's answer (once, while `Asking`).
+    /// Open a question at `opened_at_ms` (host action): clears prior answers,
+    /// enters `Asking`.
+    async fn push_question(
+        &self,
+        session_id: &str,
+        question: &Question,
+        opened_at_ms: u64,
+    ) -> StoreResult<()>;
+    /// Record a participant's answer (once, while `Asking`, before the deadline).
+    /// `now_ms` is the server clock; elapsed time is computed server-side.
     async fn submit_answer(
         &self,
         session_id: &str,
         participant_id: &str,
         choice: u8,
-        elapsed_ms: u32,
+        now_ms: u64,
     ) -> StoreResult<()>;
+    /// The currently open question (public projection), for a participant joining
+    /// or reconnecting mid-question.
+    async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>>;
     /// Score the round and return the leaderboard + heatmap; enters `Revealed`.
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult>;
 }
@@ -108,10 +118,15 @@ impl SessionStore for InMemorySessionStore {
             .join(participant_id, name))
     }
 
-    async fn push_question(&self, session_id: &str, question: &Question) -> StoreResult<()> {
+    async fn push_question(
+        &self,
+        session_id: &str,
+        question: &Question,
+        opened_at_ms: u64,
+    ) -> StoreResult<()> {
         self.get_or_create(session_id, "")
             .lock()
-            .push_question(question.clone());
+            .push_question(question.clone(), opened_at_ms);
         Ok(())
     }
 
@@ -120,14 +135,16 @@ impl SessionStore for InMemorySessionStore {
         session_id: &str,
         participant_id: &str,
         choice: u8,
-        elapsed_ms: u32,
+        now_ms: u64,
     ) -> StoreResult<()> {
-        self.get_or_create(session_id, "").lock().submit_answer(
-            participant_id,
-            choice,
-            elapsed_ms,
-        )?;
+        self.get_or_create(session_id, "")
+            .lock()
+            .submit_answer(participant_id, choice, now_ms)?;
         Ok(())
+    }
+
+    async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>> {
+        Ok(self.get_or_create(session_id, "").lock().open_question())
     }
 
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {
@@ -157,7 +174,9 @@ mod tests {
         let store = InMemorySessionStore::new();
         store.ensure("s1", "host").await.unwrap();
         assert_eq!(store.join("s1", "p1", "Alice").await.unwrap(), 1);
-        store.push_question("s1", &question()).await.unwrap();
+        store.push_question("s1", &question(), 0).await.unwrap();
+        // The open question is available as a snapshot for late joiners.
+        assert!(store.snapshot("s1").await.unwrap().is_some());
         store.submit_answer("s1", "p1", 1, 1000).await.unwrap();
         // double answer is rejected by the engine, surfaced as a store error.
         assert!(store.submit_answer("s1", "p1", 0, 1).await.is_err());
@@ -165,5 +184,7 @@ mod tests {
         assert_eq!(reveal.correct_choice, 1);
         assert_eq!(reveal.leaderboard[0].participant_id, "p1");
         assert!(reveal.leaderboard[0].score >= 500);
+        // After reveal, there is no open question to snapshot.
+        assert!(store.snapshot("s1").await.unwrap().is_none());
     }
 }
