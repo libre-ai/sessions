@@ -4,18 +4,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use presto_server::auth::Auth;
-use presto_server::registry::SessionRegistry;
 use presto_server::{AppState, app};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // TB-1 mints with an ephemeral keypair per boot. Production loads the key
-    // from `BISCUIT_PRIVATE_KEY` (so links survive restarts); identity is
-    // federated via OIDC/Keycloak in TB-4.
-    let state = AppState {
-        registry: SessionRegistry::new(),
-        auth: Arc::new(Auth::generate()),
-    };
+    // TB-1/2 run single-instance (in-memory). A multi-instance deployment swaps
+    // in the Redis fanout + Postgres store behind the same `AppState` seams.
+    // The Biscuit key is ephemeral here; production loads `BISCUIT_PRIVATE_KEY`.
+    let state = AppState::in_memory(Arc::new(Auth::generate()));
 
     // Clever Cloud injects `PORT`; default to 8080 for local runs.
     let port: u16 = std::env::var("PORT")
