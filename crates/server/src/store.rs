@@ -1,23 +1,71 @@
-//! The session-state seam: where authoritative session state lives.
+//! The session-state seam, as **async operations** so authoritative state can
+//! live off-instance (Postgres) for correct cross-instance scoring.
 //!
-//! In-memory today ([`InMemorySessionStore`]); a Postgres-backed store (for
-//! crash recovery across instances) plugs in behind the same trait in a later
-//! slice. State is returned as `Arc<Mutex<Session>>` so the WS handler mutates
-//! it under a short synchronous lock.
+//! [`InMemorySessionStore`] wraps the in-memory [`Session`] engine (single
+//! instance); [`crate::postgres_store::PostgresSessionStore`] shares state across
+//! instances. The WS handler only ever calls these operations — never touches
+//! state directly — so swapping the backend needs no handler change.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use parking_lot::Mutex;
 
-use crate::session::Session;
+use presto_core::protocol::Question;
 
-/// Look up or create authoritative session state.
-pub trait SessionStore: Send + Sync {
-    fn get_or_create(&self, session_id: &str, host_id: &str) -> Arc<Mutex<Session>>;
+use crate::session::{RevealResult, Session, SessionError};
+
+/// A store operation failure.
+#[derive(Debug)]
+pub enum StoreError {
+    /// A live-session rule was violated (wrong phase, double answer, …).
+    Session(SessionError),
+    /// The backend (database, network) failed.
+    Backend(String),
 }
 
-/// Single-instance, in-memory session store.
+impl From<SessionError> for StoreError {
+    fn from(e: SessionError) -> Self {
+        StoreError::Session(e)
+    }
+}
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreError::Session(e) => write!(f, "{e:?}"),
+            StoreError::Backend(m) => write!(f, "store backend: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+pub type StoreResult<T> = Result<T, StoreError>;
+
+/// Authoritative session state as a set of async operations.
+#[async_trait]
+pub trait SessionStore: Send + Sync {
+    /// Create the session if absent (idempotent), with `host_id` as host.
+    async fn ensure(&self, session_id: &str, host_id: &str) -> StoreResult<()>;
+    /// Add (or re-add) a participant; returns the participant count.
+    async fn join(&self, session_id: &str, participant_id: &str, name: &str) -> StoreResult<u32>;
+    /// Open a question (host action): clears prior answers, enters `Asking`.
+    async fn push_question(&self, session_id: &str, question: &Question) -> StoreResult<()>;
+    /// Record a participant's answer (once, while `Asking`).
+    async fn submit_answer(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+        choice: u8,
+        elapsed_ms: u32,
+    ) -> StoreResult<()>;
+    /// Score the round and return the leaderboard + heatmap; enters `Revealed`.
+    async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult>;
+}
+
+/// Single-instance, in-memory store: wraps the pure [`Session`] engine.
 #[derive(Default)]
 pub struct InMemorySessionStore {
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
@@ -26,6 +74,14 @@ pub struct InMemorySessionStore {
 impl InMemorySessionStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn get_or_create(&self, session_id: &str, host_id: &str) -> Arc<Mutex<Session>> {
+        self.sessions
+            .lock()
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(Session::new(session_id, host_id))))
+            .clone()
     }
 
     /// Number of live sessions (tests / metrics).
@@ -38,28 +94,76 @@ impl InMemorySessionStore {
     }
 }
 
+#[async_trait]
 impl SessionStore for InMemorySessionStore {
-    fn get_or_create(&self, session_id: &str, host_id: &str) -> Arc<Mutex<Session>> {
-        self.sessions
+    async fn ensure(&self, session_id: &str, host_id: &str) -> StoreResult<()> {
+        self.get_or_create(session_id, host_id);
+        Ok(())
+    }
+
+    async fn join(&self, session_id: &str, participant_id: &str, name: &str) -> StoreResult<u32> {
+        Ok(self
+            .get_or_create(session_id, "")
             .lock()
-            .entry(session_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(Session::new(session_id, host_id))))
-            .clone()
+            .join(participant_id, name))
+    }
+
+    async fn push_question(&self, session_id: &str, question: &Question) -> StoreResult<()> {
+        self.get_or_create(session_id, "")
+            .lock()
+            .push_question(question.clone());
+        Ok(())
+    }
+
+    async fn submit_answer(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+        choice: u8,
+        elapsed_ms: u32,
+    ) -> StoreResult<()> {
+        self.get_or_create(session_id, "").lock().submit_answer(
+            participant_id,
+            choice,
+            elapsed_ms,
+        )?;
+        Ok(())
+    }
+
+    async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {
+        let result = self.get_or_create(session_id, "").lock().reveal()?;
+        Ok(result)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use presto_core::protocol::Question;
 
-    #[test]
-    fn get_or_create_is_idempotent() {
+    fn question() -> Question {
+        Question {
+            id: "q1".into(),
+            text: "?".into(),
+            choices: vec!["a".into(), "b".into()],
+            correct_choice: 1,
+            source_section_ids: vec!["s1".into()],
+            timer_sec: 20,
+        }
+    }
+
+    #[tokio::test]
+    async fn full_round_through_the_store() {
         let store = InMemorySessionStore::new();
-        let a = store.get_or_create("s1", "host");
-        let b = store.get_or_create("s1", "host");
-        assert!(Arc::ptr_eq(&a, &b));
-        assert_eq!(store.len(), 1);
-        store.get_or_create("s2", "host");
-        assert_eq!(store.len(), 2);
+        store.ensure("s1", "host").await.unwrap();
+        assert_eq!(store.join("s1", "p1", "Alice").await.unwrap(), 1);
+        store.push_question("s1", &question()).await.unwrap();
+        store.submit_answer("s1", "p1", 1, 1000).await.unwrap();
+        // double answer is rejected by the engine, surfaced as a store error.
+        assert!(store.submit_answer("s1", "p1", 0, 1).await.is_err());
+        let reveal = store.reveal("s1").await.unwrap();
+        assert_eq!(reveal.correct_choice, 1);
+        assert_eq!(reveal.leaderboard[0].participant_id, "p1");
+        assert!(reveal.leaderboard[0].score >= 500);
     }
 }
