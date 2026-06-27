@@ -1,7 +1,9 @@
-//! End-to-end WebSocket proof: a host event fans out across connections to a
-//! participant, the answer never leaks, and reveal returns a scored leaderboard.
+//! End-to-end WebSocket proof: Biscuit join tokens gate the upgrade, a host
+//! event fans out across connections to a participant, the answer never leaks,
+//! and reveal returns a scored leaderboard.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -9,21 +11,30 @@ use serde_json::Value;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
-use presto_server::app;
+use presto_server::auth::{Auth, Capability};
 use presto_server::registry::SessionRegistry;
+use presto_server::{AppState, app};
 
 type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-async fn spawn_server() -> SocketAddr {
+struct Server {
+    addr: SocketAddr,
+    auth: Arc<Auth>,
+}
+
+async fn spawn_server() -> Server {
+    let auth = Arc::new(Auth::generate());
+    let state = AppState {
+        registry: SessionRegistry::new(),
+        auth: auth.clone(),
+    };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, app(SessionRegistry::new()))
-            .await
-            .unwrap();
+        axum::serve(listener, app(state)).await.unwrap();
     });
-    addr
+    Server { addr, auth }
 }
 
 async fn send(ws: &mut Ws, payload: &str) {
@@ -52,14 +63,37 @@ async fn recv_until(ws: &mut Ws, kind: &str) -> Value {
 }
 
 #[tokio::test]
-async fn live_round_fans_out_host_events_to_participants() {
-    let addr = spawn_server().await;
-    let base = format!("ws://{addr}/ws/sess1");
+async fn invalid_token_is_rejected_before_upgrade() {
+    let srv = spawn_server().await;
+    let url = format!("ws://{}/ws/sess1?token=not-a-biscuit", srv.addr);
+    assert!(
+        connect_async(url).await.is_err(),
+        "an unauthenticated upgrade must be refused"
+    );
+}
 
-    let (mut host, _) = connect_async(format!("{base}?role=host&pid=host"))
+#[tokio::test]
+async fn live_round_fans_out_host_events_to_participants() {
+    let srv = spawn_server().await;
+    let host_token = srv
+        .auth
+        .mint("sess1", "host", Capability::Host, Duration::from_secs(3600))
+        .unwrap();
+    let p1_token = srv
+        .auth
+        .mint(
+            "sess1",
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(3600),
+        )
+        .unwrap();
+    let base = format!("ws://{}/ws/sess1", srv.addr);
+
+    let (mut host, _) = connect_async(format!("{base}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("{base}?role=participant&pid=p1&name=Alice"))
+    let (mut p1, _) = connect_async(format!("{base}?token={p1_token}&name=Alice"))
         .await
         .unwrap();
 
