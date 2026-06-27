@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS presto_answers (
     question_id    TEXT     NOT NULL,
     participant_id TEXT     NOT NULL,
     choice         SMALLINT NOT NULL,
-    elapsed_ms     INTEGER  NOT NULL,
+    elapsed_ms     BIGINT   NOT NULL,
     PRIMARY KEY (session_id, question_id, participant_id)
 );
 -- Migration-safe: add opened_at to sessions tables created before this column existed.
@@ -126,6 +126,7 @@ impl SessionStore for PostgresSessionStore {
              WHERE id = $3",
         )
         .bind(json)
+        // Epoch millis fit i64 for ~292M years; the cast cannot overflow.
         .bind(opened_at_ms as i64)
         .bind(session_id)
         .execute(&self.pool)
@@ -190,7 +191,8 @@ impl SessionStore for PostgresSessionStore {
         .bind(&question.id)
         .bind(participant_id)
         .bind(i16::from(choice))
-        .bind(elapsed_ms as i32)
+        // BIGINT column: i64::from is lossless for the full u32 range (no wrap).
+        .bind(i64::from(elapsed_ms))
         .execute(&self.pool)
         .await
         .map_err(backend)?;
@@ -231,10 +233,11 @@ impl SessionStore for PostgresSessionStore {
         let mut wrong = 0usize;
         for a in &answers {
             let choice: i16 = a.get("choice");
-            let elapsed: i32 = a.get("elapsed_ms");
+            let elapsed: i64 = a.get("elapsed_ms");
             if choice as u8 == correct {
                 let pid: String = a.get("participant_id");
-                let points = i64::from(score(true, elapsed as u32));
+                let elapsed_ms = u32::try_from(elapsed).unwrap_or(u32::MAX);
+                let points = i64::from(score(true, elapsed_ms));
                 sqlx::query("UPDATE presto_participants SET score = score + $1 WHERE session_id = $2 AND participant_id = $3")
                     .bind(points)
                     .bind(session_id)
