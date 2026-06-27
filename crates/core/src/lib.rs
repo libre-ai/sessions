@@ -1,18 +1,8 @@
 //! presto-core — the shared client/protocol core for Presto-Matic.
 //!
-//! Compiled to native (via UniFFI) and to wasm (web). Phase 0 ships only this
-//! scaffold; the realtime session protocol, shared state and Biscuit handling
-//! land with the P3 live tracer-bullet.
+//! Compiled to native (via UniFFI) and to wasm (web). Holds the wire protocol
+//! shared by the server and every client; the realtime client state machine and
+//! Biscuit handling land with later tracer-bullet slices.
 
-/// Stable crate identity used by early wiring tests.
-pub const CRATE_NAME: &str = "presto-core";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn workspace_member_links() {
-        assert_eq!(CRATE_NAME, "presto-core");
-    }
-}
+pub mod fixtures;
+pub mod protocol;

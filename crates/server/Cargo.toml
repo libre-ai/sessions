@@ -5,13 +5,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "presto_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "presto-server"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.8.9"
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "macros"] }
+axum = { version = "0.8.9", features = ["ws"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+presto-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot = "0.12.5"
+biscuit-auth = "6.0.0"
 
 [dev-dependencies]
+futures-util = "0.3.32"
+tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["util"] }
