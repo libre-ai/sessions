@@ -3,17 +3,20 @@
 //! question, and verification returns a parseable verdict. The value of a real
 //! model's verdict is model-dependent, so only parseability is asserted.
 //!
-//! Ignored by default. Run with any OpenAI-compatible endpoint, e.g. a local
-//! Ollama, Mistral, or Clever AI:
+//! Ignored by default. The endpoint is vendor-agnostic — run against any
+//! OpenAI-compatible server. Local default: LM Studio. Hosted sovereign default:
+//! Mistral (Paris); Clever AI is not yet GA (private alpha as of 2026-06).
 //!
 //! ```text
-//! # Ollama (sovereign, local, no key):
-//! ollama serve & ; ollama pull nomic-embed-text ; ollama pull qwen2.5
-//! AI_BASE_URL=http://localhost:11434/v1 AI_API_KEY=ollama \
-//!   AI_EMBED_MODEL=nomic-embed-text AI_CHAT_MODEL=qwen2.5 \
+//! # LM Studio (local): in the app, load an embedding model + a chat model,
+//! #   then Local Server -> Start Server. Default endpoint http://localhost:1234/v1,
+//! #   any dummy key. Model names must match what is loaded (see /v1/models).
+//! AI_BASE_URL=http://localhost:1234/v1 AI_API_KEY=lm-studio \
+//!   AI_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5 \
+//!   AI_CHAT_MODEL=qwen2.5-7b-instruct \
 //!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
 //!
-//! # Mistral (Paris):
+//! # Mistral (Paris, hosted sovereign):
 //! AI_BASE_URL=https://api.mistral.ai/v1 AI_API_KEY=$MISTRAL_KEY \
 //!   AI_EMBED_MODEL=mistral-embed AI_CHAT_MODEL=mistral-small-latest \
 //!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
