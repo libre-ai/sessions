@@ -11,7 +11,7 @@
 use std::time::{Duration, SystemTime};
 
 use biscuit_auth::macros::{authorizer, biscuit};
-use biscuit_auth::{Biscuit, KeyPair, PublicKey};
+use biscuit_auth::{Algorithm, Biscuit, KeyPair, PrivateKey, PublicKey};
 
 /// What a token-holder may do in a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +72,22 @@ impl Auth {
         Self {
             keypair: KeyPair::new(),
         }
+    }
+
+    /// Load the emitter keypair from a hex-encoded Ed25519 private key. All
+    /// instances of a multi-instance deployment MUST share this key, or a token
+    /// minted by one instance is rejected by another.
+    pub fn from_private_key_hex(hex: &str) -> Result<Self, AuthError> {
+        let private = PrivateKey::from_bytes_hex(hex, Algorithm::Ed25519)
+            .map_err(|e| AuthError(format!("invalid private key: {e}")))?;
+        Ok(Self {
+            keypair: KeyPair::from(&private),
+        })
+    }
+
+    /// The hex-encoded private key (for `keygen` output / `BISCUIT_PRIVATE_KEY`).
+    pub fn private_key_hex(&self) -> String {
+        self.keypair.private().to_bytes_hex()
     }
 
     pub fn public_key(&self) -> PublicKey {
@@ -213,5 +229,23 @@ mod tests {
             .mint("s1", "p1", Capability::Host, Duration::from_secs(3600))
             .unwrap();
         assert!(issuer.verify(&forged, "s1", now()).is_err());
+    }
+
+    #[test]
+    fn shared_key_lets_one_instance_verify_anothers_token() {
+        // Two instances loading the SAME hex key must accept each other's tokens.
+        let a = Auth::generate();
+        let b = Auth::from_private_key_hex(&a.private_key_hex()).unwrap();
+        let token = a
+            .mint("s1", "p1", Capability::Participant, Duration::from_secs(60))
+            .unwrap();
+        let claims = b.verify(&token, "s1", now()).unwrap();
+        assert_eq!(claims.participant_id, "p1");
+        assert_eq!(claims.capability, Capability::Participant);
+    }
+
+    #[test]
+    fn invalid_private_key_hex_is_rejected() {
+        assert!(Auth::from_private_key_hex("not-a-valid-hex-key").is_err());
     }
 }
