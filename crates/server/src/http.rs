@@ -44,6 +44,10 @@ pub(crate) struct CreatedSession {
 pub(crate) async fn create_session(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<CreatedSession>>, StatusCode> {
+    // The endpoint is open (wedge), so rate-limit creation to bound resource use.
+    if !state.session_rate.allow() {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
     let session_id = code(6);
     let host_id = format!("host-{}", code(4));
     state

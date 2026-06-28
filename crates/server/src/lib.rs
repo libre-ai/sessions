@@ -12,6 +12,7 @@ pub mod fanout;
 pub mod http;
 pub mod postgres_store;
 pub mod quiz;
+pub mod ratelimit;
 pub mod redis_fanout;
 pub mod session;
 pub mod store;
@@ -28,6 +29,7 @@ use quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
     FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource,
 };
+use ratelimit::TokenBucket;
 use store::{InMemorySessionStore, SessionStore};
 
 /// Shared application state: the session-state store, the fanout, the token
@@ -43,6 +45,8 @@ pub struct AppState {
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
     pub ingestor: Arc<dyn DocumentIngestor>,
+    /// Guards the open `POST /sessions` endpoint against creation spam.
+    pub session_rate: Arc<TokenBucket>,
 }
 
 impl AppState {
@@ -57,6 +61,8 @@ impl AppState {
             breakout: Arc::new(FixtureBreakoutSource),
             flashcards: Arc::new(FixtureFlashcardSource),
             ingestor: Arc::new(FixtureIngestor),
+            // Generous burst, ~1 new session/sec sustained; tune via env in main.
+            session_rate: Arc::new(TokenBucket::new(30.0, 1.0)),
         }
     }
 }
@@ -136,6 +142,24 @@ mod tests {
     async fn ingest_requires_a_document_id() {
         let status = ingest("/corpus/documents?document_id=", "text/plain", "x").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_session_is_rate_limited() {
+        let mut state = AppState::in_memory(Arc::new(Auth::generate()));
+        // An empty, non-refilling bucket refuses the very first creation.
+        state.session_rate = Arc::new(ratelimit::TokenBucket::new(0.0, 0.0));
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[tokio::test]

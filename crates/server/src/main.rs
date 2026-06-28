@@ -19,6 +19,7 @@ use presto_server::quiz::{
     FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource, RagBreakoutSource,
     RagFlashcardSource, RagIngestor, RagQuizSource,
 };
+use presto_server::ratelimit::TokenBucket;
 use presto_server::redis_fanout::RedisFanout;
 use presto_server::store::{InMemorySessionStore, SessionStore};
 use presto_server::{AppState, app};
@@ -121,6 +122,20 @@ async fn build_content() -> Content {
     }
 }
 
+/// The `POST /sessions` rate limiter: burst + steady refill, tunable via
+/// `SESSION_RATE_BURST` and `SESSION_RATE_PER_SEC` (defaults 30 burst, 1/sec).
+fn build_session_rate() -> Arc<TokenBucket> {
+    let burst = std::env::var("SESSION_RATE_BURST")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30.0);
+    let per_sec = std::env::var("SESSION_RATE_PER_SEC")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+    Arc::new(TokenBucket::new(burst, per_sec))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // `presto-server keygen` mints a shared Biscuit private key and exits.
@@ -138,6 +153,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         breakout,
         flashcards,
         ingestor,
+        session_rate: build_session_rate(),
     };
 
     // Clever Cloud injects `PORT`; default to 8080 for local runs.
