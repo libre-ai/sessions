@@ -12,8 +12,24 @@ use sqlx::postgres::PgPool;
 
 use presto_core::protocol::{LeaderboardEntry, Question, QuestionPublic};
 
-use crate::session::{ANSWER_GRACE_MS, RevealResult, SessionError, score};
+use crate::session::{ANSWER_GRACE_MS, RevealResult, SessionError, is_correct, score};
 use crate::store::{SessionStore, StoreError, StoreResult};
+
+/// Encode/decode the selected choice indices as a comma-separated string.
+fn encode_choices(choices: &[u8]) -> String {
+    choices
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn decode_choices(s: &str) -> Vec<u8> {
+    s.split(',')
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.parse().ok())
+        .collect()
+}
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS presto_sessions (
@@ -31,11 +47,11 @@ CREATE TABLE IF NOT EXISTS presto_participants (
     PRIMARY KEY (session_id, participant_id)
 );
 CREATE TABLE IF NOT EXISTS presto_answers (
-    session_id     TEXT     NOT NULL,
-    question_id    TEXT     NOT NULL,
-    participant_id TEXT     NOT NULL,
-    choice         SMALLINT NOT NULL,
-    elapsed_ms     BIGINT   NOT NULL,
+    session_id     TEXT   NOT NULL,
+    question_id    TEXT   NOT NULL,
+    participant_id TEXT   NOT NULL,
+    choices        TEXT   NOT NULL,
+    elapsed_ms     BIGINT NOT NULL,
     PRIMARY KEY (session_id, question_id, participant_id)
 );
 -- Migration-safe: add opened_at to sessions tables created before this column existed.
@@ -139,7 +155,7 @@ impl SessionStore for PostgresSessionStore {
         &self,
         session_id: &str,
         participant_id: &str,
-        choice: u8,
+        choices: Vec<u8>,
         now_ms: u64,
     ) -> StoreResult<()> {
         let row = sqlx::query("SELECT phase, opened_at FROM presto_sessions WHERE id = $1")
@@ -183,14 +199,14 @@ impl SessionStore for PostgresSessionStore {
         // Server times the answer; the client value (if any) is ignored.
         let elapsed_ms = u32::try_from(now_ms.saturating_sub(opened)).unwrap_or(u32::MAX);
         let inserted = sqlx::query(
-            "INSERT INTO presto_answers (session_id, question_id, participant_id, choice, elapsed_ms) \
+            "INSERT INTO presto_answers (session_id, question_id, participant_id, choices, elapsed_ms) \
              VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (session_id, question_id, participant_id) DO NOTHING",
         )
         .bind(session_id)
         .bind(&question.id)
         .bind(participant_id)
-        .bind(i16::from(choice))
+        .bind(encode_choices(&choices))
         // BIGINT column: i64::from is lossless for the full u32 range (no wrap).
         .bind(i64::from(elapsed_ms))
         .execute(&self.pool)
@@ -228,10 +244,10 @@ impl SessionStore for PostgresSessionStore {
         let Some(question) = self.current_question(session_id).await? else {
             return Err(StoreError::Session(SessionError::NoQuestion));
         };
-        let correct = question.correct_choice;
+        let correct = question.correct_choices.clone();
 
         let answers =
-            sqlx::query("SELECT participant_id, choice, elapsed_ms FROM presto_answers WHERE session_id = $1 AND question_id = $2")
+            sqlx::query("SELECT participant_id, choices, elapsed_ms FROM presto_answers WHERE session_id = $1 AND question_id = $2")
                 .bind(session_id)
                 .bind(&question.id)
                 .fetch_all(&self.pool)
@@ -241,9 +257,9 @@ impl SessionStore for PostgresSessionStore {
         let total = answers.len();
         let mut wrong = 0usize;
         for a in &answers {
-            let choice: i16 = a.get("choice");
+            let submitted = decode_choices(&a.get::<String, _>("choices"));
             let elapsed: i64 = a.get("elapsed_ms");
-            if choice as u8 == correct {
+            if is_correct(&submitted, &correct) {
                 let pid: String = a.get("participant_id");
                 let elapsed_ms = u32::try_from(elapsed).unwrap_or(u32::MAX);
                 let points = i64::from(score(true, elapsed_ms));
@@ -272,7 +288,7 @@ impl SessionStore for PostgresSessionStore {
             .map(|r| LeaderboardEntry {
                 participant_id: r.get("participant_id"),
                 name: r.get("name"),
-                score: r.get::<i64, _>("score") as u32,
+                score: u32::try_from(r.get::<i64, _>("score")).unwrap_or(u32::MAX),
             })
             .collect();
 
@@ -294,7 +310,7 @@ impl SessionStore for PostgresSessionStore {
             .map_err(backend)?;
 
         Ok(RevealResult {
-            correct_choice: correct,
+            correct_choices: correct,
             leaderboard,
             heatmap,
         })

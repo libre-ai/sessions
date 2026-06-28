@@ -122,7 +122,7 @@ mod tests {
                 ))
             } else {
                 Ok(
-                    "{\"text\":\"Q?\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],\"correct_choice\":0}"
+                    "{\"text\":\"Q?\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],\"correct_choices\":[0]}"
                         .to_string(),
                 )
             }
@@ -231,7 +231,7 @@ mod tests {
                 } else {
                     // Return valid generation JSON
                     Ok(
-                        "{\"text\":\"Q?\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],\"correct_choice\":0}"
+                        "{\"text\":\"Q?\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],\"correct_choices\":[0]}"
                             .to_string(),
                     )
                 }

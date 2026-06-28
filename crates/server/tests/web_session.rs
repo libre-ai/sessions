@@ -116,12 +116,12 @@ async fn http_session_api_drives_a_full_round() {
     let q = recv_until(&mut p1, "question_opened").await;
     let qid = q["question"]["id"].as_str().unwrap().to_string();
     assert!(
-        q["question"].get("correct_choice").is_none(),
+        q["question"].get("correct_choices").is_none(),
         "the answer must not reach participants"
     );
 
     p1.send(Message::text(format!(
-        r#"{{"type":"submit_answer","question_id":"{qid}","choice":0}}"#
+        r#"{{"type":"submit_answer","question_id":"{qid}","choices":[0]}}"#
     )))
     .await
     .unwrap();

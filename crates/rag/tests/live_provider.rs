@@ -58,8 +58,14 @@ async fn real_provider_embeds_generates_and_verifies() {
         .expect("generation failed");
     assert!(q.choices.len() >= 2, "a question needs choices");
     assert!(
-        (q.correct_choice as usize) < q.choices.len(),
-        "correct_choice must index a real option"
+        !q.correct_choices.is_empty(),
+        "a question needs a correct answer"
+    );
+    assert!(
+        q.correct_choices
+            .iter()
+            .all(|&c| (c as usize) < q.choices.len()),
+        "every correct_choice must index a real option"
     );
     assert_eq!(q.source_section_ids, vec!["doc#p0".to_string()]);
 
@@ -68,10 +74,10 @@ async fn real_provider_embeds_generates_and_verifies() {
         .await
         .expect("verification failed");
     eprintln!(
-        "real provider OK: dim={} | Q='{}' correct={} | grounded={} ({})",
+        "real provider OK: dim={} | Q='{}' correct={:?} | grounded={} ({})",
         vecs[0].len(),
         q.text,
-        q.correct_choice,
+        q.correct_choices,
         verdict.supported,
         verdict.reason
     );

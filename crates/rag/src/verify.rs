@@ -56,12 +56,14 @@ pub async fn verify_grounding(
     provider: &dyn AiProvider,
 ) -> Result<GroundingVerdict, VerifyError> {
     let correct = question
-        .choices
-        .get(usize::from(question.correct_choice))
-        .map(String::as_str)
-        .unwrap_or("");
+        .correct_choices
+        .iter()
+        .filter_map(|&i| question.choices.get(usize::from(i)))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
     let user = format!(
-        "Source:\n{source_text}\n\nQuestion: {question_text}\nMarked correct answer: {correct}",
+        "Source:\n{source_text}\n\nQuestion: {question_text}\nMarked correct answer(s): {correct}",
         question_text = question.text,
     );
     let mut last_parse_error = String::from("no completion attempt");
@@ -108,8 +110,9 @@ mod tests {
         Question {
             id: "q:doc#p0".into(),
             text: "What does Rust enforce?".into(),
+            kind: presto_core::protocol::QuestionKind::Single,
             choices: vec!["GC".into(), "memory safety".into()],
-            correct_choice: 1,
+            correct_choices: vec![1],
             source_section_ids: vec!["doc#p0".into()],
             timer_sec: 20,
         }
