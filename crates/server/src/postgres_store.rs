@@ -288,7 +288,7 @@ impl SessionStore for PostgresSessionStore {
             .map(|r| LeaderboardEntry {
                 participant_id: r.get("participant_id"),
                 name: r.get("name"),
-                score: r.get::<i64, _>("score") as u32,
+                score: u32::try_from(r.get::<i64, _>("score")).unwrap_or(u32::MAX),
             })
             .collect();
 
