@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-06-28
 - Supersedes: none (first ADR)
-- Related: docs/specs/2026-06-27-presto-matic-design.md, docs/plans/2026-06-27-p3-tracer-bullet.md
+- Related: docs/specs/2026-06-27-presto-matic-design.md, docs/plans/2026-06-27-p3-tracer-bullet.md, docs/specs/2026-06-28-collaborative-spaces-authz-design.md (SP-A), docs/specs/2026-06-28-signed-classification-clearance-design.md (SP-B), docs/specs/2026-06-28-frontend-dioxus-design-system-design.md (SP-C)
 
 ## Context
 
@@ -16,15 +16,21 @@ This ADR is the **north star** for those boundaries. It is deliberately a descri
 and of the _principles for deciding boundaries_ — not a refactor order. Any agent can align its
 objectives to it without cross-coordination.
 
-Current state: one Cargo workspace, three crates (`presto-core`, `presto-rag`, `presto-server`),
-~4090 lines, a single deployable binary, deployed on Clever Cloud. Dependency graph today:
-`presto-core <- presto-rag <- presto-server`, acyclic.
+Current state: one Cargo workspace, three backend crates (`presto-core`, `presto-rag`, `presto-server`),
+~4090 lines, a single deployable binary, deployed on Clever Cloud; a placeholder web client in
+`crates/server/static/`. Dependency graph today: `presto-core <- presto-rag <- presto-server`, acyclic.
+The bricks below are each detailed in a spec (SP-A/B/C) — see Specified sub-projects.
 
 ## Product vision (the value the bricks serve)
 
 Presto-Matic = **NotebookLM x Kahoot, sovereign and self-hostable**: source-grounded study content
 (typed quizzes, SRS flashcards, grounded breakouts, summaries, mind maps), auto-generated from the
 user's own corpus and delivered in real-time collaborative sessions (200+ participants).
+
+**Center of gravity.** The daily, primary surface is the **personal grounded notebook** (a
+NotebookLM-style workspace over the user's own corpus); the **live collaboration** is the
+differentiator / moat layered on top — not the everyday surface. A personal notebook is the **degenerate
+case of a shared space with a single member** (see SP-A), so solo → shared → live is one uniform model.
 
 The **wedge is trust**: every generated item passes a grounding-verifier that confirms it is supported
 by its cited source alone — the anti-hallucination gate before content reaches a live session. This
@@ -37,15 +43,16 @@ RGPD, no US hyperscalers, OSS-friendly licensing (MIT/Apache/MPL only).
 Differentiators: real-time live engine (#1), typed questions (#2), mastery + spaced repetition (#3),
 grounded breakouts from the confusion heatmap (#4) — all under the trust wedge.
 
-## The four product bricks (+ one shared contract)
+## The product bricks (+ one shared contract)
 
-| Brick                            | Product capability                                                                    | Responsibility (modules)                                                                                                    | Today           | Target crate                                           |
-| -------------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------ |
-| **P1 — Knowledge & Ingestion**   | Turn sovereign sources into a groundable corpus                                       | `provider` (LLM access), `corpus` (retrieval, pgvector+FTS), `ingest` (chunk -> embed)                                      | `presto-rag`    | `presto-rag`                                           |
-| **P2 — Grounded Studio**         | Generate pedagogical content always traceable to source, gated by the verifier        | `generate`, `verify` (the wedge), `flashcards`, `clarify`, `pipeline`                                                       | `presto-rag`    | `presto-studio` (to extract)                           |
-| **P3 — Live Sessions**           | Orchestrate 200+ participants in real time: quiz flow, leaderboard, confusion heatmap | `session`, `store`/`postgres_store`, `fanout`/`redis_fanout`, `ws`, `http`, `quiz` (ports)                                  | `presto-server` | `presto-server`                                        |
-| **P4 — Sovereignty & Self-host** | Auth (Biscuit), BYO/multi-instance wiring, (future) quotas/audit/RGPD                 | `auth` + env-driven wiring                                                                                                  | `presto-server` | modules within `presto-server` (not its own brick yet) |
-| **Transverse — Protocol**        | Data contract between bricks and clients                                              | content types (`Question`, `Flashcard`, `QuestionKind`) + live wire protocol (`Client`/`ServerMessage`, `LeaderboardEntry`) | `presto-core`   | `presto-core`                                          |
+| Brick                              | Product capability                                                                    | Responsibility (modules)                                                                                                    | Today                 | Target crate                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------- |
+| **P1 — Knowledge & Ingestion**     | Turn sovereign sources into a groundable corpus                                       | `provider` (LLM access), `corpus` (retrieval, pgvector+FTS), `ingest` (chunk -> embed)                                      | `presto-rag`          | `presto-rag`                                                     |
+| **P2 — Grounded Studio**           | Generate pedagogical content always traceable to source, gated by the verifier        | `generate`, `verify` (the wedge), `flashcards`, `clarify`, `pipeline`                                                       | `presto-rag`          | `presto-studio` (to extract)                                     |
+| **P3 — Live Sessions**             | Orchestrate 200+ participants in real time: quiz flow, leaderboard, confusion heatmap | `session`, `store`/`postgres_store`, `fanout`/`redis_fanout`, `ws`, `http`, `quiz` (ports)                                  | `presto-server`       | `presto-server`                                                  |
+| **P4 — Sovereignty & Self-host**   | Auth, **collaborative spaces, classification**, BYO/multi-instance, quotas/audit/RGPD | `auth` + `space`/`membership`/`oidc`/`audit` (SP-A) + classification (SP-B) + env wiring                                    | `presto-server`       | modules in `presto-server`; extract `presto-authz` when it grows |
+| **Client — Front & design system** | The surfaces users touch: personal notebook (owner) + guest/join client               | `presto-ui` (design system), `presto-app` (notebook), `presto-join` (guest) — Dioxus, all-Rust (SP-C)                       | `static/` placeholder | `presto-ui` + `presto-app` + `presto-join`                       |
+| **Transverse — Protocol**          | Data contract between bricks and clients                                              | content types (`Question`, `Flashcard`, `QuestionKind`) + live wire protocol (`Client`/`ServerMessage`, `LeaderboardEntry`) | `presto-core`         | `presto-core`                                                    |
 
 ## Architecture — two views
 
@@ -62,14 +69,22 @@ grounded breakouts from the confusion heatmap (#4) — all under the trust wedge
         \---------------- all under P4  Sovereignty & Self-host ----------------/
 ```
 
+The **Client** is the surface over all of this: the owner's **notebook app** (the daily, primary
+surface) and the guests' **join client** (ephemeral, live). It talks to the backend over the network.
+
 ### Dependency graph (code) — the invariant
 
 ```mermaid
 graph RL
+    app["presto-app / presto-join — Client (Dioxus front)"]
+    ui["presto-ui — design system"]
     server["presto-server — P3 Live + P4 Sovereignty + bin"]
     studio["presto-studio — P2 Grounded Studio (wedge)"]
     rag["presto-rag — P1 Knowledge & Ingestion"]
     core["presto-core — Protocol / shared contract"]
+    app --> ui
+    ui --> core
+    app -. "WS / HTTP (network)" .-> server
     server --> studio
     server --> rag
     server --> core
@@ -79,8 +94,10 @@ graph RL
 ```
 
 **Invariant (non-negotiable):** dependencies point one way, toward the core. A brick never depends on a
-brick downstream of it. The live engine knows the studio; the studio never knows the live engine. The
-studio knows the RAG engine; the RAG engine never knows the studio.
+brick downstream of it. The live engine knows the studio; the studio never knows the live engine; the
+studio knows the RAG engine; the RAG engine never knows the studio. **The Client shares `presto-core`
+(the contract) and reaches the backend over the network (WS/HTTP) — never a code dependency on a backend
+brick.** The arrow holds across the front/back boundary too.
 
 ### Ports & adapters (already healthy — keep it)
 
@@ -90,6 +107,21 @@ composition point (server), calling into the studio/rag and selectable fixture <
 Upstream bricks expose pure APIs and know nothing about "sessions". This keeps the dependency invariant
 intact. New content capabilities follow the same shape: a pure function in the studio, an adapter behind
 a port in the server.
+
+## Specified sub-projects
+
+Each brick is detailed in its own spec, delivered in **risk-first increments** (wedge core first):
+
+- **SP-A — Collaborative spaces & authz** (P4 substrate): OIDC (Keycloak) in front, Biscuit authz
+  behind, membership in Postgres (token is never a cache); durable + ephemeral invitation; bounded
+  delegation; revocation via short TTL + recheck. Personal notebook = single-member space.
+- **SP-B — Signed classification & clearance** (P4 × P1): three **orthogonal signed assertions**
+  (confidentiality / pii / integrity), not one risk scalar; hybrid clearance `min(org, space)`; the
+  **live-generation gate** (a host generates live content only from `confidentiality <= audience
+clearance`). Integrity serves the solo wedge; access gating is collaborative.
+- **SP-C — Front & design system** (Client): all-Rust **Dioxus** (web wasm + Tauri desktop),
+  `presto-ui` on tokens with hand-built a11y, `presto-app`/`presto-join` surfaces sharing `presto-core`;
+  server-authoritative. UniFFI and true multi-native are rejected (anti-sovereign, wedge friction).
 
 ## Principles for boundaries (how to decide — reusable)
 
@@ -124,27 +156,28 @@ home of the wedge), with `presto-studio -> presto-rag`. This serves cohesion, ex
 party can take the RAG engine without the quiz generators), and makes the grounding-verifier visible as
 the strategic brick it is.
 
-**Sequencing:** perform on green, **after P11 (document ingestion) merges** — P11 has uncommitted WIP in
-`crates/rag/src/{lib.rs,ingest.rs}`, exactly the files a split rewrites. Do not refactor over WIP.
+**Sequencing:** perform on green, after the in-flight ingestion (P11) work merges — never refactor over
+uncommitted WIP in `crates/rag/`.
 
 ### Second-order tidy — core mixes content and live protocol
 
 `presto-core/protocol.rs` holds both content types (`Question`, `Flashcard`, `QuestionKind` — used by
 rag/studio) and the live wire protocol (`Client`/`ServerMessage`, `LeaderboardEntry` — used only by the
 live engine; rag imports none of them). For cohesion, the content types are the true shared core; the
-live protocol belongs with the live engine. Low priority vs the P1/P2 split — fold in if convenient,
-otherwise defer.
+live protocol belongs with the live engine. SP-B also adds the `Level` (confidentiality) type here, as a
+transverse contract. Low priority vs the P1/P2 split — fold in if convenient, otherwise defer.
 
 ### Non-gaps — boundaries deliberately NOT reified (avoid over-splitting)
 
-- **auth (P4) split from the live engine:** rejected. `auth` (Biscuit) is consumed by `ws`/`http`
-  throughout; coupling is tight and P4-proper (quotas/audit/RGPD) isn't implemented yet. `auth` inside
-  `server` is healthy until P4 grows.
+- **auth (P4) split from the live engine:** P4 is now **specified** (SP-A authz + SP-B classification)
+  and **will** grow well beyond `auth` — spaces, membership, OIDC, audit, quotas, classification. The
+  wedge-core stays as modules in `presto-server`; extract a `presto-authz` crate once the collaborative
+  increments (SP-A inc-2/3, SP-B) land — a real cohesion + reuse boundary by then, not before.
 - **transport (ws/http/fanout) split from session/quiz:** rejected. The seam already exists at module
   level (`session.rs` is the pure async-free state machine; `ws.rs` is transport). Reifying it for ~960
   lines is ceremony.
-- **one-crate-per-brick (6 crates) for ~4k lines:** rejected. Bricks stay module-level where the seam is
-  weak; crate-level only where it is strong (P1/P2).
+- **one-crate-per-brick for the backend:** rejected at ~4k lines. Bricks stay module-level where the
+  seam is weak; crate-level only where it is strong (P1/P2, and the Client which is a separate surface).
 - **multi-repo today:** rejected. No governance boundary is live. The harness can consume any brick via a
   git-dependency to the sub-crate (`package = "presto-rag", tag = "..."`) — no split required.
 
@@ -152,16 +185,18 @@ otherwise defer.
 
 If a partial-OSS model is later chosen, the visibility line would put the engine
 ({`presto-core` content, `presto-rag`, `presto-studio`}) public and the product (`presto-server` + live
-protocol) private — and only _that_ (different git visibility) would force a second repo. Not decided
-here. Until then, the monorepo keeps the option open at near-zero cost.
+protocol, plus the Client) private — and only _that_ (different git visibility) would force a second
+repo. Not decided here. Until then, the monorepo keeps the option open at near-zero cost.
 
 ## Goals & invariants for the feature agent (actionable now, no refactor required)
 
-- **Respect the dependency arrow** `core <- rag <- (studio) <- server`. Never introduce an
-  upstream-to-downstream dependency.
+- **Respect the dependency arrow** `core <- rag <- (studio) <- server`, and `core <- ui <- app/join` for
+  the front. Never introduce an upstream-to-downstream dependency; the front never imports a backend
+  brick (it uses the network).
 - **Place new code by brick:** retrieval/ingestion/provider -> P1 (`presto-rag`); generation/verification/
   flashcard/breakout logic -> P2 (today still in `presto-rag`, treated as the future `presto-studio`);
-  session/transport/auth -> `presto-server`.
+  session/transport -> `presto-server`; auth/spaces/membership/classification -> P4 (server modules per
+  SP-A/SP-B); UI/components/tokens -> the Client crates (SP-C).
 - **Keep P2 modules free of any `presto-server` import** (`generate`, `verify`, `flashcards`, `clarify`,
   `pipeline`) so the future extraction stays a _move_, not a rewrite.
 - **Keep heavy deps (`sqlx`/`reqwest`) out of P2 logic** — they belong to P1. A studio module needing
@@ -178,4 +213,6 @@ server adapters to call `presto-studio`; keep one workspace-wide CI run green.
 - The grounding-verifier (the wedge) gets a visible, named home.
 - The RAG engine becomes cleanly reusable / OSS-extractable later, at the cost of one well-scoped split
   done on green.
+- The Client is a first-class brick sharing only the `presto-core` contract — UI work and backend work
+  cannot tangle by construction.
 - No premature multi-repo or over-splitting cost is paid now.
