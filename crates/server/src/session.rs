@@ -53,6 +53,15 @@ pub struct RevealResult {
     pub heatmap: BTreeMap<String, f32>,
 }
 
+/// A participant's correctness on one source section, accumulated across the
+/// session's questions — the basis for post-session spaced repetition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionMastery {
+    pub section_id: String,
+    pub correct: u32,
+    pub total: u32,
+}
+
 /// One live quiz session, authoritative in memory.
 #[derive(Debug)]
 pub struct Session {
@@ -65,6 +74,8 @@ pub struct Session {
     pub opened_at_ms: Option<u64>,
     pub participants: BTreeMap<ParticipantId, Participant>,
     pub answers: BTreeMap<ParticipantId, Answer>,
+    /// Accumulated per-participant, per-section (correct, total) across questions.
+    pub mastery: BTreeMap<ParticipantId, BTreeMap<String, (u32, u32)>>,
 }
 
 impl Session {
@@ -77,6 +88,7 @@ impl Session {
             opened_at_ms: None,
             participants: BTreeMap::new(),
             answers: BTreeMap::new(),
+            mastery: BTreeMap::new(),
         }
     }
 
@@ -162,6 +174,23 @@ impl Session {
             }
         }
 
+        // Accumulate per-section mastery for spaced-repetition follow-up.
+        let correctness: Vec<(ParticipantId, bool)> = self
+            .answers
+            .iter()
+            .map(|(pid, a)| (pid.clone(), is_correct(&a.choices, &correct)))
+            .collect();
+        for (pid, ok) in correctness {
+            let by_section = self.mastery.entry(pid).or_default();
+            for section in &sections {
+                let stat = by_section.entry(section.clone()).or_insert((0, 0));
+                stat.1 += 1;
+                if ok {
+                    stat.0 += 1;
+                }
+            }
+        }
+
         let mut leaderboard: Vec<LeaderboardEntry> = self
             .participants
             .iter()
@@ -196,6 +225,23 @@ impl Session {
             leaderboard,
             heatmap,
         })
+    }
+
+    /// A participant's accumulated per-section mastery (for spaced repetition).
+    pub fn mastery(&self, participant_id: &str) -> Vec<SectionMastery> {
+        self.mastery
+            .get(participant_id)
+            .into_iter()
+            .flat_map(|by_section| {
+                by_section
+                    .iter()
+                    .map(|(section, &(correct, total))| SectionMastery {
+                        section_id: section.clone(),
+                        correct,
+                        total,
+                    })
+            })
+            .collect()
     }
 }
 
@@ -387,5 +433,30 @@ mod tests {
             .unwrap();
         assert!(p1.score >= 500);
         assert_eq!(p2.score, 0);
+    }
+
+    #[test]
+    fn mastery_accumulates_correctness_per_section_across_questions() {
+        let mut s = Session::new("s1", "host");
+        s.join("p1", "Alice");
+
+        let mut q = question();
+        q.source_section_ids = vec!["A".into()];
+        s.push_question(q, 0);
+        s.submit_answer("p1", vec![1], 100).unwrap(); // correct on A
+        s.reveal().unwrap();
+
+        let mut q = question();
+        q.id = "q2".into();
+        q.source_section_ids = vec!["B".into()];
+        s.push_question(q, 0);
+        s.submit_answer("p1", vec![0], 100).unwrap(); // wrong on B
+        s.reveal().unwrap();
+
+        let m = s.mastery("p1");
+        let a = m.iter().find(|x| x.section_id == "A").unwrap();
+        let b = m.iter().find(|x| x.section_id == "B").unwrap();
+        assert_eq!((a.correct, a.total), (1, 1));
+        assert_eq!((b.correct, b.total), (0, 1));
     }
 }

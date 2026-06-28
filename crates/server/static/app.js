@@ -45,6 +45,9 @@ function onMessage(m) {
     case "breakout_opened":
       renderBreakout(m);
       break;
+    case "flashcards_ready":
+      renderFlashcards(m);
+      break;
     case "error":
       log("erreur : " + m.reason);
       break;
@@ -97,6 +100,7 @@ function renderQuestion(q) {
 
 function renderLeaderboard(m) {
   show("leaderboard");
+  show("flashcards"); // participants can now request a spaced-repetition deck
   const board = $("#board");
   board.innerHTML = "";
   (m.leaderboard || []).forEach((e) => {
@@ -122,6 +126,23 @@ function renderBreakout(m) {
   show("breakout");
   $("#breakout-section").textContent = m.section_id;
   $("#breakout-text").textContent = m.explanation;
+}
+
+function renderFlashcards(m) {
+  show("flashcards");
+  const deck = $("#deck");
+  deck.innerHTML = "";
+  if (!m.cards || m.cards.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "Aucune section faible — bien joué.";
+    deck.appendChild(li);
+    return;
+  }
+  m.cards.forEach((c) => {
+    const li = document.createElement("li");
+    li.textContent = `${c.front} — ${c.back} (${c.section_id})`;
+    deck.appendChild(li);
+  });
 }
 
 async function createSession() {
@@ -158,6 +179,7 @@ function init() {
   $("#generate").onclick = () =>
     ws.send(JSON.stringify({ type: "generate_question", query: $("#query").value || "general" }));
   $("#reveal").onclick = () => ws.send(JSON.stringify({ type: "reveal" }));
+  $("#get-flashcards").onclick = () => ws.send(JSON.stringify({ type: "flashcards" }));
 }
 
 init();
