@@ -60,7 +60,8 @@ clever env set REDIS_URL    "<redis connection uri>"
 clever env set BISCUIT_PRIVATE_KEY "<hex from keygen>"
 
 # AI provider (sovereign default = Mistral, Paris). Omit for the fixture quiz.
-clever env set AI_BASE_URL  "https://api.mistral.ai/v1"
+# AI_BASE_URL is the origin WITHOUT /v1 — the client appends /v1/... itself.
+clever env set AI_BASE_URL  "https://api.mistral.ai"
 clever env set AI_API_KEY   "<your mistral key>"
 clever env set AI_EMBED_MODEL "mistral-embed"
 clever env set AI_CHAT_MODEL  "mistral-small-latest"

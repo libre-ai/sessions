@@ -7,17 +7,20 @@
 //! OpenAI-compatible server. Local default: LM Studio. Hosted sovereign default:
 //! Mistral (Paris); Clever AI is not yet GA (private alpha as of 2026-06).
 //!
+//! `AI_BASE_URL` is the server **origin without `/v1`** — the client appends
+//! `/v1/chat/completions` and `/v1/embeddings` itself.
+//!
 //! ```text
-//! # LM Studio (local): in the app, load an embedding model + a chat model,
-//! #   then Local Server -> Start Server. Default endpoint http://localhost:1234/v1,
-//! #   any dummy key. Model names must match what is loaded (see /v1/models).
-//! AI_BASE_URL=http://localhost:1234/v1 AI_API_KEY=lm-studio \
+//! # LM Studio (local): in the app, load BOTH an embedding model and a chat
+//! #   model, then Developer -> Start Server (default port 1234). The model ids
+//! #   must match what is loaded (check GET http://localhost:1234/v1/models).
+//! AI_BASE_URL=http://localhost:1234 AI_API_KEY=lm-studio \
 //!   AI_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5 \
 //!   AI_CHAT_MODEL=qwen2.5-7b-instruct \
 //!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
 //!
 //! # Mistral (Paris, hosted sovereign):
-//! AI_BASE_URL=https://api.mistral.ai/v1 AI_API_KEY=$MISTRAL_KEY \
+//! AI_BASE_URL=https://api.mistral.ai AI_API_KEY=$MISTRAL_KEY \
 //!   AI_EMBED_MODEL=mistral-embed AI_CHAT_MODEL=mistral-small-latest \
 //!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
 //! ```
