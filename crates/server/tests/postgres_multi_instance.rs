@@ -105,7 +105,7 @@ async fn cross_instance_scoring_is_correct() {
 
     // Host pushes the question on A.
     host.send(Message::text(
-        r#"{"type":"push_question","question":{"id":"q1","text":"x?","choices":["a","b"],"correct_choice":1,"source_section_ids":["s1"]}}"#
+        r#"{"type":"push_question","question":{"id":"q1","text":"x?","choices":["a","b"],"correct_choices":[1],"source_section_ids":["s1"]}}"#
             .to_string(),
     ))
     .await
@@ -114,7 +114,7 @@ async fn cross_instance_scoring_is_correct() {
     // Participant on B receives it and answers correctly (recorded in shared Postgres).
     recv_until(&mut p1, "question_opened").await;
     p1.send(Message::text(
-        r#"{"type":"submit_answer","question_id":"q1","choice":1}"#.to_string(),
+        r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#.to_string(),
     ))
     .await
     .unwrap();

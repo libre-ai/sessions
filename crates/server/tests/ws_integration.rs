@@ -99,20 +99,20 @@ async fn live_round_fans_out_host_events_to_participants() {
     // Host pushes a question — the correct answer must NOT reach participants.
     send(
         &mut host,
-        r#"{"type":"push_question","question":{"id":"q1","text":"2+2?","choices":["3","4","5"],"correct_choice":1,"source_section_ids":["doc1#s2"]}}"#,
+        r#"{"type":"push_question","question":{"id":"q1","text":"2+2?","choices":["3","4","5"],"correct_choices":[1],"source_section_ids":["doc1#s2"]}}"#,
     )
     .await;
     let q = recv_until(&mut p1, "question_opened").await;
     assert_eq!(q["question"]["id"], "q1");
     assert!(
-        q["question"].get("correct_choice").is_none(),
+        q["question"].get("correct_choices").is_none(),
         "the answer leaked to a participant"
     );
 
     // p1 answers correctly; the host sees an answer_received.
     send(
         &mut p1,
-        r#"{"type":"submit_answer","question_id":"q1","choice":1}"#,
+        r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#,
     )
     .await;
     let ack = recv_until(&mut host, "answer_received").await;
@@ -121,7 +121,7 @@ async fn live_round_fans_out_host_events_to_participants() {
     // Host reveals; p1 receives a scored leaderboard + zero confusion (it was right).
     send(&mut host, r#"{"type":"reveal"}"#).await;
     let rev = recv_until(&mut p1, "answers_revealed").await;
-    assert_eq!(rev["correct_choice"], 1);
+    assert_eq!(rev["correct_choices"], serde_json::json!([1]));
     assert_eq!(rev["leaderboard"][0]["participant_id"], "p1");
     assert!(rev["leaderboard"][0]["score"].as_u64().unwrap() >= 500);
     assert!(rev["heatmap"]["doc1#s2"].as_f64().unwrap().abs() < 1e-6);
@@ -156,7 +156,7 @@ async fn late_joiner_receives_the_open_question() {
         .unwrap();
     send(
         &mut host,
-        r#"{"type":"push_question","question":{"id":"q1","text":"2+2?","choices":["3","4"],"correct_choice":1,"source_section_ids":["doc1#s2"]}}"#,
+        r#"{"type":"push_question","question":{"id":"q1","text":"2+2?","choices":["3","4"],"correct_choices":[1],"source_section_ids":["doc1#s2"]}}"#,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -169,7 +169,7 @@ async fn late_joiner_receives_the_open_question() {
     let q = recv_until(&mut p1, "question_opened").await;
     assert_eq!(q["question"]["id"], "q1");
     assert!(
-        q["question"].get("correct_choice").is_none(),
+        q["question"].get("correct_choices").is_none(),
         "the snapshot must not leak the answer"
     );
 }

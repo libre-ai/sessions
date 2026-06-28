@@ -25,9 +25,10 @@ pub struct Participant {
     pub score: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Answer {
-    pub choice: u8,
+    /// The selected choice indices (one for single-choice, several for multi).
+    pub choices: Vec<u8>,
     pub elapsed_ms: u32,
 }
 
@@ -43,11 +44,11 @@ pub enum SessionError {
     Closed,
 }
 
-/// The outcome of a reveal: the correct choice, the sorted leaderboard, and a
+/// The outcome of a reveal: the correct choice(s), the sorted leaderboard, and a
 /// per-source-section confusion heatmap.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RevealResult {
-    pub correct_choice: u8,
+    pub correct_choices: Vec<u8>,
     pub leaderboard: Vec<LeaderboardEntry>,
     pub heatmap: BTreeMap<String, f32>,
 }
@@ -113,7 +114,7 @@ impl Session {
     pub fn submit_answer(
         &mut self,
         participant_id: &str,
-        choice: u8,
+        choices: Vec<u8>,
         now_ms: u64,
     ) -> Result<(), SessionError> {
         if self.phase != Phase::Asking {
@@ -134,8 +135,13 @@ impl Session {
             return Err(SessionError::Closed);
         }
         let elapsed_ms = u32::try_from(now_ms.saturating_sub(opened)).unwrap_or(u32::MAX);
-        self.answers
-            .insert(participant_id.to_string(), Answer { choice, elapsed_ms });
+        self.answers.insert(
+            participant_id.to_string(),
+            Answer {
+                choices,
+                elapsed_ms,
+            },
+        );
         Ok(())
     }
 
@@ -145,11 +151,11 @@ impl Session {
         // so the immutable borrow of `self.current` is released first.
         let (correct, sections) = {
             let q = self.current.as_ref().ok_or(SessionError::NoQuestion)?;
-            (q.correct_choice, q.source_section_ids.clone())
+            (q.correct_choices.clone(), q.source_section_ids.clone())
         };
 
         for (pid, answer) in &self.answers {
-            if answer.choice == correct
+            if is_correct(&answer.choices, &correct)
                 && let Some(p) = self.participants.get_mut(pid)
             {
                 p.score += score(true, answer.elapsed_ms);
@@ -176,7 +182,7 @@ impl Session {
         let confusion = if answered > 0.0 {
             self.answers
                 .values()
-                .filter(|a| a.choice != correct)
+                .filter(|a| !is_correct(&a.choices, &correct))
                 .count() as f32
                 / answered
         } else {
@@ -186,11 +192,23 @@ impl Session {
 
         self.phase = Phase::Revealed;
         Ok(RevealResult {
-            correct_choice: correct,
+            correct_choices: correct,
             leaderboard,
             heatmap,
         })
     }
+}
+
+/// Whether a submitted set of choice indices exactly matches the correct set
+/// (order- and duplicate-insensitive). Works for single- and multi-select.
+pub fn is_correct(submitted: &[u8], correct: &[u8]) -> bool {
+    let norm = |v: &[u8]| {
+        let mut s: Vec<u8> = v.to_vec();
+        s.sort_unstable();
+        s.dedup();
+        s
+    };
+    !correct.is_empty() && norm(submitted) == norm(correct)
 }
 
 /// Round score: 500 for a correct answer plus a speed bonus (capped at 100),
@@ -206,13 +224,15 @@ pub fn score(correct: bool, elapsed_ms: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use presto_core::protocol::QuestionKind;
 
     fn question() -> Question {
         Question {
             id: "q1".into(),
             text: "?".into(),
+            kind: QuestionKind::Single,
             choices: vec!["a".into(), "b".into(), "c".into()],
-            correct_choice: 1,
+            correct_choices: vec![1],
             source_section_ids: vec!["doc1#s2".into()],
             timer_sec: 30,
         }
@@ -240,7 +260,10 @@ mod tests {
     fn cannot_answer_before_a_question_is_pushed() {
         let mut s = Session::new("s1", "host");
         s.join("p1", "Alice");
-        assert_eq!(s.submit_answer("p1", 1, 100), Err(SessionError::NotAsking));
+        assert_eq!(
+            s.submit_answer("p1", vec![1], 100),
+            Err(SessionError::NotAsking)
+        );
     }
 
     #[test]
@@ -248,13 +271,13 @@ mod tests {
         let mut s = Session::new("s1", "host");
         s.join("p1", "Alice");
         s.push_question(question(), 0);
-        assert!(s.submit_answer("p1", 1, 100).is_ok());
+        assert!(s.submit_answer("p1", vec![1], 100).is_ok());
         assert_eq!(
-            s.submit_answer("p1", 0, 200),
+            s.submit_answer("p1", vec![0], 200),
             Err(SessionError::AlreadyAnswered)
         );
         assert_eq!(
-            s.submit_answer("ghost", 1, 100),
+            s.submit_answer("ghost", vec![1], 100),
             Err(SessionError::UnknownParticipant)
         );
     }
@@ -272,10 +295,13 @@ mod tests {
         s.join("p2", "Bob");
         s.push_question(question(), 0); // timer_sec = 30 → close at 30_000 + grace
         // Within the timer + grace window: accepted, server-timed.
-        assert!(s.submit_answer("p1", 1, 31_000).is_ok());
+        assert!(s.submit_answer("p1", vec![1], 31_000).is_ok());
         assert_eq!(s.answers["p1"].elapsed_ms, 31_000);
         // Past timer + grace (30_000 + 1_500): rejected.
-        assert_eq!(s.submit_answer("p2", 1, 31_501), Err(SessionError::Closed));
+        assert_eq!(
+            s.submit_answer("p2", vec![1], 31_501),
+            Err(SessionError::Closed)
+        );
     }
 
     #[test]
@@ -296,13 +322,13 @@ mod tests {
         s.join("p3", "Carol");
         s.push_question(question(), 0);
 
-        s.submit_answer("p1", 1, 1_000).unwrap(); // correct, fast
-        s.submit_answer("p2", 1, 20_000).unwrap(); // correct, slow
-        s.submit_answer("p3", 0, 2_000).unwrap(); // wrong
+        s.submit_answer("p1", vec![1], 1_000).unwrap(); // correct, fast
+        s.submit_answer("p2", vec![1], 20_000).unwrap(); // correct, slow
+        s.submit_answer("p3", vec![0], 2_000).unwrap(); // wrong
 
         let result = s.reveal().unwrap();
         assert_eq!(s.phase, Phase::Revealed);
-        assert_eq!(result.correct_choice, 1);
+        assert_eq!(result.correct_choices, vec![1]);
 
         // p1 fastest-correct leads, then p2, then p3 (0).
         assert_eq!(result.leaderboard[0].participant_id, "p1");
@@ -319,5 +345,47 @@ mod tests {
         s.push_question(question(), 0);
         assert_eq!(s.phase, Phase::Asking);
         assert!(s.answers.is_empty());
+    }
+
+    #[test]
+    fn is_correct_compares_as_sets() {
+        assert!(is_correct(&[2, 0], &[0, 2])); // order-insensitive
+        assert!(is_correct(&[1], &[1]));
+        assert!(!is_correct(&[0], &[0, 2])); // incomplete
+        assert!(!is_correct(&[0, 2, 3], &[0, 2])); // extra
+        assert!(!is_correct(&[], &[])); // empty correct never matches
+    }
+
+    #[test]
+    fn multi_select_scores_exact_set_only() {
+        let mut s = Session::new("s1", "host");
+        s.join("p1", "Alice");
+        s.join("p2", "Bob");
+        let q = Question {
+            id: "m".into(),
+            text: "?".into(),
+            kind: QuestionKind::Multi,
+            choices: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            correct_choices: vec![0, 2],
+            source_section_ids: vec!["sec".into()],
+            timer_sec: 30,
+        };
+        s.push_question(q, 0);
+        s.submit_answer("p1", vec![2, 0], 1_000).unwrap(); // correct (set match)
+        s.submit_answer("p2", vec![0], 1_000).unwrap(); // wrong (incomplete)
+        let r = s.reveal().unwrap();
+        assert_eq!(r.correct_choices, vec![0, 2]);
+        let p1 = r
+            .leaderboard
+            .iter()
+            .find(|e| e.participant_id == "p1")
+            .unwrap();
+        let p2 = r
+            .leaderboard
+            .iter()
+            .find(|e| e.participant_id == "p2")
+            .unwrap();
+        assert!(p1.score >= 500);
+        assert_eq!(p2.score, 0);
     }
 }
