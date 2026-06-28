@@ -10,14 +10,21 @@
 //! `AI_BASE_URL` is the server **origin without `/v1`** — the client appends
 //! `/v1/chat/completions` and `/v1/embeddings` itself.
 //!
+//! Some local runtimes (e.g. Gemma on LM Studio) reject `response_format:
+//! json_object` with a 400; set `AI_JSON_MODE=0` and the pipeline parses the JSON
+//! out of the plain-text reply. Use `127.0.0.1` rather than `localhost` — LM
+//! Studio binds IPv4 only, and `localhost` may resolve to `::1` first.
+//!
 //! ```text
 //! # LM Studio (local): in the app, load BOTH an embedding model and a chat
 //! #   model, then Developer -> Start Server (default port 1234). The model ids
-//! #   must match what is loaded (check GET http://localhost:1234/v1/models).
-//! AI_BASE_URL=http://localhost:1234 AI_API_KEY=lm-studio \
+//! #   must match what is loaded (check GET http://127.0.0.1:1234/v1/models).
+//! AI_BASE_URL=http://127.0.0.1:1234 AI_API_KEY=lm-studio AI_JSON_MODE=0 \
 //!   AI_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5 \
-//!   AI_CHAT_MODEL=qwen2.5-7b-instruct \
+//!   AI_CHAT_MODEL=google/gemma-4-12b-qat \
 //!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
+//! # Verified 2026-06-28: nomic-embed v1.5 (dim 768) + gemma-4-12b-qat,
+//! #   embed + generate + grounding-verify all green.
 //!
 //! # Mistral (Paris, hosted sovereign):
 //! AI_BASE_URL=https://api.mistral.ai AI_API_KEY=$MISTRAL_KEY \
