@@ -4,5 +4,7 @@
 //! shared by the server and every client; the realtime client state machine and
 //! Biscuit handling land with later tracer-bullet slices.
 
+pub mod api;
+pub mod client;
 pub mod fixtures;
 pub mod protocol;
