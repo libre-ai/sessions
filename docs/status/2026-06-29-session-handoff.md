@@ -1,17 +1,17 @@
 # Session handoff — 2026-06-29
 
-Status snapshot for the next session. **Reverify before trusting it** (it is a
-point-in-time snapshot, not a source of truth):
+Stable-baseline snapshot for the next session. **Reverify before trusting it**
+(it is a point-in-time snapshot, not a source of truth):
 
 ```bash
 git -C "$(git rev-parse --show-toplevel)" log --oneline -8
 git status --short
 cargo test --workspace            # in-memory suite
-gh run list --branch goal/moat-and-gatewall --workflow ci --limit 1   # CI conclusion
+gh run list --branch main --workflow ci --limit 1   # post-merge CI conclusion
 ```
 
-Working branch: **`goal/moat-and-gatewall`** — fully CI-green (4 jobs), **not
-merged** (the operation prompt said "stop at the branch").
+Source branch: **`goal/moat-and-gatewall`** — verified CI-green (4 jobs) before
+stable merge. After merge/tag, `main` and the stable tag are the source of truth.
 
 ---
 
@@ -137,5 +137,5 @@ Increments 2 (guest/join + live UI) and 3 (Tauri desktop + offline RAG) follow.
 - **`Pf2` HNSW index** (evolution roadmap) not built — retrieval uses a full scan
   (fine at wedge scale; needed for the retrieval SLO at scale, but the column is
   deliberately dimension-free so HNSW requires fixing the embedding dimension).
-- **Merge decision is the user's** — the branch is green and mergeable; the
-  operation prompt said do not merge.
+- **Stable baseline scope** — backend/RAG/live-session gates are green; SP-C front,
+  RGPD erasure/audit, and production AI-latency remain tracked open work.

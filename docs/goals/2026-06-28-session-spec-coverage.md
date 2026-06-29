@@ -1,6 +1,6 @@
 # Goal — Full-spec session coverage
 
-- **Status:** Proposed
+- **Status:** Active — minimal session goal delivered; full-spec goal remains open
 - **Date:** 2026-06-28
 - **Objective:** A Presto-Matic live session runs end to end with **every spec element active and proven** — the grounding moat, typed questions, mastery/SRS, breakouts, the SP-A authz substrate, SP-B classification/clearance, and the SP-C client contracts — under the cross-cutting gate-wall, SLOs, and sovereignty constraints.
 - **Scope:** the unified design corpus — see [`../README.md`](../README.md) (built differentiators + SP-A/B/C + evolution P0/P1 hardening). Out of scope: items explicitly marked "defer" in the evolution spec until their increment lands.
@@ -8,7 +8,7 @@
 
 ---
 
-## Delivery status (2026-06-29, branch `goal/moat-and-gatewall`, CI-green, unmerged)
+## Delivery status (2026-06-29, stable backend/RAG/live-session baseline)
 
 | Section                  | State                        | Notes                                                                                                                    |
 | ------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
