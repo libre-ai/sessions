@@ -9,11 +9,11 @@
 
 ADR-0001 rejected a premature multi-repo split for the **core Presto-Matic product**: crates remain the product's compile/API boundaries, and the product dependency arrow stays inside the Cargo workspace.
 
-Four adjacent capabilities now have a different governance shape: they are reusable infrastructure/tooling products, each backed by an active upstream project and useful beyond Presto-Matic. Keeping them inside the Presto-Matic repo would either pull heavy/native dependencies into the product, mix dev tooling with runtime code, or obscure their own release cadence.
+Five adjacent capabilities now have a different governance shape: they are reusable infrastructure/tooling products, each backed by an active upstream project or extracted doctrine and useful beyond Presto-Matic. Keeping them inside the Presto-Matic repo would either pull heavy/native dependencies into the product, mix dev tooling with runtime code, or obscure their own release cadence.
 
 ## Decision
 
-Create four public companion repositories under `constantin-jais/`, each with a narrow mandate and an upstream-first policy:
+Create public companion repositories under `constantin-jais/`, each with a narrow mandate and an upstream-first policy:
 
 | Companion repo | Upstream inspiration / dependency | Role | Relationship to Presto-Matic |
 | --- | --- | --- | --- |
@@ -21,6 +21,7 @@ Create four public companion repositories under `constantin-jais/`, each with a 
 | [`disc-loader`](https://github.com/constantin-jais/disc-loader) | Xberg | Rich document ingestion: PDF/Office/OCR/HTML/archives into canonical text + metadata | External ingestion worker/service; integrates by queue/HTTP/object-store contract |
 | [`vault-inspector`](https://github.com/constantin-jais/vault-inspector) | Scythe | SQL audit, schema linting, Postgres/pgvector/RLS/security inspection | CI/security tool consuming SQL/schema artifacts; does not replace `sqlx` |
 | [`supply-depot`](https://github.com/constantin-jais/supply-depot) | Starmetal | Sovereign registry proxy/cache + supply-chain policy POC | Infrastructure POC; not on Presto-Matic's critical production path until promoted |
+| [`link-cable`](https://github.com/constantin-jais/link-cable) | Agent-O-Matic distribution doctrine | Rust-first multi-platform distribution substrate: release manifests, artifact plans, checksums/signatures/provenance, sovereign install floors | External distribution tool; Agent-O-Matic is first consumer, Presto-Matic may later consume release plans/artifacts |
 
 Presto-Matic remains the product repo. Companion repos may consume Presto-Matic contracts/artifacts, and Presto-Matic may call their services over stable interfaces, but the product must not gain accidental code dependencies on their internals.
 
@@ -38,6 +39,7 @@ Presto-Matic remains the product repo. Companion repos may consume Presto-Matic 
 - `vault-inspector`: CI/security companion. Start with SQL extraction/audit reports, then add live Postgres inspect when a disposable DB is available.
 - `memory-card`: agent/operator acceleration. It can index Presto-Matic and Agent-O-Matic, but it must not become a hidden product requirement.
 - `supply-depot`: lab/infra track. Use it to evaluate registry caching and policy enforcement; keep existing public registries as fallback until the POC is proven.
+- `link-cable`: distribution substrate track. Keep publish/promote mutating commands dry-run or explicitly gated until signatures, SBOM, SLSA provenance, and `compensate` runbooks are proven.
 
 ## Consequences
 

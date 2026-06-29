@@ -35,6 +35,7 @@ Adjacent tooling lives in separate repos so Presto-Matic keeps a tight runtime b
 - [`disc-loader`](https://github.com/constantin-jais/disc-loader) — Xberg-backed rich document ingestion worker/service.
 - [`vault-inspector`](https://github.com/constantin-jais/vault-inspector) — Scythe-backed SQL audit and Postgres security inspection.
 - [`supply-depot`](https://github.com/constantin-jais/supply-depot) — Starmetal-backed sovereign registry proxy / supply-chain POC.
+- [`link-cable`](https://github.com/constantin-jais/link-cable) — Rust-first multi-platform distribution substrate with forward-only releases and sovereign install floors.
 
 See [`docs/adr/0003-companion-repositories.md`](docs/adr/0003-companion-repositories.md).
 

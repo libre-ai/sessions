@@ -61,7 +61,7 @@ P0/P1) lands with Increment 1 and protects the product that already exists.
 - **Biscuit emitter discipline.** Sole emitter, Ed25519 key shared across instances, injected-clock minting, authorizer policies, `check if time < expiration` self-expiry, errors never carry the token. SP-A generalizes `session→space`; SP-B adds signed third-party blocks (classifier + ingestion keys, independent of the server's trust).
 - **Token transport.** Web/PWA: `HttpOnly; Secure; SameSite=Strict` cookie + `Sec-Fetch-Site` check. Tauri: `Authorization` header + OS secure store. The wasm client never reads the token.
 - **Sovereignty.** OSS licensing only (MIT/Apache/MPL family, enforced by the `deny.toml` + `cargo-audit` gates), EU residency, no US hyperscaler/gatekeeper, and no internal/proprietary-employer reference of any kind in any artifact (this is a clean-room sovereign OSS repo).
-- **Companion repos, not hidden runtime deps.** ADR-0003 splits adjacent tooling into `memory-card`, `disc-loader`, `vault-inspector`, and `supply-depot`. Presto-Matic integrates through stable contracts (HTTP/queue/object-store/CLI artifacts), never by depending on companion internals.
+- **Companion repos, not hidden runtime deps.** ADR-0003 splits adjacent tooling into `memory-card`, `disc-loader`, `vault-inspector`, `supply-depot`, and `link-cable`. Presto-Matic integrates through stable contracts (HTTP/queue/object-store/CLI artifacts), never by depending on companion internals.
 
 ## Cross-spec coherence ledger (open items spanning specs)
 
