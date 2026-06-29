@@ -10,7 +10,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use biscuit_auth::macros::{authorizer, biscuit};
+use biscuit_auth::macros::{authorizer, biscuit, fact};
 use biscuit_auth::{Algorithm, Biscuit, KeyPair, PrivateKey, PublicKey};
 
 /// What a token-holder may do in a session.
@@ -47,6 +47,15 @@ pub struct Claims {
     pub session_id: String,
     pub participant_id: String,
     pub capability: Capability,
+}
+
+/// Verified claims from a space-scoped token (SP-A): which space, who, and the
+/// atomic capabilities the bearer holds there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceClaims {
+    pub space_id: String,
+    pub subject: String,
+    pub caps: Vec<String>,
 }
 
 /// Token mint/verify failure. Never carries the token itself.
@@ -168,6 +177,82 @@ impl Auth {
             capability,
         })
     }
+
+    /// Mint a space-scoped capability token (SP-A): the bearer may exercise
+    /// `caps` in `space_id`, valid for `ttl` from `now`. Verifying it against a
+    /// different space is denied (`requested_space`) — exactly as session tokens
+    /// isolate sessions. The live session tokens above are unchanged.
+    pub fn mint_space_token(
+        &self,
+        space_id: &str,
+        subject: &str,
+        caps: &[&str],
+        ttl: Duration,
+        now: SystemTime,
+    ) -> Result<String, AuthError> {
+        let expiration = now + ttl;
+        let mut builder = biscuit!(
+            r#"
+            space({space_id});
+            subject({subject});
+            check if time($t), $t < {expiration};
+            "#,
+            space_id = space_id,
+            subject = subject,
+            expiration = expiration,
+        );
+        for cap in caps {
+            builder = builder
+                .fact(fact!("capability({cap})", cap = *cap))
+                .map_err(|e| AuthError(format!("fact: {e}")))?;
+        }
+        builder
+            .build(&self.keypair)
+            .map_err(|e| AuthError(format!("build: {e}")))?
+            .to_base64()
+            .map_err(|e| AuthError(format!("encode: {e}")))
+    }
+
+    /// Verify a space token presented to act on `space_id`, requiring capability
+    /// `cap`. A token minted for another space, or one lacking the capability, is
+    /// denied — no over-minting, no cross-space action.
+    pub fn verify_space_token(
+        &self,
+        token_b64: &str,
+        space_id: &str,
+        cap: &str,
+        now: SystemTime,
+    ) -> Result<SpaceClaims, AuthError> {
+        let token = Biscuit::from_base64(token_b64, self.keypair.public())
+            .map_err(|e| AuthError(format!("decode: {e}")))?;
+        let mut authorizer = authorizer!(
+            r#"
+            time({now});
+            requested_space({space_id});
+            allow if space($s), requested_space($s), capability({cap});
+            deny if true;
+            "#,
+            now = now,
+            space_id = space_id,
+            cap = cap,
+        )
+        .build(&token)
+        .map_err(|e| AuthError(format!("build: {e}")))?;
+        authorizer
+            .authorize()
+            .map_err(|e| AuthError(format!("denied: {e}")))?;
+        let (space, subject): (String, String) = authorizer
+            .query_exactly_one("data($s, $u) <- space($s), subject($u)")
+            .map_err(|e| AuthError(format!("claims: {e}")))?;
+        let caps: Vec<(String,)> = authorizer
+            .query("data($c) <- capability($c)")
+            .map_err(|e| AuthError(format!("caps: {e}")))?;
+        Ok(SpaceClaims {
+            space_id: space,
+            subject,
+            caps: caps.into_iter().map(|(c,)| c).collect(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -279,5 +364,48 @@ mod tests {
     #[test]
     fn invalid_private_key_hex_is_rejected() {
         assert!(Auth::from_private_key_hex("not-a-valid-hex-key").is_err());
+    }
+
+    #[test]
+    fn space_token_isolates_spaces_and_enforces_caps() {
+        let auth = Auth::generate();
+        let t = now();
+        let token = auth
+            .mint_space_token(
+                "space-A",
+                "user-1",
+                &["read", "add_document"],
+                Duration::from_secs(3600),
+                t,
+            )
+            .unwrap();
+
+        // Granted capability in the right space → ok, with the claims.
+        let claims = auth
+            .verify_space_token(&token, "space-A", "read", t)
+            .unwrap();
+        assert_eq!(claims.space_id, "space-A");
+        assert_eq!(claims.subject, "user-1");
+        assert!(claims.caps.contains(&"add_document".to_string()));
+
+        // Same token, a DIFFERENT space → denied (cross-space isolation).
+        assert!(
+            auth.verify_space_token(&token, "space-B", "read", t)
+                .is_err(),
+            "a token for space A must never act on space B"
+        );
+
+        // Right space, but a capability the token does not hold → denied.
+        assert!(
+            auth.verify_space_token(&token, "space-A", "manage_members", t)
+                .is_err(),
+            "a token must not exercise a capability it was not granted"
+        );
+
+        // The live session tokens are untouched by the space generalization.
+        let session = auth
+            .mint("s1", "host", Capability::Host, Duration::from_secs(600), t)
+            .unwrap();
+        assert!(auth.verify(&session, "s1", t).is_ok());
     }
 }

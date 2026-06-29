@@ -1,0 +1,44 @@
+# Supply-chain gate (evolution Sec2). Enforces ADR-0001's OSS-only licensing
+# (MIT/Apache/MPL and equivalently-permissive) and fails on known vulnerabilities.
+# Unlisted licenses are denied: a transitive AGPL/SSPL/GPL dependency breaks CI.
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MPL-2.0",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",              # Boost Software License (permissive — NOT Business Source)
+    "CDLA-Permissive-2.0", # permissive data license
+]
+confidence-threshold = 0.9
+
+[advisories]
+yanked = "deny"
+# Vulnerabilities block the gate. This single entry acknowledges an *unmaintained*
+# (not vulnerable) transitive macro dep; remove once an upstream dep drops it.
+ignore = [
+    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained (transitive; no vuln)
+    # Marvin Attack (rsa crate): a timing sidechannel in RSA *private-key
+    # decryption*. Pulled in transitively by jsonwebtoken's rust_crypto backend
+    # for RS256. Our OIDC use only VERIFIES id_token signatures with the IdP's
+    # PUBLIC key — it never performs RSA decryption or private-key ops — so the
+    # sidechannel is not reachable here. Drop when `rsa` ships a fix.
+    "RUSTSEC-2023-0071",
+]
+
+[bans]
+# Duplicate versions are a hygiene concern, not a gate failure for a young tree.
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

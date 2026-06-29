@@ -8,11 +8,18 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use presto_core::protocol::{Flashcard, Question};
-use presto_rag::corpus::{CorpusStore, Retriever};
+use presto_rag::corpus::{CorpusStore, RetrievalScope, Retriever};
 use presto_rag::flashcards::flashcards;
 use presto_rag::ingest::document_text;
 use presto_rag::pipeline::{grounded_breakout, grounded_question};
 use presto_rag::provider::AiProvider;
+
+// Single-tenant wedge: all content lives in the `default` space at the public
+// level. When sessions carry a space + audience clearance (SP-A/SP-B), the scope
+// becomes per-session — this is the single wiring point for that.
+fn wedge_scope() -> RetrievalScope {
+    RetrievalScope::wedge()
+}
 
 /// Produces grounded questions for a live session.
 #[async_trait]
@@ -40,7 +47,13 @@ impl RagQuizSource {
 #[async_trait]
 impl QuizSource for RagQuizSource {
     async fn next_question(&self, query: &str) -> Option<Question> {
-        grounded_question(query, self.retriever.as_ref(), self.provider.as_ref()).await
+        grounded_question(
+            &wedge_scope(),
+            query,
+            self.retriever.as_ref(),
+            self.provider.as_ref(),
+        )
+        .await
     }
 }
 
@@ -80,7 +93,13 @@ impl RagBreakoutSource {
 #[async_trait]
 impl BreakoutSource for RagBreakoutSource {
     async fn breakout(&self, section_id: &str) -> Option<String> {
-        grounded_breakout(section_id, self.retriever.as_ref(), self.provider.as_ref()).await
+        grounded_breakout(
+            &wedge_scope(),
+            section_id,
+            self.retriever.as_ref(),
+            self.provider.as_ref(),
+        )
+        .await
     }
 }
 
@@ -121,7 +140,13 @@ impl RagFlashcardSource {
 #[async_trait]
 impl FlashcardSource for RagFlashcardSource {
     async fn deck(&self, sections: &[String]) -> Vec<Flashcard> {
-        flashcards(sections, self.retriever.as_ref(), self.provider.as_ref()).await
+        flashcards(
+            &wedge_scope(),
+            sections,
+            self.retriever.as_ref(),
+            self.provider.as_ref(),
+        )
+        .await
     }
 }
 
@@ -174,7 +199,8 @@ impl DocumentIngestor for RagIngestor {
         let text = document_text(content_type, bytes)
             .map_err(|e| IngestRejection::BadDocument(e.to_string()))?;
         self.corpus
-            .ingest(document_id, &text, self.provider.as_ref())
+            // Wedge: ingest into the `default` space at the public level.
+            .ingest("default", 0, document_id, &text, self.provider.as_ref())
             .await
             .map_err(|e| {
                 // Log the detail; return an opaque rejection (no DB internals to

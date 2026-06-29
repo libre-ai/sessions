@@ -8,8 +8,14 @@
 //! Postgres) implementations plug in for multi-instance operation.
 
 pub mod auth;
+pub mod authz;
+pub mod classification;
 pub mod fanout;
+pub mod flashcard_store;
 pub mod http;
+pub mod integrity;
+pub mod membership;
+pub mod oidc;
 pub mod postgres_store;
 pub mod quiz;
 pub mod ratelimit;

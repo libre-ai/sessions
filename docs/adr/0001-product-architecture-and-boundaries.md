@@ -1,6 +1,6 @@
 # ADR-0001 — Product Architecture & Brick Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-06-28
 - Supersedes: none (first ADR)
 - Related: docs/specs/2026-06-27-presto-matic-design.md, docs/plans/2026-06-27-p3-tracer-bullet.md, docs/specs/2026-06-28-collaborative-spaces-authz-design.md (SP-A), docs/specs/2026-06-28-signed-classification-clearance-design.md (SP-B), docs/specs/2026-06-28-frontend-dioxus-design-system-design.md (SP-C)

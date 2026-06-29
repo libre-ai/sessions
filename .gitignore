@@ -2,3 +2,8 @@
 **/*.rs.bk
 .env
 .DS_Store
+
+# Coverage artifacts
+cobertura.xml
+*.profraw
+*.profdata
