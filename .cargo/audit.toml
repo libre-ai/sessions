@@ -1,0 +1,13 @@
+# cargo-audit config — mirrors deny.toml's advisory policy so the two gates agree.
+# Both scan the same RustSec DB; cargo-deny is the primary gate, cargo-audit a
+# second, independent confirmation in CI.
+[advisories]
+ignore = [
+    # rsa Marvin Attack: a timing sidechannel in RSA *private-key decryption*.
+    # Pulled in via jsonwebtoken's rust_crypto backend for RS256; our OIDC use
+    # only VERIFIES id_token signatures with the IdP's PUBLIC key (no private-key
+    # ops), so the sidechannel is unreachable here.
+    "RUSTSEC-2023-0071",
+    # proc-macro-error2 unmaintained (transitive; not a vulnerability).
+    "RUSTSEC-2026-0173",
+]
