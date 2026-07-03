@@ -5,10 +5,12 @@
 //! Biscuit handling land with later tracer-bullet slices.
 
 pub mod api;
+pub mod biscuit_token;
 pub mod client;
 pub mod fixtures;
 pub mod p0_contract;
 pub mod protocol;
 pub mod role_assignment;
 
+pub use biscuit_token::BiscuitToken;
 pub use role_assignment::{PermissionPrimitive, RoleAssignment};

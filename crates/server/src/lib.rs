@@ -15,6 +15,7 @@ pub mod flashcard_store;
 pub mod http;
 pub mod integrity;
 pub mod membership;
+pub mod middleware;
 pub mod oidc;
 pub mod postgres_store;
 pub mod quiz;
@@ -42,6 +43,9 @@ use store::{InMemorySessionStore, SessionStore};
 /// Public exports for the scoring hook interface.
 /// See [`scoring::ScoreSink`] for trait definition and examples.
 pub use scoring::{InMemorySink, ScoreSink};
+
+/// Public exports for the Biscuit auth middleware.
+pub use middleware::BiscuitAuthLayer;
 
 /// Shared application state: the session-state store, the fanout, the token
 /// authority, and the quiz/breakout content sources. The trait objects let a

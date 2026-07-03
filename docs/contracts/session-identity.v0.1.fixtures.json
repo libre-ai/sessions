@@ -21,6 +21,7 @@
       "capability": "host_minting",
       "expiry_offset_sec": 7200,
       "deterministic_nonce": "fixture_host_001",
+      "serialized_biscuit": "mock_biscuit_12345_actor_host_001_role_host",
       "cross_repo_usage": [
         "rumble-canvas integration",
         "rumble-ai-practices integration"
@@ -39,6 +40,7 @@
       "capability": "answer_submit",
       "expiry_offset_sec": 7200,
       "deterministic_nonce": "fixture_participant_001",
+      "serialized_biscuit": "mock_biscuit_67890_actor_participant_001_role_participant",
       "cross_repo_usage": [
         "rumble-canvas integration",
         "rumble-ai-practices scoring"
