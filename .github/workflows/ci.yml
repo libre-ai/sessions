@@ -120,7 +120,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Build server
         run: cargo build --bin presto-server --release
-      - uses: actions/setup-node@11bd9d76d4b9c31ae0c46e4aaefc79f34eed6f34 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '18'
       - name: Install Playwright
@@ -134,7 +134,7 @@ jobs:
           npm test
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@6d1c36657c4a29b8c2d5dbc9974bf5b8dde42920 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: e2e/playwright-report/
