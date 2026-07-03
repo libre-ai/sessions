@@ -17,6 +17,8 @@ presto-core = { path = "crates/core" }
 presto-rag = { path = "crates/rag" }
 rumble-lm-ui = { path = "crates/ui" }
 dioxus = { version = "0.7", default-features = false, features = ["macro", "html", "signals"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [profile.release]
 strip = true
