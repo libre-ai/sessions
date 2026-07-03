@@ -283,7 +283,8 @@ mod tests {
     #[test]
     fn portal_fixture_provides_tokens_consumed_by_bridge() {
         const PORTAL_TOKENS: &str = include_str!("../fixtures/portal/tokens.css");
-        const PORTAL_CONTRAST_REPORT: &str = include_str!("../fixtures/portal/contrast-report.json");
+        const PORTAL_CONTRAST_REPORT: &str =
+            include_str!("../fixtures/portal/contrast-report.json");
 
         for token in [
             "--color-background:",
@@ -294,7 +295,10 @@ mod tests {
             "--radius-md:",
             "--font-family-body:",
         ] {
-            assert!(PORTAL_TOKENS.contains(token), "missing Portal token {token}");
+            assert!(
+                PORTAL_TOKENS.contains(token),
+                "missing Portal token {token}"
+            );
         }
 
         for mapping in [
@@ -306,7 +310,10 @@ mod tests {
             "var(--radius-md",
             "var(--font-family-body",
         ] {
-            assert!(PORTAL_BRIDGE_CSS.contains(mapping), "bridge does not consume {mapping}");
+            assert!(
+                PORTAL_BRIDGE_CSS.contains(mapping),
+                "bridge does not consume {mapping}"
+            );
         }
 
         assert!(PORTAL_CONTRAST_REPORT.contains("portal.contrast_report.v0.1"));
