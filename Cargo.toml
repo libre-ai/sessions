@@ -19,6 +19,8 @@ rumble-lm-ui = { path = "crates/ui" }
 dioxus = { version = "0.7", default-features = false, features = ["macro", "html", "signals"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 strip = true

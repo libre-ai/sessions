@@ -20,6 +20,7 @@ pub mod postgres_store;
 pub mod quiz;
 pub mod ratelimit;
 pub mod redis_fanout;
+pub mod scoring;
 pub mod session;
 pub mod store;
 pub mod ws;
@@ -37,6 +38,10 @@ use quiz::{
 };
 use ratelimit::TokenBucket;
 use store::{InMemorySessionStore, SessionStore};
+
+/// Public exports for the scoring hook interface.
+/// See [`scoring::ScoreSink`] for trait definition and examples.
+pub use scoring::{InMemorySink, ScoreSink};
 
 /// Shared application state: the session-state store, the fanout, the token
 /// authority, and the quiz/breakout content sources. The trait objects let a
