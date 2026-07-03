@@ -1,0 +1,48 @@
+{
+  "version": "session-identity.v0.1",
+  "fixtures": [
+    {
+      "id": "host_token_fixture",
+      "type": "biscuit_host_role",
+      "workspace_id": "workspace_test_001",
+      "session_id": "session_test_001",
+      "actor_id": "actor_host_001",
+      "actor_type": "Human",
+      "actor_name": "Host User",
+      "role": "host",
+      "permissions": [
+        "read",
+        "comment",
+        "write",
+        "approve",
+        "invite",
+        "administer"
+      ],
+      "capability": "host_minting",
+      "expiry_offset_sec": 7200,
+      "deterministic_nonce": "fixture_host_001",
+      "cross_repo_usage": [
+        "rumble-canvas integration",
+        "rumble-ai-practices integration"
+      ]
+    },
+    {
+      "id": "participant_token_fixture",
+      "type": "biscuit_participant_role",
+      "workspace_id": "workspace_test_001",
+      "session_id": "session_test_001",
+      "actor_id": "actor_participant_001",
+      "actor_type": "Human",
+      "actor_name": "Participant User",
+      "role": "participant",
+      "permissions": ["read", "comment", "write"],
+      "capability": "answer_submit",
+      "expiry_offset_sec": 7200,
+      "deterministic_nonce": "fixture_participant_001",
+      "cross_repo_usage": [
+        "rumble-canvas integration",
+        "rumble-ai-practices scoring"
+      ]
+    }
+  ]
+}
