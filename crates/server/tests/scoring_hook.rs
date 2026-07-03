@@ -10,7 +10,7 @@ mod tests {
         sink.on_answer_submitted("sess1", "part1", "q1", "A", 5000)
             .await
             .unwrap();
-        let score = sink.compute_score("A", "A", 5000).await.unwrap();
+        let score = sink.compute_score("q1", "A", "A", 5000).await.unwrap();
 
         assert_eq!(score, 583);
         assert_eq!(sink.recorded_answers().len(), 1);

@@ -19,11 +19,11 @@
 //!
 //! #[async_trait]
 //! impl ScoreSink for DifficultyWeightedSink {
-//!     async fn compute_score(&self, choice: &str, correct_choice: &str, elapsed_ms: u64)
+//!     async fn compute_score(&self, question_id: &str, choice: &str, correct_choice: &str, elapsed_ms: u64)
 //!         -> Result<u64, ScoreError>
 //!     {
-//!         let base = self.inner.compute_score(choice, correct_choice, elapsed_ms).await?;
-//!         let weight = self.difficulty_weights.get("q_id").copied().unwrap_or(1.0);
+//!         let base = self.inner.compute_score(question_id, choice, correct_choice, elapsed_ms).await?;
+//!         let weight = self.difficulty_weights.get(question_id).copied().unwrap_or(1.0);
 //!         Ok((base as f64 * weight) as u64)
 //!     }
 //! }
@@ -58,6 +58,7 @@ pub trait ScoreSink: Send + Sync {
     /// Default formula: `correct ? 500 + min((30000 - elapsed_ms).max(0) / 300, 100) : 0`
     async fn compute_score(
         &self,
+        question_id: &str,
         choice: &str,
         correct_choice: &str,
         elapsed_ms: u64,
@@ -109,6 +110,7 @@ impl ScoreSink for InMemorySink {
 
     async fn compute_score(
         &self,
+        _question_id: &str,
         choice: &str,
         correct_choice: &str,
         elapsed_ms: u64,
@@ -130,14 +132,14 @@ mod tests {
     #[tokio::test]
     async fn test_score_hook_correct_answer() {
         let sink = InMemorySink::new();
-        let score = sink.compute_score("A", "A", 5000).await.unwrap();
+        let score = sink.compute_score("q1", "A", "A", 5000).await.unwrap();
         assert_eq!(score, 583); // 500 + min((30000-5000)/300, 100) = 500 + 83
     }
 
     #[tokio::test]
     async fn test_score_hook_incorrect_answer() {
         let sink = InMemorySink::new();
-        let score = sink.compute_score("B", "A", 5000).await.unwrap();
+        let score = sink.compute_score("q1", "B", "A", 5000).await.unwrap();
         assert_eq!(score, 0);
     }
 
@@ -156,7 +158,7 @@ mod tests {
     async fn test_score_hook_max_time_bonus() {
         // Maximum time bonus: elapsed_ms = 0 → bonus = 100
         let sink = InMemorySink::new();
-        let score = sink.compute_score("A", "A", 0).await.unwrap();
+        let score = sink.compute_score("q1", "A", "A", 0).await.unwrap();
         assert_eq!(score, 600); // 500 + 100
     }
 
@@ -164,7 +166,7 @@ mod tests {
     async fn test_score_hook_min_time_bonus() {
         // Beyond time window: elapsed_ms >= 30000 → bonus = 0
         let sink = InMemorySink::new();
-        let score = sink.compute_score("A", "A", 30000).await.unwrap();
+        let score = sink.compute_score("q1", "A", "A", 30000).await.unwrap();
         assert_eq!(score, 500); // 500 + 0
     }
 }
