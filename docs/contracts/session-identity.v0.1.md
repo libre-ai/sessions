@@ -26,14 +26,14 @@ token = Biscuit(
   - workspace_id: from token.facts.workspace(WorkspaceId)
   - actor_ref: ActorReference(actor_id, ActorType::Human | ActorType::Service, actor_name)
   - role: "host"
-  - permissions: [read, comment, write, approve, administer]
+  - permissions: [read, comment, write, approve, invite, administer]
   - created_at: token.minted_at
 
 - **Participant role:**
   - workspace_id: from token.facts.workspace(WorkspaceId)
   - actor_ref: ActorReference(actor_id, ActorType::Human | ActorType::Agent, actor_name)
   - role: "participant"
-  - permissions: [read, comment]
+  - permissions: [read, comment, write]
   - created_at: token.minted_at
 
 ## Cross-repo fixture

@@ -28,9 +28,10 @@ mod tests {
         );
 
         assert_eq!(host.role, "host");
-        assert_eq!(host.permissions.len(), 5);
+        assert_eq!(host.permissions.len(), 6);
         assert!(host.permissions.contains(&PermissionPrimitive::Write));
         assert!(host.permissions.contains(&PermissionPrimitive::Approve));
+        assert!(host.permissions.contains(&PermissionPrimitive::Invite));
         assert!(host.permissions.contains(&PermissionPrimitive::Administer));
     }
 
@@ -42,14 +43,18 @@ mod tests {
         );
 
         assert_eq!(participant.role, "participant");
-        assert_eq!(participant.permissions.len(), 2);
+        assert_eq!(participant.permissions.len(), 3);
         assert!(participant.permissions.contains(&PermissionPrimitive::Read));
-        assert!(participant
-            .permissions
-            .contains(&PermissionPrimitive::Comment));
-        assert!(!participant
-            .permissions
-            .contains(&PermissionPrimitive::Write));
+        assert!(
+            participant
+                .permissions
+                .contains(&PermissionPrimitive::Comment)
+        );
+        assert!(
+            participant
+                .permissions
+                .contains(&PermissionPrimitive::Write)
+        );
     }
 
     #[test]
@@ -102,9 +107,11 @@ mod tests {
         assert_eq!(host_role.workspace_id, "workspace_test_001");
         assert_eq!(host_role.role, "host");
         assert!(host_role.permissions.contains(&PermissionPrimitive::Write));
-        assert!(host_role
-            .permissions
-            .contains(&PermissionPrimitive::Approve));
+        assert!(
+            host_role
+                .permissions
+                .contains(&PermissionPrimitive::Approve)
+        );
     }
 
     #[test]

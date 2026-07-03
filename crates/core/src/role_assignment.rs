@@ -44,8 +44,9 @@ impl RoleAssignment {
         Ok(())
     }
 
-    /// Map Host role to RoleAssignment with permissions per ADR 0028.
-    /// Host gets: read, comment, write, approve, administer.
+    /// Map Host role to RoleAssignment with permissions per the
+    /// workspace-identity.v0.1 contract: Host ⊇ {read, comment, write,
+    /// approve, invite, administer}.
     pub fn host(workspace_id: String, actor_id: String) -> Self {
         Self {
             id: format!("role_{}", uuid::Uuid::new_v4()),
@@ -57,6 +58,7 @@ impl RoleAssignment {
                 PermissionPrimitive::Comment,
                 PermissionPrimitive::Write,
                 PermissionPrimitive::Approve,
+                PermissionPrimitive::Invite,
                 PermissionPrimitive::Administer,
             ],
             created_at: chrono::Utc::now().to_rfc3339(),
@@ -64,15 +66,20 @@ impl RoleAssignment {
         }
     }
 
-    /// Map Participant role to RoleAssignment with permissions per ADR 0028.
-    /// Participant gets: read, comment.
+    /// Map Participant role to RoleAssignment with permissions per the
+    /// workspace-identity.v0.1 contract: Participant ⊇ {read, comment, write}
+    /// (write = submitting answers).
     pub fn participant(workspace_id: String, actor_id: String) -> Self {
         Self {
             id: format!("role_{}", uuid::Uuid::new_v4()),
             workspace_id,
             actor_id,
             role: "participant".to_string(),
-            permissions: vec![PermissionPrimitive::Read, PermissionPrimitive::Comment],
+            permissions: vec![
+                PermissionPrimitive::Read,
+                PermissionPrimitive::Comment,
+                PermissionPrimitive::Write,
+            ],
             created_at: chrono::Utc::now().to_rfc3339(),
             revoked_at: None,
         }
@@ -87,13 +94,13 @@ mod tests {
     fn test_host_role_has_correct_permissions() {
         let host = RoleAssignment::host("ws_1".to_string(), "actor_1".to_string());
         assert_eq!(host.role, "host");
-        assert_eq!(host.permissions.len(), 5);
+        assert_eq!(host.permissions.len(), 6);
         assert!(host.permissions.contains(&PermissionPrimitive::Read));
         assert!(host.permissions.contains(&PermissionPrimitive::Comment));
         assert!(host.permissions.contains(&PermissionPrimitive::Write));
         assert!(host.permissions.contains(&PermissionPrimitive::Approve));
+        assert!(host.permissions.contains(&PermissionPrimitive::Invite));
         assert!(host.permissions.contains(&PermissionPrimitive::Administer));
-        assert!(!host.permissions.contains(&PermissionPrimitive::Invite));
         assert!(!host.permissions.contains(&PermissionPrimitive::Delegate));
     }
 
@@ -101,20 +108,28 @@ mod tests {
     fn test_participant_role_has_correct_permissions() {
         let participant = RoleAssignment::participant("ws_1".to_string(), "actor_1".to_string());
         assert_eq!(participant.role, "participant");
-        assert_eq!(participant.permissions.len(), 2);
+        assert_eq!(participant.permissions.len(), 3);
         assert!(participant.permissions.contains(&PermissionPrimitive::Read));
-        assert!(participant
-            .permissions
-            .contains(&PermissionPrimitive::Comment));
-        assert!(!participant
-            .permissions
-            .contains(&PermissionPrimitive::Write));
-        assert!(!participant
-            .permissions
-            .contains(&PermissionPrimitive::Approve));
-        assert!(!participant
-            .permissions
-            .contains(&PermissionPrimitive::Administer));
+        assert!(
+            participant
+                .permissions
+                .contains(&PermissionPrimitive::Comment)
+        );
+        assert!(
+            participant
+                .permissions
+                .contains(&PermissionPrimitive::Write)
+        );
+        assert!(
+            !participant
+                .permissions
+                .contains(&PermissionPrimitive::Approve)
+        );
+        assert!(
+            !participant
+                .permissions
+                .contains(&PermissionPrimitive::Administer)
+        );
     }
 
     #[test]
