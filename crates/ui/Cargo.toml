@@ -1,12 +1,12 @@
 [package]
-name = "presto-ui"
+name = "rumble-lm-ui"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [lib]
-name = "presto_ui"
+name = "rumble_lm_ui"
 path = "src/lib.rs"
 
 [dependencies]

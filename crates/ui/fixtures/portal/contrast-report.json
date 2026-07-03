@@ -1,0 +1,19 @@
+{
+  "format": "portal.contrast_report.v0.1",
+  "checks": [
+    {
+      "path": "color.text",
+      "foreground": "#11181c",
+      "background": "#ffffff",
+      "ratio": 17.929473908734614,
+      "passes_wcag_aa": true
+    },
+    {
+      "path": "color.text-secondary",
+      "foreground": "#5a636c",
+      "background": "#f7f8f9",
+      "ratio": 5.747859712458345,
+      "passes_wcag_aa": true
+    }
+  ]
+}

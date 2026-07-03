@@ -34,7 +34,7 @@ jobs:
       - name: Documentation
         run: cargo doc --workspace --all-features --no-deps
       - name: WASM portability (client crates)
-        run: cargo check -p presto-core -p presto-ui --target wasm32-unknown-unknown
+        run: cargo check -p presto-core -p rumble-lm-ui --target wasm32-unknown-unknown
 
   guard:
     name: Repository guardrails

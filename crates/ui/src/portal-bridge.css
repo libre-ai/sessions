@@ -1,0 +1,32 @@
+:root {
+  /* Portal compatibility bridge. When a Portal token bundle is loaded on the
+     page, these mappings make rumble-lm-ui consume it. Fallbacks preserve the
+     existing local theme until the product fully migrates to Portal names. */
+  --presto-color-bg: var(--color-background, #f8fafc);
+  --presto-color-surface: var(--color-surface, #ffffff);
+  --presto-color-surface-raised: var(--color-surface, #ffffff);
+  --presto-color-text: var(--color-text, #0f172a);
+  --presto-color-text-muted: var(--color-text-secondary, #475569);
+  --presto-color-border: var(--color-border, #cbd5e1);
+  --presto-color-primary: var(--color-brand, #2563eb);
+  --presto-color-primary-contrast: var(--color-background, #ffffff);
+  --presto-color-accent: var(--color-accent, #0f766e);
+  --presto-color-warning: var(--color-warning, #b45309);
+  --presto-color-danger: var(--color-danger, #b91c1c);
+  --presto-color-success: var(--color-success, #15803d);
+
+  --presto-space-1: var(--spacing-xs, 0.25rem);
+  --presto-space-2: var(--spacing-sm, 0.5rem);
+  --presto-space-4: var(--spacing-md, 1rem);
+  --presto-space-6: var(--spacing-lg, 1.5rem);
+  --presto-space-8: var(--spacing-xl, 2rem);
+
+  --presto-radius-sm: var(--radius-sm, 0.5rem);
+  --presto-radius-md: var(--radius-md, 0.75rem);
+  --presto-radius-lg: var(--radius-lg, 1rem);
+
+  --presto-font-sans: var(--font-family-body, ui-sans-serif, system-ui, sans-serif);
+  --presto-font-size-sm: var(--font-size-sm, 0.875rem);
+  --presto-font-size-md: var(--font-size-base, 1rem);
+  --presto-font-size-lg: var(--font-size-lg, 1.125rem);
+}

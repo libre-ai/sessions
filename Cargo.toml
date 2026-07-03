@@ -15,7 +15,7 @@ async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 presto-core = { path = "crates/core" }
 presto-rag = { path = "crates/rag" }
-presto-ui = { path = "crates/ui" }
+rumble-lm-ui = { path = "crates/ui" }
 dioxus = { version = "0.7", default-features = false, features = ["macro", "html", "signals"] }
 
 [profile.release]

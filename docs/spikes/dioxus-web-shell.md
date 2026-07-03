@@ -29,7 +29,8 @@ cargo check --example spike_web --target wasm32-unknown-unknown
 # Output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.48s
 
 # Quality gates
-cargo clippy --package presto-ui --all-targets -- -D warnings
+cargo clippy --package rumble-lm-ui --all-targets -- -D warnings
+# legacy package name; target role is rumble-lm-ui consuming Portal
 # Output: Finished `dev` profile [unoptimized + debuginfo]
 
 cargo fmt --check --all
@@ -161,7 +162,7 @@ I did not build a Leptos spike (it lives in feed-mind, a different repo under D7
 - ✓ Signals are sufficient for app-scoped state (session list, live view toggling).
 - ✓ WASM compilation is reliable (cargo check --target works, no surprises).
 - ✓ Testing patterns are clear once understood (separate stateless components).
-- ✓ Zero-runtime overhead for a library crate (presto-ui) + example app.
+- ✓ Zero-runtime overhead for a library crate (renamed package `rumble-lm-ui`) + example app.
 
 ### Reservations (Not blockers; design phase decisions)
 

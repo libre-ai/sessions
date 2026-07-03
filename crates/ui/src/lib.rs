@@ -1,8 +1,9 @@
-//! presto-ui — mobile-first Dioxus design primitives for Presto-Matic.
+//! rumble-lm-ui — mobile-first product UI primitives for Rumble LM.
 //!
 //! This crate is intentionally small and sovereign: no remote component service,
-//! no CDN, and no business logic. Product state lives in `presto-core`; this
-//! crate renders accessible primitives over shared DTOs.
+//! no CDN, and no business logic. Shared client-platform semantics belong to
+//! Portal; product state lives in `presto-core`; this crate renders accessible
+//! LM-specific primitives over shared DTOs.
 
 #![allow(non_snake_case)]
 
@@ -12,14 +13,17 @@ use presto_core::api::SourceCitation;
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
 
-/// Component classes built exclusively on top of `TOKENS_CSS` variables.
+/// Compatibility bridge from generated Portal token names to product-local variables.
+pub const PORTAL_BRIDGE_CSS: &str = include_str!("portal-bridge.css");
+
+/// Component classes built exclusively on top of token variables.
 pub const COMPONENTS_CSS: &str = include_str!("components.css");
 
 /// Include once near the root of a Dioxus app.
 #[component]
 pub fn ThemeStyles() -> Element {
     rsx! {
-        style { "{TOKENS_CSS}\n{COMPONENTS_CSS}" }
+        style { "{TOKENS_CSS}\n{PORTAL_BRIDGE_CSS}\n{COMPONENTS_CSS}" }
     }
 }
 
@@ -269,10 +273,51 @@ mod tests {
         assert!(html.contains("--presto-color-primary"));
         assert!(html.contains("--presto-touch-target: 44px"));
         assert!(html.contains("prefers-reduced-motion"));
+        assert!(html.contains("--presto-color-primary: var(--color-brand"));
         assert!(
             !COMPONENTS_CSS.contains("#"),
             "component CSS must use token colors only"
         );
+    }
+
+    #[test]
+    fn portal_fixture_provides_tokens_consumed_by_bridge() {
+        const PORTAL_TOKENS: &str = include_str!("../fixtures/portal/tokens.css");
+        const PORTAL_CONTRAST_REPORT: &str =
+            include_str!("../fixtures/portal/contrast-report.json");
+
+        for token in [
+            "--color-background:",
+            "--color-surface:",
+            "--color-text:",
+            "--color-brand:",
+            "--spacing-md:",
+            "--radius-md:",
+            "--font-family-body:",
+        ] {
+            assert!(
+                PORTAL_TOKENS.contains(token),
+                "missing Portal token {token}"
+            );
+        }
+
+        for mapping in [
+            "var(--color-background",
+            "var(--color-surface",
+            "var(--color-text",
+            "var(--color-brand",
+            "var(--spacing-md",
+            "var(--radius-md",
+            "var(--font-family-body",
+        ] {
+            assert!(
+                PORTAL_BRIDGE_CSS.contains(mapping),
+                "bridge does not consume {mapping}"
+            );
+        }
+
+        assert!(PORTAL_CONTRAST_REPORT.contains("portal.contrast_report.v0.1"));
+        assert!(PORTAL_CONTRAST_REPORT.contains("\"passes_wcag_aa\": true"));
     }
 
     #[test]

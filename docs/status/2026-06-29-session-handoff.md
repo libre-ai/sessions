@@ -98,7 +98,7 @@ SP-C client (§5) need an audit substrate **and a front end** — see next.
 ## Next: SP-C Increment 1 (the architecture agent's spec)
 
 Spec: `docs/specs/2026-06-28-frontend-dioxus-design-system-design.md`. All-Rust
-Dioxus clients + a hand-built design system (`presto-ui`) — a sovereignty asset.
+Rust-first clients consuming Portal client-platform contracts; `rumble-lm-ui` is local to LM-specific components only.
 
 **Inc-1 vertical slice — authenticated personal notebook (web/PWA):**
 
@@ -106,9 +106,7 @@ Dioxus clients + a hand-built design system (`presto-ui`) — a sovereignty asse
 > the response with cited source cards + a server-authoritative confidentiality
 > badge → logout/refresh wired.
 
-- **Crates:** `crates/ui` (`presto-ui` — tokens as CSS vars + base components:
-  Button/Input/Dialog/Toast, ARIA + keyboard nav) and `crates/app` (`presto-app`
-  — Dioxus wasm target), both re-using `presto-core` contracts.
+- **Crates:** `crates/ui` (`rumble-lm-ui` — LM-specific components consuming Portal tokens/a11y) and future app/join surfaces, both re-using `presto-core` contracts.
 - **Auth/transport (honor the invariant):** Auth Code + PKCE → token in
   `HttpOnly; Secure; SameSite=Strict` cookie set server-side at `/auth/callback`;
   the wasm client never reads the cookie; `fetch(..., {credentials:'include'})` +

@@ -16,7 +16,7 @@ invariants, and an explicit cross-spec ledger.
 | [`specs/2026-06-27-presto-matic-design.md`](specs/2026-06-27-presto-matic-design.md)                                       | The product design (wedge, differentiators, live protocol, sovereignty)           | Proposed  |
 | [`specs/2026-06-28-collaborative-spaces-authz-design.md`](specs/2026-06-28-collaborative-spaces-authz-design.md)           | **SP-A** — authorization substrate (OIDC, spaces, membership, Biscuit caps)       | Proposed  |
 | [`specs/2026-06-28-signed-classification-clearance-design.md`](specs/2026-06-28-signed-classification-clearance-design.md) | **SP-B** — signed classification (confidentiality / PII / integrity) + clearance  | Proposed  |
-| [`specs/2026-06-28-frontend-dioxus-design-system-design.md`](specs/2026-06-28-frontend-dioxus-design-system-design.md)     | **SP-C** — all-Rust Dioxus clients + design system (`presto-ui`)                  | Proposed  |
+| [`specs/2026-06-28-frontend-dioxus-design-system-design.md`](specs/2026-06-28-frontend-dioxus-design-system-design.md)     | **SP-C** — Rust-first clients consuming Portal; local UI crate `rumble-lm-ui` replaced former `presto-ui` | Proposed  |
 | [`evolution/2026-06-28-evolution-and-hardening-spec.md`](evolution/2026-06-28-evolution-and-hardening-spec.md)             | Cross-cutting critique + prioritized hardening roadmap (adversarially challenged) | Proposed  |
 | [`plans/2026-06-27-p3-tracer-bullet.md`](plans/2026-06-27-p3-tracer-bullet.md)                                             | The live-session tracer-bullet plan (P3)                                          | Reference |
 | [`deploy/clever-cloud.md`](deploy/clever-cloud.md)                                                                         | Sovereign deployment runbook (Clever Cloud)                                       | Reference |
@@ -61,7 +61,8 @@ P0/P1) lands with Increment 1 and protects the product that already exists.
 - **Biscuit emitter discipline.** Sole emitter, Ed25519 key shared across instances, injected-clock minting, authorizer policies, `check if time < expiration` self-expiry, errors never carry the token. SP-A generalizes `session→space`; SP-B adds signed third-party blocks (classifier + ingestion keys, independent of the server's trust).
 - **Token transport.** Web/PWA: `HttpOnly; Secure; SameSite=Strict` cookie + `Sec-Fetch-Site` check. Tauri: `Authorization` header + OS secure store. The wasm client never reads the token.
 - **Sovereignty.** OSS licensing only (MIT/Apache/MPL family, enforced by the `deny.toml` + `cargo-audit` gates), EU residency, no US hyperscaler/gatekeeper, and no internal/proprietary-employer reference of any kind in any artifact (this is a clean-room sovereign OSS repo).
-- **Companion repos, not hidden runtime deps.** ADR-0003 splits adjacent tooling into `gear-memory`, `wrench-loader`, `wrench-db-inspect`, `gear-depot`, and `gear-cable`. rumble-lm integrates through stable contracts (HTTP/queue/object-store/CLI artifacts), never by depending on companion internals.
+- **Portal client-platform boundary.** Shared tokens, accessibility, i18n UI, and web/native adapters belong to Portal. `presto-ui` was the legacy local crate name; the crate is now `rumble-lm-ui` for LM-specific components.
+- **Companion repos, not hidden runtime deps.** ADR-0003 splits adjacent capabilities into `gear-loader`, `gear-memory`, `wrench-db-inspect`, `gear-depot`, `gear-cable`, and Portal client-platform repos. rumble-lm integrates through stable contracts (HTTP/queue/object-store/CLI artifacts), never by depending on companion internals.
 
 ## Cross-spec coherence ledger (open items spanning specs)
 

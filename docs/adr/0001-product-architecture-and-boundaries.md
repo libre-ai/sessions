@@ -5,6 +5,7 @@
 - Supersedes: none (first ADR)
 - Related: docs/specs/2026-06-27-presto-matic-design.md, docs/plans/2026-06-27-p3-tracer-bullet.md, docs/specs/2026-06-28-collaborative-spaces-authz-design.md (SP-A), docs/specs/2026-06-28-signed-classification-clearance-design.md (SP-B), docs/specs/2026-06-28-frontend-dioxus-design-system-design.md (SP-C)
 - Amended by: docs/adr/0003-companion-repositories.md (adjacent tooling/infrastructure repos; core product monorepo invariant preserved)
+- Amended by: ecosystem decision 2026-07-02 (Portal is the client-platform layer; `presto-ui` was renamed to `rumble-lm-ui` for product-local UI)
 
 ## Context
 
@@ -52,7 +53,7 @@ grounded breakouts from the confusion heatmap (#4) — all under the trust wedge
 | **P2 — Grounded Studio**           | Generate pedagogical content always traceable to source, gated by the verifier        | `generate`, `verify` (the wedge), `flashcards`, `clarify`, `pipeline`                                                       | `presto-rag`          | `presto-studio` (to extract)                                     |
 | **P3 — Live Sessions**             | Orchestrate 200+ participants in real time: quiz flow, leaderboard, confusion heatmap | `session`, `store`/`postgres_store`, `fanout`/`redis_fanout`, `ws`, `http`, `quiz` (ports)                                  | `presto-server`       | `presto-server`                                                  |
 | **P4 — Sovereignty & Self-host**   | Auth, **collaborative spaces, classification**, BYO/multi-instance, quotas/audit/RGPD | `auth` + `space`/`membership`/`oidc`/`audit` (SP-A) + classification (SP-B) + env wiring                                    | `presto-server`       | modules in `presto-server`; extract `presto-authz` when it grows |
-| **Client — Front & design system** | The surfaces users touch: personal notebook (owner) + guest/join client               | `presto-ui` (design system), `presto-app` (notebook), `presto-join` (guest) — Dioxus, all-Rust (SP-C)                       | `static/` placeholder | `presto-ui` + `presto-app` + `presto-join`                       |
+| **Client — Front & product UI** | The surfaces users touch: personal notebook (owner) + guest/join client               | `rumble-lm-ui` product components consuming Portal tokens/a11y/client-platform contracts; app/join surfaces remain Rust-first (SP-C) | `static/` placeholder + `rumble-lm-ui` | `rumble-lm-ui` + app/join clients consuming Portal |
 | **Transverse — Protocol**          | Data contract between bricks and clients                                              | content types (`Question`, `Flashcard`, `QuestionKind`) + live wire protocol (`Client`/`ServerMessage`, `LeaderboardEntry`) | `presto-core`         | `presto-core`                                                    |
 
 ## Architecture — two views
@@ -77,13 +78,15 @@ surface) and the guests' **join client** (ephemeral, live). It talks to the back
 
 ```mermaid
 graph RL
-    app["presto-app / presto-join — Client (Dioxus front)"]
-    ui["presto-ui — design system"]
+    app["rumble-lm app / join — Client surfaces"]
+    ui["rumble-lm-ui — product UI (renamed from presto-ui)"]
+    portal["Portal — tokens/a11y/i18n/adapters"]
     server["presto-server — P3 Live + P4 Sovereignty + bin"]
     studio["presto-studio — P2 Grounded Studio (wedge)"]
     rag["presto-rag — P1 Knowledge & Ingestion"]
     core["presto-core — Protocol / shared contract"]
     app --> ui
+    ui --> portal
     ui --> core
     app -. "WS / HTTP (network)" .-> server
     server --> studio
@@ -120,9 +123,7 @@ Each brick is detailed in its own spec, delivered in **risk-first increments** (
   (confidentiality / pii / integrity), not one risk scalar; hybrid clearance `min(org, space)`; the
   **live-generation gate** (a host generates live content only from `confidentiality <= audience
 clearance`). Integrity serves the solo wedge; access gating is collaborative.
-- **SP-C — Front & design system** (Client): all-Rust **Dioxus** (web wasm + Tauri desktop),
-  `presto-ui` on tokens with hand-built a11y, `presto-app`/`presto-join` surfaces sharing `presto-core`;
-  server-authoritative. UniFFI and true multi-native are rejected (anti-sovereign, wedge friction).
+- **SP-C — Front & client platform** (Client): Rust-first product clients consuming Portal for shared tokens, accessibility, i18n UI, and web/native adapters. Dioxus/PWA remains the fast default path for the wedge; SwiftUI/Compose native paths are first-class when product need and verification justify them. `rumble-lm-ui` is product-local and must not become the shared design system.
 
 ## Principles for boundaries (how to decide — reusable)
 
@@ -179,6 +180,7 @@ transverse contract. Low priority vs the P1/P2 split — fold in if convenient, 
   lines is ceremony.
 - **one-crate-per-brick for the backend:** rejected at ~4k lines. Bricks stay module-level where the
   seam is weak; crate-level only where it is strong (P1/P2, and the Client which is a separate surface).
+- **local `rumble-lm-ui` as shared design system:** rejected. Shared design-system and client-platform responsibility belongs to Portal; `rumble-lm-ui` is for LM-specific components only.
 - **multi-repo for core product bricks:** still rejected. No core Presto-Matic governance boundary is live.
   Companion repos for adjacent tooling/infrastructure are accepted by ADR-0003 because their governance,
   dependency, and release boundaries are already different from the product repo.

@@ -77,14 +77,17 @@ The product outcome is not “chat with an LLM”; it is better learning and bet
 
 - Generic model hosting or provider abstraction as infrastructure.
 - Agentic orchestration internals: belongs to `cos-matic`.
-- Raw ingestion/extraction: belongs to `wrench-loader`.
+- Raw ingestion/extraction: belongs to `gear-loader`.
+- Cross-platform client primitives, tokens, accessibility, and native/web adapters: belong to Portal.
 - Memory/storage/distribution primitives: belongs to Gear.
 - A generic chatbot interface disconnected from learning outcomes.
 
 ## Allowed Dependencies
 
 - Uses Bolt for orchestration when sessions need planning, generation, or agentic facilitation.
-- Uses Wrench for document ingestion, source extraction, and validation.
+- Uses Gear Loader for document ingestion and source extraction.
+- Uses Wrench for validation/inspection evidence.
+- Uses Portal for client-platform primitives, tokens, accessibility, and native/web adapters.
 - Uses Gear for memory, artifact integrity, provenance, and reproducible deployment paths.
 
 ## Product Vision Challenge
