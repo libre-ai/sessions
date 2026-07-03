@@ -91,3 +91,50 @@ jobs:
         run: >-
           cargo llvm-cov --workspace --ignore-filename-regex 'main\.rs'
           --fail-under-lines 80 -- --include-ignored --skip sustains_200_participants
+
+  e2e:
+    name: End-to-end tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: [rust, integration]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: presto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:presto@localhost:5432/postgres
+      REDIS_URL: redis://localhost:6379/
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Build server
+        run: cargo build --bin presto-server --release
+      - uses: actions/setup-node@11bd9d76d4b9c31ae0c46e4aaefc79f34eed6f34 # v4
+        with:
+          node-version: '18'
+      - name: Install Playwright
+        run: |
+          cd e2e
+          npm install
+          npx playwright install --with-deps
+      - name: Run e2e tests
+        run: |
+          cd e2e
+          npm test
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@6d1c36657c4a29b8c2d5dbc9974bf5b8dde42920 # v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
