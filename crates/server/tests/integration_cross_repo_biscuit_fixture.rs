@@ -34,9 +34,11 @@ mod tests {
         assert_eq!(host_role.workspace_id, "workspace_test_001");
         assert_eq!(host_role.role, "host");
         assert!(host_role.permissions.contains(&PermissionPrimitive::Write));
-        assert!(host_role
-            .permissions
-            .contains(&PermissionPrimitive::Approve));
+        assert!(
+            host_role
+                .permissions
+                .contains(&PermissionPrimitive::Approve)
+        );
     }
 
     #[test]
