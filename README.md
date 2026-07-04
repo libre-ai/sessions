@@ -1,27 +1,28 @@
-# Rumble LM
+# rumble-lm
+
+**Couche** : Rumble
+**Rôle** : produit de learning/facilitation sourcé et sessions live
+**deployment_class** : product-linkable
+**Maturité** : contract-first — runtime scaffolding présent, pas un produit fini
+**Place dans la chaîne DoD** : exprime le besoin de session sourcée et produit contrats/fixtures qui doivent traverser Portal, Gear, Wrench et Bolt.
+**Doctrine** : source-grounded, preuve avant promesse ; le scaffolding runtime ne vaut pas maturité produit.
+**Souveraineté** : licences MIT/Apache/MPL compatibles ; pas d’AGPL/SSPL dans la chaîne versionnée.
+
+## Ce que ça fait
+
+Cadre des sessions pédagogiques avec sources, citations, rôles et délégation bornée. Le dépôt contient des contrats, stubs et briques runtime optionnelles ; l’expérience complète, durable et e2e reste à construire.
+
+## Où ça se branche
+
+- Amont : specs Rumble LM et contrats partagés dans [ecosystem/specs/rumble-lm](https://github.com/constantin-jais/constantin-jais/tree/main/ecosystem/specs/rumble-lm).
+- Aval attendu : [portal-forge](https://github.com/constantin-jais/portal-forge)/Portal pour l’UI, [gear-loader](https://github.com/constantin-jais/gear-loader) + [gear-memory](https://github.com/constantin-jais/gear-memory), Wrench puis Bolt handoff.
+- Contrats : session source-grounded P0, delegated authorization Biscuit, futures `CitationValidation`.
 
 [![CI](https://github.com/constantin-jais/rumble-lm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/constantin-jais/rumble-lm/actions/workflows/ci.yml)
 [![Security](https://github.com/constantin-jais/rumble-lm/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/constantin-jais/rumble-lm/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Layer:** Rumble — Product  
-**Role:** sovereign learning and facilitation platform  
-**Mission:** help groups learn, discuss, and decide from source-grounded AI content in trustworthy interactive sessions.
-
 ---
-
-## Stack role
-
-- **Layer:** Rumble — Product.
-- **Role:** sovereign learning and facilitation platform.
-- **Mission:** help groups learn, discuss, and decide from source-grounded AI content in trustworthy interactive sessions.
-- **Maturity:** `contract-first`.
-- **Scale-ready:** no — contracts/stubs validate boundaries before a production runtime or UI.
-- **Current increment:** P0 source-grounded contract stub.
-- **Learning value:** pedagogy, citations, live sessions, grounding, aggregate analytics, and bounded delegation.
-- **Next quality step:** define `CitationValidation`, retention defaults, and deployment-specific provider/BYOK policy.
-
-See the ecosystem cockpit in [`constantin-jais/ecosystem/status.md`](https://github.com/constantin-jais/constantin-jais/blob/main/ecosystem/status.md).
 
 ## Dogfooding
 
@@ -76,7 +77,7 @@ The product outcome is not “chat with an LLM”; it is better learning and bet
 ## Does Not Own
 
 - Generic model hosting or provider abstraction as infrastructure.
-- Agentic orchestration internals: belongs to `cos-matic`.
+- Agentic orchestration internals: belongs to `bolt-cos-matic`.
 - Raw ingestion/extraction: belongs to `gear-loader`.
 - Cross-platform client primitives, tokens, accessibility, and native/web adapters: belong to Portal.
 - Memory/storage/distribution primitives: belongs to Gear.
