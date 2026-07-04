@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse};
 use serde::{Deserialize, Serialize};
 
+use presto_core::WorkspaceIdentity;
 use presto_core::p0_contract::{
     P0StubWorkflowProof, P0ValidationReport, run_p0_stub_workflow, valid_p0_fixture,
     validate_p0_fixture,
@@ -22,6 +23,7 @@ use presto_core::p0_contract::{
 use crate::AppState;
 use crate::auth::Capability;
 use crate::quiz::IngestRejection;
+use crate::session_identity::{SessionRole, SessionScope, workspace_identity_for_actor};
 
 const TOKEN_TTL: Duration = Duration::from_secs(6 * 3600);
 /// Unambiguous alphabet (no 0/O/1/I) for human-typable codes.
@@ -40,9 +42,12 @@ pub(crate) struct Envelope<T> {
 
 #[derive(Serialize)]
 pub(crate) struct CreatedSession {
+    tenant_id: String,
+    workspace_id: String,
     session_id: String,
     host_token: String,
     join_url: String,
+    workspace_identity: WorkspaceIdentity,
 }
 
 /// Create a session and return a host token + a participant join URL.
@@ -54,6 +59,7 @@ pub(crate) async fn create_session(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
     let session_id = code(6);
+    let scope = SessionScope::for_session(&session_id);
     let host_id = format!("host-{}", code(4));
     state
         .store
@@ -62,28 +68,35 @@ pub(crate) async fn create_session(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let host_token = state
         .auth
-        .mint(
-            &session_id,
+        .mint_scoped(
+            &scope,
             &host_id,
             Capability::Host,
             TOKEN_TTL,
             SystemTime::now(),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspace_identity = workspace_identity_for_actor(&scope, &host_id, SessionRole::Host);
     let join_url = format!("/?s={session_id}");
     Ok(Json(Envelope {
         data: CreatedSession {
+            tenant_id: scope.tenant_id,
+            workspace_id: scope.workspace_id,
             session_id,
             host_token,
             join_url,
+            workspace_identity,
         },
     }))
 }
 
 #[derive(Serialize)]
 pub(crate) struct JoinedSession {
+    tenant_id: String,
+    workspace_id: String,
     participant_id: String,
     participant_token: String,
+    workspace_identity: WorkspaceIdentity,
 }
 
 /// Mint a participant token for a session. The display name travels on the WS
@@ -101,21 +114,27 @@ pub(crate) async fn join_session(
     {
         return Err(StatusCode::NOT_FOUND);
     }
+    let scope = SessionScope::for_session(&session_id);
     let participant_id = format!("p-{}", code(6));
     let participant_token = state
         .auth
-        .mint(
-            &session_id,
+        .mint_scoped(
+            &scope,
             &participant_id,
             Capability::Participant,
             TOKEN_TTL,
             SystemTime::now(),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspace_identity =
+        workspace_identity_for_actor(&scope, &participant_id, SessionRole::Participant);
     Ok(Json(Envelope {
         data: JoinedSession {
+            tenant_id: scope.tenant_id,
+            workspace_id: scope.workspace_id,
             participant_id,
             participant_token,
+            workspace_identity,
         },
     }))
 }

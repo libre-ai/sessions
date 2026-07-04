@@ -75,6 +75,23 @@ async fn http_session_api_drives_a_full_round() {
         .unwrap();
     let session_id = created["data"]["session_id"].as_str().unwrap().to_string();
     let host_token = created["data"]["host_token"].as_str().unwrap().to_string();
+    assert_eq!(created["data"]["tenant_id"], "tenant_local");
+    assert_eq!(
+        created["data"]["workspace_id"],
+        format!("workspace_{session_id}")
+    );
+    assert_eq!(
+        created["data"]["workspace_identity"]["tenant_id"],
+        "tenant_local"
+    );
+    assert_eq!(
+        created["data"]["workspace_identity"]["role_assignments"][0]["role"],
+        "host"
+    );
+    assert_eq!(
+        created["data"]["workspace_identity"]["role_assignments"][0]["actor_ref"]["actor_type"],
+        "human"
+    );
     assert!(
         created["data"]["join_url"]
             .as_str()
@@ -92,6 +109,15 @@ async fn http_session_api_drives_a_full_round() {
         .json()
         .await
         .unwrap();
+    assert_eq!(joined["data"]["tenant_id"], "tenant_local");
+    assert_eq!(
+        joined["data"]["workspace_id"],
+        format!("workspace_{session_id}")
+    );
+    assert_eq!(
+        joined["data"]["workspace_identity"]["role_assignments"][0]["role"],
+        "participant"
+    );
     let p_token = joined["data"]["participant_token"]
         .as_str()
         .unwrap()
