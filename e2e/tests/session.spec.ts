@@ -46,6 +46,9 @@ test.describe('Session lifecycle', () => {
 
     await host.getByRole('button', { name: 'Ouvrir une question' }).click();
     await expect(participant.locator('#question')).toHaveText('Capital of France?');
+    await expect(participant.locator('#grounding')).toContainText('Question sourcée');
+    await expect(participant.locator('#grounding')).toContainText('fixture de démonstration');
+    await expect(participant.locator('#grounding')).toContainText('refs privées');
 
     await participant.getByRole('button', { name: 'Paris' }).click();
     await expect(host.locator('#log')).toContainText('réponse reçue');

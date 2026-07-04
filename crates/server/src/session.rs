@@ -280,6 +280,7 @@ mod tests {
             choices: vec!["a".into(), "b".into(), "c".into()],
             correct_choices: vec![1],
             source_section_ids: vec!["doc1#s2".into()],
+            citation_validation: None,
             timer_sec: 30,
         }
     }
@@ -414,6 +415,7 @@ mod tests {
             choices: vec!["a".into(), "b".into(), "c".into(), "d".into()],
             correct_choices: vec![0, 2],
             source_section_ids: vec!["sec".into()],
+            citation_validation: None,
             timer_sec: 30,
         };
         s.push_question(q, 0);

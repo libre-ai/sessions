@@ -6,15 +6,16 @@ This is a contribution map, not a startup roadmap or a delivery promise. It show
 
 - make dogfooding evidence visible through commands, fixtures, CI checks, generated reports, or linked docs;
 - stabilize source-grounded contract fixtures;
-- define citation validation and retention defaults;
+- extend live-question grounding from public summary to richer citation-validation evidence;
+- define retention defaults;
 - document provider/BYOK limits;
 - keep CI and security checks green.
 
 ## Next
 
-- add example session and citation outputs;
+- add example session and citation outputs from a real RAG run;
 - improve errors around missing or weak grounding;
-- add contract tests around citations, retention, and delegation;
+- add contract tests around retention and delegation;
 - prepare the first alpha-quality learning-session proof.
 
 ## Later

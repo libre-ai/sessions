@@ -117,6 +117,7 @@ mod tests {
             choices: vec!["GC".into(), "memory safety".into()],
             correct_choices: vec![1],
             source_section_ids: vec!["doc#p0".into()],
+            citation_validation: None,
             timer_sec: 20,
         }
     }

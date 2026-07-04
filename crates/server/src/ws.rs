@@ -208,10 +208,14 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
                 reason: e.to_string(),
             }),
         },
-        ClientMessage::PushQuestion { question } => {
+        ClientMessage::PushQuestion { mut question } => {
             if !is_host {
                 return reply(host_only());
             }
+            // `PushQuestion` is client input. Never trust a client-provided
+            // citation marker: only server-side fixture/RAG sources may mark a
+            // question as grounded for participants.
+            question.citation_validation = None;
             push_question(state, session_id, question).await
         }
         ClientMessage::GenerateQuestion { query } => {

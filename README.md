@@ -32,11 +32,12 @@ Current visible evidence:
 
 - CI and security workflows exercise source-grounded learning-session contracts;
 - README maturity notes keep provider, citation, retention, and UI limits explicit;
+- `live-question-grounding.v0.1` fixtures prove the public question projection carries citation status without source text or raw section ids;
 - stubs validate boundaries before hosted or multi-user claims are made.
 
 Expected next evidence:
 
-- publish example session, citation, and grounding outputs;
+- publish richer example session/citation outputs from a real RAG run;
 - make retention and provider-policy checks visible as fixtures.
 
 Dogfooding claims should stay backed by visible commands, fixtures, CI workflows, generated reports, or linked docs.
@@ -59,7 +60,7 @@ There is no full product runtime, UI, durable storage, provider policy instantia
 
 ## Next product milestone
 
-Turn the P0 contract stub into a minimal grounded session workflow with explicit `CitationValidation`, retention defaults, and BYOK/provider policy.
+Turn the P0 contract stub into a minimal grounded session workflow with real RAG citation outputs, retention defaults, and BYOK/provider policy. The live protocol now exposes an explicit public grounding summary; it is not yet a full production citation-validation workflow.
 
 ## Purpose
 

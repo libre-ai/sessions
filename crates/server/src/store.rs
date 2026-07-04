@@ -190,6 +190,7 @@ mod tests {
             choices: vec!["a".into(), "b".into()],
             correct_choices: vec![1],
             source_section_ids: vec!["s1".into()],
+            citation_validation: None,
             timer_sec: 20,
         }
     }
