@@ -4,7 +4,7 @@
 //! Verification is a gate: unsupported (or unverifiable) questions are dropped,
 //! never surfaced to a live session.
 
-use presto_core::protocol::Question;
+use presto_core::protocol::{CitationValidation, Question};
 
 use crate::clarify::clarify;
 use crate::corpus::{Chunk, RetrievalScope, Retriever};
@@ -32,13 +32,17 @@ pub async fn grounded_quiz(
             source_section_id: hit.source_section_id,
             text: hit.text,
         };
-        let Ok(question) = generate_from_chunk(&chunk, provider).await else {
+        let Ok(mut question) = generate_from_chunk(&chunk, provider).await else {
             continue;
         };
-        // The verifier gates the question against its own source text.
+        // The verifier gates the question against its own source text. Only this
+        // accepted path marks the question as publicly grounded.
         if let Ok(verdict) = verify_grounding(&question, &chunk.text, provider).await
             && verdict.supported
         {
+            question.citation_validation = Some(CitationValidation::verified(
+                question.source_section_ids.len(),
+            ));
             questions.push(question);
         }
     }
@@ -75,6 +79,7 @@ pub async fn grounded_breakout(
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use presto_core::protocol::CitationValidationStatus;
 
     use crate::corpus::{CorpusError, Retrieved};
     use crate::provider::AiError;
@@ -169,6 +174,10 @@ mod tests {
         .await;
         assert_eq!(quiz.len(), 2);
         assert_eq!(quiz[0].source_section_ids, vec!["d#p0".to_string()]);
+        assert_eq!(
+            quiz[0].citation_validation.as_ref().map(|v| v.status),
+            Some(CitationValidationStatus::Verified)
+        );
     }
 
     #[tokio::test]
@@ -193,7 +202,12 @@ mod tests {
             verifier_supports: true,
         };
         let q = grounded_question(&RetrievalScope::wedge(), "topic", &retriever(), &provider).await;
-        assert_eq!(q.unwrap().source_section_ids, vec!["d#p0".to_string()]);
+        let q = q.unwrap();
+        assert_eq!(q.source_section_ids, vec!["d#p0".to_string()]);
+        assert_eq!(
+            q.public().grounding.validation_status,
+            CitationValidationStatus::Verified
+        );
     }
 
     #[tokio::test]

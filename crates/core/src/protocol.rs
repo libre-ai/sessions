@@ -16,6 +16,66 @@ fn default_timer() -> u32 {
     30
 }
 
+/// Public citation-validation state for a live question.
+///
+/// `Verified` is only set by the RAG path after the grounding verifier accepts
+/// the generated question. `Fixture` is for deterministic demo content and must
+/// not be presented as product-grade provenance. `NotValidated` is the default
+/// for facilitator-pushed questions that carry no server-side proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationValidationStatus {
+    #[default]
+    NotValidated,
+    Fixture,
+    Verified,
+}
+
+impl CitationValidationStatus {
+    fn is_publicly_grounded(self) -> bool {
+        matches!(self, Self::Fixture | Self::Verified)
+    }
+}
+
+/// Server-side validation marker attached to a question before it is projected
+/// to participants. It intentionally contains no source text and no raw verifier
+/// reasoning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CitationValidation {
+    pub status: CitationValidationStatus,
+    pub validator: String,
+    pub citation_count: usize,
+}
+
+impl CitationValidation {
+    pub fn fixture(citation_count: usize) -> Self {
+        Self {
+            status: CitationValidationStatus::Fixture,
+            validator: "fixture".into(),
+            citation_count,
+        }
+    }
+
+    pub fn verified(citation_count: usize) -> Self {
+        Self {
+            status: CitationValidationStatus::Verified,
+            validator: "grounding_verifier".into(),
+            citation_count,
+        }
+    }
+}
+
+/// Participant-facing grounding summary. Source refs stay server-side; the live
+/// question proves whether citation validation happened without exposing corpus
+/// handles or source text in `question_opened`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PublicGrounding {
+    pub grounded: bool,
+    pub citation_count: usize,
+    pub validation_status: CitationValidationStatus,
+    pub source_refs_exposed: bool,
+}
+
 /// How a question is answered: one correct choice (radio) or several (checkboxes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,22 +95,48 @@ pub struct Question {
     pub choices: Vec<String>,
     /// The correct choice indices: exactly one for `Single`, one or more for `Multi`.
     pub correct_choices: Vec<u8>,
-    /// Source sections this question is grounded in (for the confusion heatmap).
+    /// Source sections this question is grounded in (server-side only: scoring,
+    /// heatmap, and host-mediated breakouts). They are not included in
+    /// [`QuestionPublic`].
     #[serde(default)]
     pub source_section_ids: Vec<String>,
+    /// Server-side citation validation. Missing validation keeps the public
+    /// projection honest (`grounded=false`) even when a host-supplied question
+    /// includes source section ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citation_validation: Option<CitationValidation>,
     #[serde(default = "default_timer")]
     pub timer_sec: u32,
 }
 
 impl Question {
-    /// The participant-facing projection: no correct answer leaks.
+    /// The participant-facing projection: no correct answer, source text, or raw
+    /// source-section ids leak.
     pub fn public(&self) -> QuestionPublic {
+        let validation_status = self
+            .citation_validation
+            .as_ref()
+            .map(|validation| validation.status)
+            .unwrap_or_default();
+        let citation_count = self
+            .citation_validation
+            .as_ref()
+            .map(|validation| validation.citation_count)
+            .unwrap_or_default()
+            .min(self.source_section_ids.len());
+        let grounded = validation_status.is_publicly_grounded() && citation_count > 0;
         QuestionPublic {
             id: self.id.clone(),
             text: self.text.clone(),
             kind: self.kind,
             choices: self.choices.clone(),
             timer_sec: self.timer_sec,
+            grounding: PublicGrounding {
+                grounded,
+                citation_count: if grounded { citation_count } else { 0 },
+                validation_status,
+                source_refs_exposed: false,
+            },
         }
     }
 }
@@ -63,6 +149,8 @@ pub struct QuestionPublic {
     pub kind: QuestionKind,
     pub choices: Vec<String>,
     pub timer_sec: u32,
+    #[serde(default)]
+    pub grounding: PublicGrounding,
 }
 
 /// A spaced-repetition flashcard generated from a confused source section,
@@ -167,6 +255,7 @@ mod tests {
             choices: vec!["3".into(), "4".into(), "5".into()],
             correct_choices: vec![1],
             source_section_ids: vec!["doc1#s2".into()],
+            citation_validation: Some(CitationValidation::verified(1)),
             timer_sec: 20,
         }
     }
@@ -177,9 +266,17 @@ mod tests {
         assert_eq!(pubq.id, "q1");
         assert_eq!(pubq.choices.len(), 3);
         assert_eq!(pubq.timer_sec, 20);
-        // QuestionPublic has no `correct_choice` field at all.
+        assert!(pubq.grounding.grounded);
+        assert_eq!(pubq.grounding.citation_count, 1);
+        assert_eq!(
+            pubq.grounding.validation_status,
+            CitationValidationStatus::Verified
+        );
+        assert!(!pubq.grounding.source_refs_exposed);
+        // QuestionPublic has no `correct_choice` or raw source-section field at all.
         let json = serde_json::to_string(&pubq).unwrap();
         assert!(!json.contains("correct"));
+        assert!(!json.contains("source_section_ids"));
     }
 
     #[test]
@@ -206,12 +303,27 @@ mod tests {
     }
 
     #[test]
-    fn question_uses_default_timer_when_absent() {
+    fn question_uses_safe_defaults_when_optional_grounding_is_absent() {
         let q: Question =
             serde_json::from_str(r#"{"id":"q","text":"t","choices":["a"],"correct_choices":[0]}"#)
                 .unwrap();
         assert_eq!(q.timer_sec, 30);
         assert_eq!(q.kind, QuestionKind::Single);
         assert!(q.source_section_ids.is_empty());
+        assert!(q.citation_validation.is_none());
+        assert!(!q.public().grounding.grounded);
+    }
+
+    #[test]
+    fn source_refs_without_validation_do_not_project_as_grounded() {
+        let mut q = sample_question();
+        q.citation_validation = None;
+        let public = q.public();
+        assert!(!public.grounding.grounded);
+        assert_eq!(public.grounding.citation_count, 0);
+        assert_eq!(
+            public.grounding.validation_status,
+            CitationValidationStatus::NotValidated
+        );
     }
 }

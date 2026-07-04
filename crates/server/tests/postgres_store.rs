@@ -23,6 +23,7 @@ fn question() -> Question {
         choices: vec!["a".into(), "b".into()],
         correct_choices: vec![1],
         source_section_ids: vec!["doc#p0".into()],
+        citation_validation: None,
         timer_sec: 30, // close at 30_000 + grace (1_500) ms
     }
 }

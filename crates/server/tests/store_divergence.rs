@@ -27,6 +27,7 @@ fn q(id: &str, section: &str, correct: u8) -> Question {
         choices: vec!["a".into(), "b".into(), "c".into()],
         correct_choices: vec![correct],
         source_section_ids: vec![section.into()],
+        citation_validation: None,
         timer_sec: 30,
     }
 }

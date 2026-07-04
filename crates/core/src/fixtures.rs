@@ -1,7 +1,7 @@
 //! A small hardcoded quiz for the live tracer-bullet (no RAG yet). Replaced by
 //! grounded generation from an ingested corpus in P1/P2.
 
-use crate::protocol::{Question, QuestionKind};
+use crate::protocol::{CitationValidation, Question, QuestionKind};
 
 fn q(id: &str, text: &str, choices: &[&str], correct: u8, section: &str) -> Question {
     Question {
@@ -11,6 +11,7 @@ fn q(id: &str, text: &str, choices: &[&str], correct: u8, section: &str) -> Ques
         choices: choices.iter().map(|c| c.to_string()).collect(),
         correct_choices: vec![correct],
         source_section_ids: vec![section.to_string()],
+        citation_validation: Some(CitationValidation::fixture(1)),
         timer_sec: 20,
     }
 }

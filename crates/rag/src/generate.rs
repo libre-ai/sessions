@@ -84,6 +84,7 @@ pub async fn generate_from_chunk(
                     choices: parsed.choices,
                     correct_choices: parsed.correct_choices,
                     source_section_ids: vec![chunk.source_section_id.clone()],
+                    citation_validation: None,
                     timer_sec: 20,
                 });
             }
@@ -125,6 +126,10 @@ mod tests {
         let q = generate_from_chunk(&chunk, &QuizFake).await.unwrap();
         assert_eq!(q.id, "q:doc#p2");
         assert_eq!(q.source_section_ids, vec!["doc#p2".to_string()]);
+        assert!(
+            q.citation_validation.is_none(),
+            "generation alone must not claim citation validation"
+        );
         assert_eq!(q.kind, presto_core::protocol::QuestionKind::Single);
         assert_eq!(q.correct_choices, vec![1]);
         assert_eq!(q.choices.len(), 4);

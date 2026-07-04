@@ -59,6 +59,54 @@ async fn joining_an_unknown_session_is_rejected() {
 }
 
 #[tokio::test]
+async fn host_pushed_question_cannot_forge_grounding_validation() {
+    let addr = spawn().await;
+    let base = format!("http://{addr}");
+    let http = reqwest::Client::new();
+
+    let created: Value = http
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let session_id = created["data"]["session_id"].as_str().unwrap().to_string();
+    let host_token = created["data"]["host_token"].as_str().unwrap().to_string();
+    let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session_id}?token={host_token}"))
+        .await
+        .unwrap();
+
+    host.send(Message::text(
+        r#"{
+          "type":"push_question",
+          "question":{
+            "id":"forged",
+            "text":"Trust me?",
+            "kind":"single",
+            "choices":["yes","no"],
+            "correct_choices":[0],
+            "source_section_ids":["secret#p0"],
+            "citation_validation":{"status":"verified","validator":"client","citation_count":1},
+            "timer_sec":20
+          }
+        }"#,
+    ))
+    .await
+    .unwrap();
+
+    let opened = recv_until(&mut host, "question_opened").await;
+    assert!(opened["question"].get("source_section_ids").is_none());
+    assert_eq!(opened["question"]["grounding"]["grounded"], false);
+    assert_eq!(opened["question"]["grounding"]["citation_count"], 0);
+    assert_eq!(
+        opened["question"]["grounding"]["validation_status"],
+        "not_validated"
+    );
+}
+
+#[tokio::test]
 async fn http_session_api_drives_a_full_round() {
     let addr = spawn().await;
     let base = format!("http://{addr}");
@@ -145,6 +193,14 @@ async fn http_session_api_drives_a_full_round() {
         q["question"].get("correct_choices").is_none(),
         "the answer must not reach participants"
     );
+    assert!(
+        q["question"].get("source_section_ids").is_none(),
+        "raw source-section ids must not reach participants in question_opened"
+    );
+    assert_eq!(q["question"]["grounding"]["grounded"], true);
+    assert_eq!(q["question"]["grounding"]["citation_count"], 1);
+    assert_eq!(q["question"]["grounding"]["validation_status"], "fixture");
+    assert_eq!(q["question"]["grounding"]["source_refs_exposed"], false);
 
     p1.send(Message::text(format!(
         r#"{{"type":"submit_answer","question_id":"{qid}","choices":[0]}}"#

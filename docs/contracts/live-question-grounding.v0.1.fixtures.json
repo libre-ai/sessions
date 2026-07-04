@@ -1,0 +1,47 @@
+{
+  "version": "live-question-grounding.v0.1",
+  "fixtures": [
+    {
+      "id": "fixture_question_opened",
+      "description": "Deterministic demo question: publicly grounded for UI/testing, but validation_status stays fixture.",
+      "message": {
+        "type": "question_opened",
+        "question": {
+          "id": "q1",
+          "text": "Capital of France?",
+          "kind": "single",
+          "choices": ["Paris", "Lyon", "Nice", "Brest"],
+          "timer_sec": 20,
+          "grounding": {
+            "grounded": true,
+            "citation_count": 1,
+            "validation_status": "fixture",
+            "source_refs_exposed": false
+          }
+        }
+      },
+      "forbidden_public_fields": ["correct_choices", "source_section_ids", "source_text"]
+    },
+    {
+      "id": "unvalidated_host_question",
+      "description": "Host-supplied question without server-side citation validation; allowed but not represented as grounded.",
+      "message": {
+        "type": "question_opened",
+        "question": {
+          "id": "host-q1",
+          "text": "What should we discuss?",
+          "kind": "single",
+          "choices": ["A", "B"],
+          "timer_sec": 30,
+          "grounding": {
+            "grounded": false,
+            "citation_count": 0,
+            "validation_status": "not_validated",
+            "source_refs_exposed": false
+          }
+        }
+      },
+      "forbidden_public_fields": ["correct_choices", "source_section_ids", "source_text"]
+    }
+  ]
+}

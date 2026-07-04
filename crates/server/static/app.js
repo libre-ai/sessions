@@ -59,12 +59,28 @@ function submitAnswer(choicesArr, container) {
   [...container.children].forEach((x) => (x.disabled = true));
 }
 
+function validationLabel(status) {
+  switch (status) {
+    case "verified":
+      return "validée par grounding-verifier";
+    case "fixture":
+      return "fixture de démonstration";
+    default:
+      return "non validée";
+  }
+}
+
 function renderQuestion(q) {
   currentQid = q.id;
   hide("leaderboard");
   hide("breakout");
   show("play");
   $("#question").textContent = q.text;
+  const grounding = q.grounding || {};
+  const count = grounding.citation_count || 0;
+  $("#grounding").textContent = grounding.grounded
+    ? `Question sourcée (${validationLabel(grounding.validation_status)}, ${count} citation(s), refs privées)`
+    : "Question non validée par citation.";
   const choices = $("#choices");
   choices.innerHTML = "";
   const multi = q.kind === "multi";

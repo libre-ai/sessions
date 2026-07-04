@@ -13,7 +13,7 @@ use serde_json::Value;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
-use presto_core::protocol::Question;
+use presto_core::protocol::{CitationValidation, Question};
 use presto_rag::corpus::{CorpusError, RetrievalScope, Retrieved, Retriever};
 use presto_rag::provider::{AiError, AiProvider};
 use presto_server::auth::{Auth, Capability};
@@ -38,6 +38,7 @@ impl QuizSource for OneQuestionQuiz {
             choices: vec!["yes".into(), "no".into()],
             correct_choices: vec![0],
             source_section_ids: vec!["doc#p0".into()],
+            citation_validation: Some(CitationValidation::verified(1)),
             timer_sec: 20,
         })
     }
