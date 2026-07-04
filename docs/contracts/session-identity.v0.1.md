@@ -17,7 +17,7 @@ token = Biscuit-shaped facts:
   expiry(Timestamp)
 ```
 
-Real Biscuit mint/verify remains owned by the authorization increment. This contract fixes the shape and fixtures so consumers can map LM session roles onto the shared `WorkspaceIdentity` facts without inventing a second permission vocabulary.
+The LM runtime now mints session join tokens with these tenant/workspace/session facts for the open wedge. Cross-service/cos-matic real Biscuit verification remains owned by the authorization increment; this contract fixes the shape and fixtures so consumers can map LM session roles onto the shared `WorkspaceIdentity` facts without inventing a second permission vocabulary.
 
 ## Mapping: Host/Participant → RoleAssignment
 
@@ -39,12 +39,14 @@ Real Biscuit mint/verify remains owned by the authorization increment. This cont
 
 ## WorkspaceIdentity root
 
-Every fixture or token-derived fact set carries:
+Every fixture, HTTP session response, or token-derived fact set carries:
 
 - `tenant_id` from `organization(TenantId)`;
 - `workspace_id` from `workspace(WorkspaceId)`;
 - memberships for the actors in scope;
 - role assignments using the closed permission vocabulary.
+
+For the current open `/sessions` wedge, `tenant_id` is the explicit interim boundary `tenant_local` and `workspace_id` is deterministically derived as `workspace_{session_id}`. This is a runtime bridge, not a general identity service.
 
 No secret, bearer token, private key, prompt payload, or learner response is stored in this contract fixture.
 

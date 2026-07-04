@@ -21,6 +21,7 @@ pub mod quiz;
 pub mod ratelimit;
 pub mod redis_fanout;
 pub mod session;
+pub mod session_identity;
 pub mod store;
 pub mod ws;
 
