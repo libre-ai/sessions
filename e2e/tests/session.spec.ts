@@ -1,126 +1,63 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Session lifecycle', () => {
-  test.beforeEach(async ({ context }) => {
-    // Set up auth context for host/participant.
-    // (In real usage, mint Biscuit token via API.)
-  });
-
-  test('Host can join and create a session', async ({ page }) => {
+  test('landing page renders the host entry point', async ({ page }) => {
     await page.goto('/');
-    await page.click('button:has-text("Create Session")');
 
-    // Verify session created.
-    const sessionId = await page
-      .locator('[data-testid="session-id"]')
-      .textContent();
-    expect(sessionId).toBeTruthy();
+    await expect(page.getByRole('heading', { name: 'Presto-Matic' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Créer une session (host)' })).toBeVisible();
   });
 
-  test('Participant can join with valid token', async ({ page, browser }) => {
-    // Host creates session.
-    const hostPage = await browser.newPage();
-    await hostPage.goto('/');
-    await hostPage.click('button:has-text("Create Session")');
-    const joinLink = await hostPage
-      .locator('[data-testid="join-link"]')
-      .getAttribute('href');
+  test('HTTP session response carries workspace identity facts', async ({ request }) => {
+    const response = await request.post('/sessions');
+    expect(response.ok()).toBeTruthy();
 
-    // Participant joins via link.
-    await page.goto(joinLink!);
-    const participantId = await page
-      .locator('[data-testid="participant-id"]')
-      .textContent();
-    expect(participantId).toBeTruthy();
+    const body = await response.json();
+    const data = body.data;
+    expect(data.session_id).toBeTruthy();
+    expect(data.tenant_id).toBe('tenant_local');
+    expect(data.workspace_id).toBe(`workspace_${data.session_id}`);
+    expect(data.workspace_identity.tenant_id).toBe('tenant_local');
+    expect(data.workspace_identity.workspace_id).toBe(data.workspace_id);
+    expect(data.workspace_identity.role_assignments[0].role).toBe('host');
+    expect(data.workspace_identity.role_assignments[0].actor_ref.actor_type).toBe('human');
   });
 
-  test('Participant can submit answer', async ({ page, browser }) => {
-    // Setup: host creates, participant joins.
-    const hostPage = await browser.newPage();
-    await hostPage.goto('/');
-    await hostPage.click('button:has-text("Create Session")');
-    const joinLink = await hostPage
-      .locator('[data-testid="join-link"]')
-      .getAttribute('href');
+  test('host creates a session, participant answers, host reveals leaderboard', async ({ browser }) => {
+    const host = await browser.newPage();
+    const participant = await browser.newPage();
 
-    await page.goto(joinLink!);
+    await host.goto('/');
+    await host.getByRole('button', { name: 'Créer une session (host)' }).click();
 
-    // Participant submits answer.
-    await page.click('text=Option A');
-    await page.click('button:has-text("Submit")');
+    const sessionCode = host.locator('#code');
+    await expect(sessionCode).not.toHaveText('');
 
-    // Verify submission confirmed.
-    await expect(page.locator('text=Answer submitted')).toBeVisible();
-  });
+    const joinHref = await host.locator('#joinlink').getAttribute('href');
+    expect(joinHref).toContain('/?s=');
+    await expect(host.locator('#log')).toContainText('connecté');
 
-  test('Host can reveal answers and see scores', async ({ page, browser }) => {
-    // Setup: host creates, participants join + submit.
-    const hostPage = await browser.newPage();
-    await hostPage.goto('/');
-    await hostPage.click('button:has-text("Create Session")');
-    const joinLink = await hostPage
-      .locator('[data-testid="join-link"]')
-      .getAttribute('href');
+    await participant.goto(joinHref!);
+    await expect(participant.locator('#join-code')).not.toHaveText('');
+    await participant.locator('#name').fill('Alice');
+    await participant.getByRole('button', { name: 'Rejoindre' }).click();
+    await expect(participant.locator('#log')).toContainText('connecté');
+    await expect(host.locator('#hoststatus')).toContainText('1 participant');
 
-    const participant1 = await browser.newPage();
-    await participant1.goto(joinLink!);
-    await participant1.click('text=Option A');
-    await participant1.click('button:has-text("Submit")');
+    await host.getByRole('button', { name: 'Ouvrir une question' }).click();
+    await expect(participant.locator('#question')).toHaveText('Capital of France?');
 
-    // Host reveals.
-    await hostPage.click('button:has-text("Reveal Scores")');
+    await participant.getByRole('button', { name: 'Paris' }).click();
+    await expect(host.locator('#log')).toContainText('réponse reçue');
 
-    // Verify leaderboard appears.
-    await expect(hostPage.locator('text=Leaderboard')).toBeVisible();
-    const scores = await hostPage
-      .locator('[data-testid="score"]')
-      .allTextContents();
-    expect(scores.length).toBeGreaterThan(0);
-  });
+    await host.getByRole('button', { name: 'Révéler' }).click();
+    await expect(participant.locator('#leaderboard')).toBeVisible();
+    await expect(participant.locator('#board')).toContainText('Alice');
+    const leaderboardText = (await participant.locator('#board').textContent()) ?? '';
+    const score = Number(leaderboardText.match(/Alice — (\d+)/)?.[1] ?? '0');
+    expect(score).toBeGreaterThanOrEqual(500);
 
-  test('Error handling: invalid token rejected', async ({ page }) => {
-    // Try to join with invalid token.
-    await page.goto('/?token=invalid_token_12345');
-
-    // Verify error message.
-    await expect(page.locator('text=Invalid or expired token')).toBeVisible();
-  });
-
-  test('Leaderboard sorted by score descending', async ({ page, browser }) => {
-    // Setup: host creates, multiple participants submit with different elapsed times.
-    const hostPage = await browser.newPage();
-    await hostPage.goto('/');
-    await hostPage.click('button:has-text("Create Session")');
-    const joinLink = await hostPage
-      .locator('[data-testid="join-link"]')
-      .getAttribute('href');
-
-    // Participant 1: fast (5000ms).
-    const p1 = await browser.newPage();
-    await p1.goto(joinLink!);
-    await p1.click('text=Option A');
-    await p1.click('button:has-text("Submit")');
-
-    // Participant 2: slower (15000ms).
-    const p2 = await browser.newPage();
-    await p2.goto(joinLink!);
-    await p2.click('text=Option A');
-    // Simulate delay... (in real test, use `await page.waitForTimeout(15000)` or clock manipulation)
-    await p2.click('button:has-text("Submit")');
-
-    // Host reveals.
-    await hostPage.click('button:has-text("Reveal Scores")');
-
-    // Verify p1 (higher score) is first in leaderboard.
-    const leaderboardRows = await hostPage
-      .locator('[data-testid="leaderboard-row"]')
-      .allTextContents();
-    const p1Rank = leaderboardRows.findIndex((row) =>
-      row.includes('Participant 1'),
-    );
-    const p2Rank = leaderboardRows.findIndex((row) =>
-      row.includes('Participant 2'),
-    );
-    expect(p1Rank).toBeLessThan(p2Rank);
+    await host.close();
+    await participant.close();
   });
 });

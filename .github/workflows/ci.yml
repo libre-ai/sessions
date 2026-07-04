@@ -114,6 +114,8 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:presto@localhost:5432/postgres
       REDIS_URL: redis://localhost:6379/
+      # presto-server defaults to 8080; Playwright's webServer waits on :3000.
+      PORT: "3000"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -126,7 +128,7 @@ jobs:
       - name: Install Playwright
         run: |
           cd e2e
-          npm install
+          npm ci
           npx playwright install --with-deps
       - name: Run e2e tests
         run: |

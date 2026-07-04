@@ -2,57 +2,35 @@
 
 ## Overview
 
-The `e2e/` directory contains Playwright tests for session lifecycle validation:
+The `e2e/` directory contains Playwright tests for the current minimal web client and session runtime:
 
-- Host creates session, generates join link
-- Participants join via token
-- Participants submit answers
-- Host reveals scores; leaderboard appears
-- Error cases (invalid token, etc.)
+- landing page renders the host entry point;
+- `POST /sessions` returns workspace-identity facts (`tenant_local`, `workspace_{session_id}`);
+- a browser host creates a session;
+- a browser participant joins through the generated link;
+- the host opens a fixture question;
+- the participant answers;
+- the host reveals the leaderboard.
+
+These tests exercise the deployed browser surface. Deeper protocol and scoring cases remain in Rust integration tests.
 
 ## Prerequisites
 
-- Node.js 18+ (for npm)
-- Live Postgres 16+ + Redis 7 (running locally or in Docker)
-- Presto-server compiled (`cargo build --bin presto-server`)
+- Node.js 18+;
+- Rust toolchain;
+- browser dependencies installed by Playwright.
+
+Postgres and Redis are optional for the current e2e flow: when `DATABASE_URL` / `REDIS_URL` are absent, the server uses in-memory state and fixture content. CI still provides Postgres + Redis because other integration jobs use them.
 
 ## Setup
 
-### 1. Install dependencies
-
 ```bash
 cd e2e
-npm install
+npm ci
 npx playwright install
 ```
 
-### 2. Set up environment
-
-```bash
-# Copy template
-cp e2e/.env.example e2e/.env
-
-# Update if needed (e.g., if server is not on localhost:3000)
-# By default, Playwright config starts the server automatically.
-```
-
-### 3. Start server (manual mode, optional)
-
-If you want to run tests against a pre-started server:
-
-```bash
-# Terminal 1: Start Postgres + Redis (docker-compose or local)
-# Terminal 2: Start server
-cargo run --bin presto-server
-
-# Terminal 3: Run tests
-cd e2e
-npm test
-```
-
-### 4. Run tests (auto-start mode, recommended for CI)
-
-Playwright config is set to auto-start the server. Just run:
+## Run tests
 
 ```bash
 cd e2e
@@ -61,56 +39,36 @@ npm test
 
 Playwright will:
 
-1. Start `cargo run --bin presto-server` if not running
-2. Wait for server to be ready on http://localhost:3000
-3. Run all tests in `tests/*.spec.ts`
-4. Generate HTML report in `playwright-report/`
+1. start the Rust server from the workspace root with `PORT=3000`;
+2. wait for `http://localhost:3000`;
+3. run `tests/*.spec.ts`;
+4. generate an HTML report in `e2e/playwright-report/`.
+
+To run against an already-started server:
+
+```bash
+PORT=3000 cargo run --bin presto-server
+cd e2e
+BASE_URL=http://localhost:3000 npm test
+```
 
 ## Debugging
 
-### Run tests with Playwright Inspector
-
 ```bash
 npm run test:debug
-```
-
-### Run tests in headed mode (see browser)
-
-```bash
 npm run test:headed
-```
-
-### Run tests with UI Mode (interactive)
-
-```bash
 npm run test:ui
-```
-
-### View last test report
-
-```bash
 npx playwright show-report
 ```
 
 ## CI Integration
 
-The `.github/workflows/ci.yml` includes an `e2e` job (see Increment I5 exit gates) that:
+The `.github/workflows/ci.yml` includes an `e2e` job that:
 
-1. Starts Postgres 16+pgvector + Redis 7
-2. Builds presto-server
-3. Runs `cd e2e && npm install && npm test`
-4. Uploads HTML report as CI artifact
+1. starts Postgres 16+pgvector + Redis 7;
+2. builds `presto-server`;
+3. installs Playwright dependencies with `npm ci`;
+4. runs `cd e2e && npm test`;
+5. uploads the HTML report as a CI artifact.
 
-Tests must pass (exit code 0) before PR merge.
-
-## Writing new tests
-
-See `tests/session.spec.ts` for examples. Key patterns:
-
-- Use `test.describe()` for grouping
-- Use `test.beforeEach()` for setup
-- Use Playwright locators (`page.locator()`, `page.click()`) for UI interaction
-- Use `expect()` for assertions
-- Use `await page.waitForTimeout()` for delays (better: use event-driven waits)
-
-Docs: https://playwright.dev/docs/intro
+Tests must pass before merge.

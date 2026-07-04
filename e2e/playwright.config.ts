@@ -39,7 +39,9 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'cargo run --bin presto-server',
+    // Tests run from e2e/, so hop to the workspace root before starting Rust.
+    // PORT=3000 aligns the server with baseURL/webServer.url in local and CI runs.
+    command: 'cd .. && PORT=3000 cargo run --release --bin presto-server',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
