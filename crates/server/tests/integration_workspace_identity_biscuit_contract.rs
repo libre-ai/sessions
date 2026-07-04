@@ -2,7 +2,7 @@
 mod tests {
     use std::fs;
 
-    use presto_core::{PermissionPrimitive, RoleAssignment};
+    use presto_core::{ActorType, PermissionPrimitive, RoleAssignment, WorkspaceIdentity};
 
     #[test]
     fn test_session_identity_v0_1_fixture_loads() {
@@ -28,6 +28,8 @@ mod tests {
         );
 
         assert_eq!(host.role, "host");
+        assert_eq!(host.actor_ref.actor_id, "actor_host_001");
+        assert_eq!(host.actor_ref.actor_type, ActorType::Human);
         assert_eq!(host.permissions.len(), 6);
         assert!(host.permissions.contains(&PermissionPrimitive::Write));
         assert!(host.permissions.contains(&PermissionPrimitive::Approve));
@@ -43,6 +45,8 @@ mod tests {
         );
 
         assert_eq!(participant.role, "participant");
+        assert_eq!(participant.actor_ref.actor_id, "actor_participant_001");
+        assert_eq!(participant.actor_ref.actor_type, ActorType::Human);
         assert_eq!(participant.permissions.len(), 3);
         assert!(participant.permissions.contains(&PermissionPrimitive::Read));
         assert!(
@@ -89,10 +93,14 @@ mod tests {
 
         let host_fixture = &fixtures["fixtures"][0];
         assert_eq!(host_fixture["role"], "host");
+        assert_eq!(host_fixture["tenant_id"], "tenant_test_001");
+        assert_eq!(host_fixture["actor_type"], "human");
         assert!(host_fixture["permissions"].is_array());
 
         let participant_fixture = &fixtures["fixtures"][1];
         assert_eq!(participant_fixture["role"], "participant");
+        assert_eq!(participant_fixture["tenant_id"], "tenant_test_001");
+        assert_eq!(participant_fixture["actor_type"], "human");
         assert!(participant_fixture["permissions"].is_array());
     }
 
@@ -105,6 +113,7 @@ mod tests {
         );
 
         assert_eq!(host_role.workspace_id, "workspace_test_001");
+        assert_eq!(host_role.actor_ref.actor_id, "actor_host_001");
         assert_eq!(host_role.role, "host");
         assert!(host_role.permissions.contains(&PermissionPrimitive::Write));
         assert!(
@@ -112,6 +121,27 @@ mod tests {
                 .permissions
                 .contains(&PermissionPrimitive::Approve)
         );
+    }
+
+    #[test]
+    fn test_workspace_identity_projection_carries_tenant_id() {
+        let host = RoleAssignment::host(
+            "workspace_test_001".to_string(),
+            "actor_host_001".to_string(),
+        );
+        let participant = RoleAssignment::participant(
+            "workspace_test_001".to_string(),
+            "actor_participant_001".to_string(),
+        );
+        let identity = WorkspaceIdentity::new(
+            "tenant_test_001".to_string(),
+            "workspace_test_001".to_string(),
+            vec![host, participant],
+        );
+        assert_eq!(identity.tenant_id, "tenant_test_001");
+        assert_eq!(identity.workspace_id, "workspace_test_001");
+        assert_eq!(identity.memberships.len(), 2);
+        assert_eq!(identity.role_assignments.len(), 2);
     }
 
     #[test]
