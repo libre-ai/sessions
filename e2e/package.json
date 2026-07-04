@@ -1,0 +1,15 @@
+{
+  "name": "presto-e2e",
+  "version": "0.0.0",
+  "description": "End-to-end tests for presto-lm session runtime",
+  "scripts": {
+    "test": "playwright test",
+    "test:debug": "playwright test --debug",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "playwright:install": "playwright install"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}
