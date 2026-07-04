@@ -4,10 +4,11 @@
     {
       "id": "host_token_fixture",
       "type": "biscuit_host_role",
+      "tenant_id": "tenant_test_001",
       "workspace_id": "workspace_test_001",
       "session_id": "session_test_001",
       "actor_id": "actor_host_001",
-      "actor_type": "Human",
+      "actor_type": "human",
       "actor_name": "Host User",
       "role": "host",
       "permissions": [
@@ -19,6 +20,7 @@
         "administer"
       ],
       "capability": "host_minting",
+      "minted_at": "2026-07-04T00:00:00Z",
       "expiry_offset_sec": 7200,
       "deterministic_nonce": "fixture_host_001",
       "cross_repo_usage": [
@@ -29,14 +31,16 @@
     {
       "id": "participant_token_fixture",
       "type": "biscuit_participant_role",
+      "tenant_id": "tenant_test_001",
       "workspace_id": "workspace_test_001",
       "session_id": "session_test_001",
       "actor_id": "actor_participant_001",
-      "actor_type": "Human",
+      "actor_type": "human",
       "actor_name": "Participant User",
       "role": "participant",
       "permissions": ["read", "comment", "write"],
       "capability": "answer_submit",
+      "minted_at": "2026-07-04T00:00:00Z",
       "expiry_offset_sec": 7200,
       "deterministic_nonce": "fixture_participant_001",
       "cross_repo_usage": [

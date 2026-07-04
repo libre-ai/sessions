@@ -1,9 +1,10 @@
 //! Biscuit-based authorization for session join links.
 //!
-//! The server is the sole token emitter. A token carries `session`,
-//! `participant` and `capability` facts plus a self-expiry check. Verifying a
-//! connection forces the token's session to equal the URL session (via
-//! `requested_session`), so a token for session A can never open session B.
+//! The server is the sole token emitter. A token carries `organization`,
+//! `workspace`, `session`, `participant`, `role`, and `capability` facts plus a
+//! self-expiry check. Verifying a connection forces the token's
+//! tenant/workspace/session scope to equal the requested scope, so a token for
+//! one boundary can never open another.
 //!
 //! Identity federation (OIDC / Keycloak) sits in front in TB-4; here we only
 //! mint and verify the capability tokens.
@@ -12,6 +13,9 @@ use std::time::{Duration, SystemTime};
 
 use biscuit_auth::macros::{authorizer, biscuit, fact};
 use biscuit_auth::{Algorithm, Biscuit, KeyPair, PrivateKey, PublicKey};
+use presto_core::RoleAssignment;
+
+use crate::session_identity::{SessionRole, SessionScope, role_assignment_for_actor};
 
 /// What a token-holder may do in a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,16 +27,30 @@ pub enum Capability {
 impl Capability {
     fn as_str(self) -> &'static str {
         match self {
-            Capability::Host => "host",
-            Capability::Participant => "participant",
+            Capability::Host => "host_minting",
+            Capability::Participant => "answer_submit",
         }
     }
 
     fn parse(s: &str) -> Option<Self> {
         match s {
-            "host" => Some(Capability::Host),
-            "participant" => Some(Capability::Participant),
+            "host_minting" | "host" => Some(Capability::Host),
+            "answer_submit" | "participant" => Some(Capability::Participant),
             _ => None,
+        }
+    }
+
+    fn role(self) -> SessionRole {
+        match self {
+            Capability::Host => SessionRole::Host,
+            Capability::Participant => SessionRole::Participant,
+        }
+    }
+
+    fn legacy_as_str(self) -> &'static str {
+        match self {
+            Capability::Host => "host",
+            Capability::Participant => "participant",
         }
     }
 
@@ -44,9 +62,29 @@ impl Capability {
 /// The verified claims extracted from a join token.
 #[derive(Debug, Clone)]
 pub struct Claims {
+    pub tenant_id: String,
+    pub workspace_id: String,
     pub session_id: String,
     pub participant_id: String,
     pub capability: Capability,
+}
+
+impl Claims {
+    pub fn scope(&self) -> SessionScope {
+        SessionScope {
+            tenant_id: self.tenant_id.clone(),
+            workspace_id: self.workspace_id.clone(),
+            session_id: self.session_id.clone(),
+        }
+    }
+
+    pub fn role_assignment(&self) -> RoleAssignment {
+        role_assignment_for_actor(
+            &self.scope(),
+            self.participant_id.clone(),
+            self.capability.role(),
+        )
+    }
 }
 
 /// Verified claims from a space-scoped token (SP-A): which space, who, and the
@@ -104,10 +142,9 @@ impl Auth {
     }
 
     /// Mint a join token for `participant_id` in `session_id`, valid for `ttl`
-    /// starting at `now`. Taking `now` explicitly (rather than sampling
-    /// `SystemTime::now()` internally) keeps mint-time and verify-time on the
-    /// same clock, which callers — tests in particular — can pin to a fixed
-    /// instant for deterministic expiry behaviour.
+    /// starting at `now`. The open wedge derives a deterministic tenant/workspace
+    /// scope from the session id so every token carries the mandatory
+    /// workspace-identity.v0.1 facts.
     pub fn mint(
         &self,
         session_id: &str,
@@ -116,17 +153,39 @@ impl Auth {
         ttl: Duration,
         now: SystemTime,
     ) -> Result<String, AuthError> {
+        let scope = SessionScope::for_session(session_id);
+        self.mint_scoped(&scope, participant_id, capability, ttl, now)
+    }
+
+    /// Mint a join token for an explicit tenant/workspace/session scope.
+    pub fn mint_scoped(
+        &self,
+        scope: &SessionScope,
+        participant_id: &str,
+        capability: Capability,
+        ttl: Duration,
+        now: SystemTime,
+    ) -> Result<String, AuthError> {
+        scope.validate().map_err(AuthError)?;
         let expiration = now + ttl;
         let cap = capability.as_str();
+        let role = capability.role().as_str();
         let builder = biscuit!(
             r#"
+            organization({tenant_id});
+            workspace({workspace_id});
             session({session_id});
+            actor({participant_id}, "human");
             participant({participant_id});
+            role({role});
             capability({cap});
             check if time($t), $t < {expiration};
             "#,
-            session_id = session_id,
+            tenant_id = scope.tenant_id.as_str(),
+            workspace_id = scope.workspace_id.as_str(),
+            session_id = scope.session_id.as_str(),
             participant_id = participant_id,
+            role = role,
             cap = cap,
             expiration = expiration,
         );
@@ -144,20 +203,46 @@ impl Auth {
         session_id: &str,
         now: SystemTime,
     ) -> Result<Claims, AuthError> {
+        let scope = SessionScope::for_session(session_id);
+        self.verify_scoped(token_b64, &scope, now)
+    }
+
+    /// Verify a token against an explicit tenant/workspace/session scope.
+    pub fn verify_scoped(
+        &self,
+        token_b64: &str,
+        scope: &SessionScope,
+        now: SystemTime,
+    ) -> Result<Claims, AuthError> {
+        scope.validate().map_err(AuthError)?;
         let token = Biscuit::from_base64(token_b64, self.keypair.public())
             .map_err(|e| AuthError(format!("decode: {e}")))?;
+        let cap_host = Capability::Host.as_str();
+        let cap_participant = Capability::Participant.as_str();
+        let legacy_host = Capability::Host.legacy_as_str();
+        let legacy_participant = Capability::Participant.legacy_as_str();
 
         let mut authorizer = authorizer!(
             r#"
             time({now});
+            requested_organization({tenant_id});
+            requested_workspace({workspace_id});
             requested_session({session_id});
             operation("connect");
-            allow if capability("host"), session($s), requested_session($s);
-            allow if capability("participant"), session($s), requested_session($s);
+            allow if capability({cap_host}), role("host"), actor($p, "human"), participant($p), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
+            allow if capability({cap_participant}), role("participant"), actor($p, "human"), participant($p), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
+            allow if capability({legacy_host}), role("host"), actor($p, "human"), participant($p), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
+            allow if capability({legacy_participant}), role("participant"), actor($p, "human"), participant($p), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
             deny if true;
             "#,
             now = now,
-            session_id = session_id,
+            tenant_id = scope.tenant_id.as_str(),
+            workspace_id = scope.workspace_id.as_str(),
+            session_id = scope.session_id.as_str(),
+            cap_host = cap_host,
+            cap_participant = cap_participant,
+            legacy_host = legacy_host,
+            legacy_participant = legacy_participant,
         )
         .build(&token)
         .map_err(|e| AuthError(format!("build: {e}")))?;
@@ -165,14 +250,28 @@ impl Auth {
             .authorize()
             .map_err(|e| AuthError(format!("denied: {e}")))?;
 
-        let (participant_id, cap): (String, String) = authorizer
-            .query_exactly_one("data($p, $c) <- participant($p), capability($c)")
+        let (tenant_id, workspace_id, token_session_id, participant_id, role, cap): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) = authorizer
+            .query_exactly_one(
+                "data($o, $w, $s, $p, $r, $c) <- organization($o), workspace($w), session($s), participant($p), role($r), capability($c)",
+            )
             .map_err(|e| AuthError(format!("claims: {e}")))?;
         let capability =
             Capability::parse(&cap).ok_or_else(|| AuthError("unknown capability".into()))?;
+        if capability.role().as_str() != role {
+            return Err(AuthError("role/capability mismatch".into()));
+        }
 
         Ok(Claims {
-            session_id: session_id.to_string(),
+            tenant_id,
+            workspace_id,
+            session_id: token_session_id,
             participant_id,
             capability,
         })
@@ -279,9 +378,14 @@ mod tests {
             )
             .unwrap();
         let claims = auth.verify(&token, "s1", t).unwrap();
+        assert_eq!(claims.tenant_id, "tenant_local");
+        assert_eq!(claims.workspace_id, "workspace_s1");
+        assert_eq!(claims.session_id, "s1");
         assert_eq!(claims.participant_id, "host-1");
         assert_eq!(claims.capability, Capability::Host);
         assert!(claims.capability.is_host());
+        assert_eq!(claims.role_assignment().role, "host");
+        assert!(claims.role_assignment().validate().is_ok());
 
         let ptoken = auth
             .mint(
@@ -293,7 +397,9 @@ mod tests {
             )
             .unwrap();
         let pclaims = auth.verify(&ptoken, "s1", t).unwrap();
+        assert_eq!(pclaims.workspace_id, "workspace_s1");
         assert_eq!(pclaims.capability, Capability::Participant);
+        assert_eq!(pclaims.role_assignment().role, "participant");
         assert!(!pclaims.capability.is_host());
     }
 
@@ -311,6 +417,87 @@ mod tests {
             )
             .unwrap();
         assert!(auth.verify(&token, "s2", t).is_err());
+    }
+
+    #[test]
+    fn scoped_token_cannot_cross_tenant_or_workspace() {
+        let auth = Auth::generate();
+        let t = now();
+        let scope = SessionScope::try_new("tenant-A", "workspace-A", "s1").unwrap();
+        let token = auth
+            .mint_scoped(
+                &scope,
+                "p1",
+                Capability::Participant,
+                Duration::from_secs(3600),
+                t,
+            )
+            .unwrap();
+        assert!(auth.verify_scoped(&token, &scope, t).is_ok());
+
+        let wrong_tenant = SessionScope::try_new("tenant-B", "workspace-A", "s1").unwrap();
+        assert!(auth.verify_scoped(&token, &wrong_tenant, t).is_err());
+
+        let wrong_workspace = SessionScope::try_new("tenant-A", "workspace-B", "s1").unwrap();
+        assert!(auth.verify_scoped(&token, &wrong_workspace, t).is_err());
+    }
+
+    #[test]
+    fn role_capability_mismatch_is_rejected() {
+        let auth = Auth::generate();
+        let t = now();
+        let scope = SessionScope::try_new("tenant-A", "workspace-A", "s1").unwrap();
+        let expiration = t + Duration::from_secs(3600);
+        let token = biscuit!(
+            r#"
+            organization({tenant_id});
+            workspace({workspace_id});
+            session({session_id});
+            actor("p1", "human");
+            participant("p1");
+            role("participant");
+            capability("host_minting");
+            check if time($t), $t < {expiration};
+            "#,
+            tenant_id = scope.tenant_id.as_str(),
+            workspace_id = scope.workspace_id.as_str(),
+            session_id = scope.session_id.as_str(),
+            expiration = expiration,
+        )
+        .build(&auth.keypair)
+        .unwrap()
+        .to_base64()
+        .unwrap();
+        assert!(auth.verify_scoped(&token, &scope, t).is_err());
+    }
+
+    #[test]
+    fn non_human_session_actor_is_rejected() {
+        let auth = Auth::generate();
+        let t = now();
+        let scope = SessionScope::try_new("tenant-A", "workspace-A", "s1").unwrap();
+        let expiration = t + Duration::from_secs(3600);
+        let token = biscuit!(
+            r#"
+            organization({tenant_id});
+            workspace({workspace_id});
+            session({session_id});
+            actor("svc1", "service");
+            participant("svc1");
+            role("host");
+            capability("host_minting");
+            check if time($t), $t < {expiration};
+            "#,
+            tenant_id = scope.tenant_id.as_str(),
+            workspace_id = scope.workspace_id.as_str(),
+            session_id = scope.session_id.as_str(),
+            expiration = expiration,
+        )
+        .build(&auth.keypair)
+        .unwrap()
+        .to_base64()
+        .unwrap();
+        assert!(auth.verify_scoped(&token, &scope, t).is_err());
     }
 
     #[test]
@@ -402,7 +589,7 @@ mod tests {
             "a token must not exercise a capability it was not granted"
         );
 
-        // The live session tokens are untouched by the space generalization.
+        // The live session token path stays compatible with the default mint/verify API.
         let session = auth
             .mint("s1", "host", Capability::Host, Duration::from_secs(600), t)
             .unwrap();
