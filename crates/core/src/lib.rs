@@ -11,4 +11,7 @@ pub mod p0_contract;
 pub mod protocol;
 pub mod role_assignment;
 
-pub use role_assignment::{PermissionPrimitive, RoleAssignment};
+pub use role_assignment::{
+    ActorReference, ActorType, MembershipStatus, PermissionPrimitive, RoleAssignment,
+    WorkspaceIdentity, WorkspaceMembership,
+};
