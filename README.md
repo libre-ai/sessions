@@ -1,6 +1,6 @@
 # rumble-lm
 
-**Couche** : Rumble
+**Outil** : Rumble
 **Rôle** : produit de learning/facilitation sourcé et sessions live
 **deployment_class** : product-linkable
 **Maturité** : contract-first — runtime scaffolding présent, pas un produit fini
@@ -26,7 +26,7 @@ Cadre des sessions pédagogiques avec sources, citations, rôles et délégation
 
 ## Dogfooding
 
-This repository is part of the forge dogfooding loop: the ecosystem should use its own tools to make specs, maturity, contracts, releases, and product documentation observable.
+This repository is part of the Daidalos dogfooding loop: the ecosystem should use its own tools to make specs, maturity, contracts, releases, and product documentation observable.
 
 Current visible evidence:
 
