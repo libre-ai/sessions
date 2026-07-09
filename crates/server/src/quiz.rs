@@ -69,18 +69,14 @@ impl QuizSource for FixtureQuizSource {
 }
 
 /// Grounded source: real questions backed by ingested sources (gear-loader).
-/// Rotates through grounded questions; source_id embedded in first question.
 pub struct GroundedQuizSource {
     questions: Vec<Question>,
-    index: Arc<parking_lot::Mutex<usize>>,
 }
 
 impl GroundedQuizSource {
     pub fn new(source_id: &str) -> Self {
-        let questions = crate::grounded_fixtures::grounded_quiz(source_id);
         Self {
-            questions,
-            index: Arc::new(parking_lot::Mutex::new(0)),
+            questions: crate::grounded_fixtures::grounded_quiz(source_id),
         }
     }
 }
@@ -88,13 +84,10 @@ impl GroundedQuizSource {
 #[async_trait]
 impl QuizSource for GroundedQuizSource {
     async fn next_question(&self, _query: &str) -> Option<Question> {
-        if self.questions.is_empty() {
-            return None;
-        }
-        let mut idx = self.index.lock();
-        let question = self.questions[*idx % self.questions.len()].clone();
-        *idx = (*idx + 1) % self.questions.len();
-        Some(question)
+        // Deterministic like FixtureQuizSource: always the first grounded
+        // question. A server-wide rotating index would make the question a
+        // session receives depend on how many sessions asked before it.
+        self.questions.first().cloned()
     }
 }
 
