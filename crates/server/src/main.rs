@@ -86,7 +86,7 @@ type Content = (
 );
 
 async fn build_content(
-    store: &Arc<dyn SessionStore>,
+    _store: &Arc<dyn SessionStore>,
 ) -> Content {
     let fixture: Content = (
         Arc::new(FixtureQuizSource),
