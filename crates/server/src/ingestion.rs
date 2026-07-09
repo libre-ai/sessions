@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceType {
@@ -18,11 +19,11 @@ pub enum SourceState {
     Archived,
 }
 
-impl ToString for SourceState {
-    fn to_string(&self) -> String {
+impl fmt::Display for SourceState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Active => "Active".to_string(),
-            Self::Archived => "Archived".to_string(),
+            Self::Active => write!(f, "Active"),
+            Self::Archived => write!(f, "Archived"),
         }
     }
 }
@@ -90,7 +91,7 @@ impl SourceRef {
         .bind(&self.uri)
         .bind(&self.content_hash)
         .bind(&self.provenance_id)
-        .bind(self.state.to_string())
+        .bind(self.state.to_string())  // Display impl
         .bind(&self.created_at)
         .bind(&self.canonical_title)
         .bind(&self.canonical_text)
