@@ -92,6 +92,87 @@ jobs:
           cargo llvm-cov --workspace --ignore-filename-regex 'main\.rs'
           --fail-under-lines 80 -- --include-ignored --skip sustains_200_participants
 
+  wrench-evidence:
+    name: Wrench inspection evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: rumble-lm
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: constantin-jais/wrench-inspect
+          path: wrench-inspect
+          ref: 973bd76a22c84003ec4f5c3a4379f9c93fe35278
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # Both checkouts live in subdirectories; the cache probe must not
+          # run cargo at the workspace root (no Cargo.toml there).
+          workspaces: wrench-inspect
+      - name: Build wrench-inspect
+        run: cargo build --release --manifest-path wrench-inspect/Cargo.toml
+      - name: Generate Portal evidence report
+        run: |
+          ./wrench-inspect/target/release/wrench-inspect portal inspect \
+            rumble-lm/crates/ui \
+            --evidence > wrench-portal-evidence.json
+      - name: Validate evidence report format
+        run: |
+          # Verify the report is valid JSON with the EvidenceReport v0.1 fields
+          # (the report carries `status`, not `valid` — verified against the
+          # real wrench-inspect output).
+          jq -e '.format == "wrench.evidence_report.v0.1"' wrench-portal-evidence.json
+          jq -e '.status == "passed" or .status == "failed"' wrench-portal-evidence.json
+          jq -e '.checks | length > 0' wrench-portal-evidence.json
+          echo "Evidence report is well-formed"
+      - name: Gate on inspection passing
+        run: |
+          if ! jq -e '.status == "passed"' wrench-portal-evidence.json > /dev/null; then
+            echo "::error::Portal inspection failed; see report below"
+            jq . wrench-portal-evidence.json
+            exit 1
+          fi
+      - name: Upload evidence report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wrench-portal-evidence
+          path: wrench-portal-evidence.json
+
+  artifact-manifest:
+    name: Generate depot-conformant ArtifactManifest
+    runs-on: ubuntu-latest
+    needs: [rust]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Build presto-server release binary
+        run: cargo build --bin presto-server --release
+      - name: Generate ArtifactManifest
+        env:
+          ARTIFACT_VERSION: "0.0.0"
+        run: |
+          cargo run --bin emit-artifact-manifest -- \
+            target/release/presto-server \
+            --json-out artifact-manifest.json
+      - name: Validate manifest against depot schema
+        run: |
+          # Verify the manifest is valid JSON with required gear-depot fields
+          jq -e '.manifest_id != null and .manifest_id != ""' artifact-manifest.json
+          jq -e '.artifact.artifact_id != null and .artifact.artifact_id != ""' artifact-manifest.json
+          jq -e '.artifact.manifest_ref == .manifest_id' artifact-manifest.json
+          jq -e '.checksums | length > 0' artifact-manifest.json
+          jq -e '.checksums[] | select(.algorithm == "sha256").value | startswith("sha256:")' artifact-manifest.json
+          jq -e '.provenance_id != null and .provenance_id != ""' artifact-manifest.json
+          echo "✓ Manifest is valid and conforms to gear-depot schema"
+      - name: Upload artifact manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: presto-server-artifact-manifest
+          path: artifact-manifest.json
+
   e2e:
     name: End-to-end tests (Playwright)
     runs-on: ubuntu-latest
