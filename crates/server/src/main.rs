@@ -85,9 +85,7 @@ type Content = (
     Arc<dyn DocumentIngestor>,
 );
 
-async fn build_content(
-    _store: &Arc<dyn SessionStore>,
-) -> Content {
+async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
     let fixture: Content = (
         Arc::new(FixtureQuizSource),
         Arc::new(FixtureBreakoutSource),
@@ -112,7 +110,8 @@ async fn build_content(
                         if let Some(src) = sources.first() {
                             println!(
                                 "content: grounded quiz initialized with source {} ({})",
-                                src.source_id, src.canonical_title.as_deref().unwrap_or("untitled")
+                                src.source_id,
+                                src.canonical_title.as_deref().unwrap_or("untitled")
                             );
                             return (
                                 Arc::new(GroundedQuizSource::new(&src.source_id)),
@@ -123,7 +122,9 @@ async fn build_content(
                         }
                     }
                     Err(e) => {
-                        eprintln!("grounded source initialization failed ({e}); falling back to fixture");
+                        eprintln!(
+                            "grounded source initialization failed ({e}); falling back to fixture"
+                        );
                     }
                 }
             }
