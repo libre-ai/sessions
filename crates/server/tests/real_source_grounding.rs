@@ -1,20 +1,13 @@
 //! Integration test: verify real source ingestion and grounded questions.
-//! This test ensures that questions can cite verifiable sources from gear-loader.
+//! This test ensures that questions can cite verifiable sources from gear-loader,
+//! persisted via gear-memory FileStore.
+
+use gear_memory::Store;
 
 #[tokio::test]
-#[ignore] // Requires live Postgres; run with: cargo test -- --ignored
 async fn test_markdown_ingestion_creates_source_ref() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL not set");
-    let pool = sqlx::PgPool::connect(&database_url)
-        .await
-        .expect("Failed to connect to Postgres");
-
-    // Schema is programmatic and idempotent, like the other stores in this
-    // repo (no migrations directory). ingest_markdown ensures it too; calling
-    // it here keeps the test meaningful if that internal call ever moves.
-    presto_server::ingestion::ensure_schema(&pool)
-        .await
-        .expect("schema init failed");
+    let temp_dir = tempfile::TempDir::new().expect("create temp directory");
+    let store = gear_memory::FileStore::new(temp_dir.path()).expect("create FileStore");
 
     let markdown_content = r#"# Test Document
 
@@ -26,7 +19,7 @@ Some important content here.
 "#;
 
     let result =
-        presto_server::ingestion::ingest_markdown(markdown_content, "test-doc.md", &pool).await;
+        presto_server::ingestion::ingest_markdown(markdown_content, "test-doc.md", &store).await;
 
     assert!(result.is_ok(), "ingestion should succeed");
     let source_ref = result.unwrap();
@@ -42,14 +35,32 @@ Some important content here.
             .unwrap_or(false)
     );
 
-    // Verify persistence: retrieve by ID
-    let retrieved = presto_server::ingestion::SourceRef::get_by_id(&pool, &source_ref.source_id)
-        .await
-        .expect("get_by_id should not error")
+    // Verify persistence: retrieve by ID from FileStore
+    let retrieved = store
+        .get_source_ref(&source_ref.source_id)
+        .expect("get_source_ref should not error")
         .expect("source_ref should be persisted");
 
     assert_eq!(retrieved.source_id, source_ref.source_id);
     assert_eq!(retrieved.origin_product, source_ref.origin_product);
+
+    // Verify ERASURE: anonymization clears canonical_text (RGPD compliance)
+    let now = chrono::Utc::now().to_rfc3339();
+    store
+        .mark_anonymized(&source_ref.source_id, "test erasure", &now)
+        .expect("mark_anonymized should succeed");
+
+    let anonymized = store
+        .get_source_ref(&source_ref.source_id)
+        .expect("get after anonymization should work")
+        .expect("source should still exist");
+
+    // RGPD erasure: canonical_text must be None after anonymization
+    assert_eq!(anonymized.state, gear_memory::SourceState::Anonymized);
+    assert!(
+        anonymized.canonical_text.is_none(),
+        "canonical_text must be cleared on anonymization"
+    );
 }
 
 #[test]

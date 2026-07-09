@@ -100,31 +100,43 @@ async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
         // No RAG pipeline: try grounded quiz (real sources)
         println!("content: grounded quiz (real ingested sources)");
 
-        // Attempt to ingest and initialize grounded sources
-        // Extract PgPool if available (Postgres store)
-        if let Ok(url) = std::env::var("DATABASE_URL")
-            && let Ok(pool) = sqlx::PgPool::connect(&url).await
-        {
-            // Initialize sources and return grounded quiz
-            match presto_server::grounded_fixtures::initialize_sources(&pool).await {
-                Ok(sources) => {
-                    if let Some(src) = sources.first() {
-                        println!(
-                            "content: grounded quiz initialized with source {} ({})",
-                            src.source_id,
-                            src.canonical_title.as_deref().unwrap_or("untitled")
-                        );
-                        return (
-                            Arc::new(GroundedQuizSource::new(&src.source_id)),
-                            Arc::new(FixtureBreakoutSource),
-                            Arc::new(FixtureFlashcardSource),
-                            Arc::new(FixtureIngestor),
-                        );
+        // Attempt to ingest and initialize grounded sources from gear-memory FileStore
+        if let Ok(_url) = std::env::var("DATABASE_URL") {
+            // Set up gear-memory FileStore (path from env or default)
+            let gear_memory_path = std::env::var("GEAR_MEMORY_STORE")
+                .unwrap_or_else(|_| ".gear_memory_sources".to_string());
+            let file_store_result =
+                gear_memory::FileStore::new(std::path::Path::new(&gear_memory_path));
+
+            match file_store_result {
+                Ok(file_store) => {
+                    // Initialize sources and return grounded quiz
+                    match presto_server::grounded_fixtures::initialize_sources(&file_store).await {
+                        Ok(sources) => {
+                            if let Some(src) = sources.first() {
+                                println!(
+                                    "content: grounded quiz initialized with source {} ({})",
+                                    src.source_id,
+                                    src.canonical_title.as_deref().unwrap_or("untitled")
+                                );
+                                return (
+                                    Arc::new(GroundedQuizSource::new(&src.source_id)),
+                                    Arc::new(FixtureBreakoutSource),
+                                    Arc::new(FixtureFlashcardSource),
+                                    Arc::new(FixtureIngestor),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "grounded source initialization failed ({e}); falling back to fixture"
+                            );
+                        }
                     }
                 }
                 Err(e) => {
                     eprintln!(
-                        "grounded source initialization failed ({e}); falling back to fixture"
+                        "gear-memory FileStore creation failed ({e}); falling back to fixture"
                     );
                 }
             }
