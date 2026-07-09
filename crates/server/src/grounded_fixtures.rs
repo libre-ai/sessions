@@ -1,19 +1,18 @@
 //! Grounded question fixtures: questions backed by real ingested sources.
 
-use crate::ingestion::SourceRef;
+use crate::ingestion::{SourceRef, Store};
 use presto_core::protocol::{CitationValidation, Question, QuestionKind};
-use sqlx::PgPool;
 
 /// Initialize all ingested sources from embedded assets.
 pub async fn initialize_sources(
-    pool: &PgPool,
+    store: &dyn Store,
 ) -> Result<Vec<SourceRef>, Box<dyn std::error::Error>> {
     let mut sources = Vec::new();
 
     // Ingest Rust Ownership Guide (embedded in binary)
     let rust_ownership_content = include_str!("../assets/rust-ownership-guide.md");
     let ownership_source =
-        crate::ingestion::ingest_markdown(rust_ownership_content, "rust-ownership-guide.md", pool)
+        crate::ingestion::ingest_markdown(rust_ownership_content, "rust-ownership-guide.md", store)
             .await?;
     sources.push(ownership_source);
 

@@ -959,6 +959,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrand"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+
+[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1104,6 +1110,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "gear-memory"
+version = "0.0.0"
+source = "git+https://github.com/constantin-jais/gear-memory?rev=b2ba37936643115b73f88a76999e48ea8ed37163#b2ba37936643115b73f88a76999e48ea8ed37163"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
 ]
 
 [[package]]
@@ -2007,6 +2024,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "gear-loader",
+ "gear-memory",
  "hmac 0.13.0",
  "jsonwebtoken",
  "parking_lot",
@@ -2019,6 +2037,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
+ "tempfile",
  "time",
  "tokio",
  "tokio-tungstenite",
@@ -2996,6 +3015,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
