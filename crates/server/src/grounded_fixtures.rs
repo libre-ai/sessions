@@ -5,17 +5,16 @@ use presto_core::protocol::{CitationValidation, Question, QuestionKind};
 use sqlx::PgPool;
 
 /// Initialize all ingested sources from embedded assets.
-pub async fn initialize_sources(pool: &PgPool) -> Result<Vec<SourceRef>, Box<dyn std::error::Error>> {
+pub async fn initialize_sources(
+    pool: &PgPool,
+) -> Result<Vec<SourceRef>, Box<dyn std::error::Error>> {
     let mut sources = Vec::new();
 
     // Ingest Rust Ownership Guide (embedded in binary)
     let rust_ownership_content = include_str!("../assets/rust-ownership-guide.md");
-    let ownership_source = crate::ingestion::ingest_markdown(
-        rust_ownership_content,
-        "rust-ownership-guide.md",
-        pool,
-    )
-    .await?;
+    let ownership_source =
+        crate::ingestion::ingest_markdown(rust_ownership_content, "rust-ownership-guide.md", pool)
+            .await?;
     sources.push(ownership_source);
 
     Ok(sources)
@@ -66,7 +65,12 @@ pub fn grounded_quiz(rust_ownership_source_id: &str) -> Vec<Question> {
         grounded_question(
             "grounded_q3",
             "What happens when a variable goes out of scope?",
-            &["It moves to parent scope", "Rust calls drop() automatically", "The value persists", "Memory leak occurs"],
+            &[
+                "It moves to parent scope",
+                "Rust calls drop() automatically",
+                "The value persists",
+                "Memory leak occurs",
+            ],
             1,
             rust_ownership_source_id,
         ),

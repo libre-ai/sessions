@@ -24,12 +24,8 @@ This is a test document for grounding.
 Some important content here.
 "#;
 
-    let result = presto_server::ingestion::ingest_markdown(
-        markdown_content,
-        "test-doc.md",
-        &pool,
-    )
-    .await;
+    let result =
+        presto_server::ingestion::ingest_markdown(markdown_content, "test-doc.md", &pool).await;
 
     assert!(result.is_ok(), "ingestion should succeed");
     let source_ref = result.unwrap();
@@ -107,10 +103,7 @@ fn test_grounded_quiz_structure_valid() {
         );
         // All source_section_ids must be non-empty
         assert!(
-            question
-                .source_section_ids
-                .iter()
-                .all(|s| !s.is_empty()),
+            question.source_section_ids.iter().all(|s| !s.is_empty()),
             "source_section_ids must be non-empty for {}",
             question.id
         );
@@ -124,8 +117,5 @@ fn test_gear_loader_contract_shape() {
     let _extraction_format = gear_loader::EXTRACTION_REQUEST_FORMAT;
 
     // These should be accessible without error
-    assert_eq!(
-        _csd_format,
-        "wrench.canonical_source_document.v0.1"
-    );
+    assert_eq!(_csd_format, "wrench.canonical_source_document.v0.1");
 }

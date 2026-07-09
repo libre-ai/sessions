@@ -75,8 +75,8 @@ impl SourceRef {
 
     /// Persist this SourceRef to the database.
     pub async fn persist(&self, pool: &PgPool) -> Result<(), sqlx::Error> {
-        let metadata_json = serde_json::to_string(&self.metadata)
-            .unwrap_or_else(|_| "{}".to_string());
+        let metadata_json =
+            serde_json::to_string(&self.metadata).unwrap_or_else(|_| "{}".to_string());
         sqlx::query(
             r#"
             INSERT INTO source_refs (source_id, source_type, origin_product, uri, content_hash, provenance_id, state, created_at, canonical_title, canonical_text, metadata)
@@ -111,8 +111,8 @@ impl SourceRef {
 
         Ok(row.map(|r| {
             let metadata_str: String = r.get(10);
-            let metadata = serde_json::from_str(&metadata_str)
-                .unwrap_or_else(|_| serde_json::json!({}));
+            let metadata =
+                serde_json::from_str(&metadata_str).unwrap_or_else(|_| serde_json::json!({}));
             Self {
                 source_id: r.get::<String, _>(0),
                 source_type: SourceType::Document,
@@ -120,7 +120,11 @@ impl SourceRef {
                 uri: r.get::<Option<String>, _>(3),
                 content_hash: r.get::<String, _>(4),
                 provenance_id: r.get::<String, _>(5),
-                state: if r.get::<String, _>(6) == "Active" { SourceState::Active } else { SourceState::Archived },
+                state: if r.get::<String, _>(6) == "Active" {
+                    SourceState::Active
+                } else {
+                    SourceState::Archived
+                },
                 created_at: r.get::<String, _>(7),
                 canonical_title: r.get::<Option<String>, _>(8),
                 canonical_text: r.get::<Option<String>, _>(9),
@@ -169,7 +173,8 @@ pub async fn ingest_markdown(
 
     let bundle = gear_loader::extract_text_like(&request, raw_input, &now)?;
     let provenance_id = format!("prov_{}", uuid::Uuid::new_v4());
-    let source_ref = SourceRef::from_canonical(&bundle.canonical_document, "rumble-lm", &provenance_id);
+    let source_ref =
+        SourceRef::from_canonical(&bundle.canonical_document, "rumble-lm", &provenance_id);
     source_ref.persist(pool).await?;
     Ok(source_ref)
 }
