@@ -270,17 +270,16 @@ fn validate_manifest(manifest: &ArtifactManifest) -> Result<(), Box<dyn std::err
         return Err("manifest requires at least one sha256 checksum".into());
     }
 
-    // Validate checksum format (must look like "sha256:...").
+    // Validate checksum format (must look like "sha256:..." — 7 + 64 hex chars).
     for checksum in &manifest.checksums {
-        if checksum.algorithm == ChecksumAlgorithm::Sha256 {
-            if !checksum.value.starts_with("sha256:") || checksum.value.len() != 71 {
-                // sha256: + 64 hex chars = 71 total
-                return Err(format!(
-                    "checksum value '{}' is not a valid sha256 hash",
-                    checksum.value
-                )
-                .into());
-            }
+        if checksum.algorithm == ChecksumAlgorithm::Sha256
+            && (!checksum.value.starts_with("sha256:") || checksum.value.len() != 71)
+        {
+            return Err(format!(
+                "checksum value '{}' is not a valid sha256 hash",
+                checksum.value
+            )
+            .into());
         }
     }
 
