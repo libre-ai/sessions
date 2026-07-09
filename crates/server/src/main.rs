@@ -102,30 +102,30 @@ async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
 
         // Attempt to ingest and initialize grounded sources
         // Extract PgPool if available (Postgres store)
-        if let Ok(url) = std::env::var("DATABASE_URL") {
-            if let Ok(pool) = sqlx::PgPool::connect(&url).await {
-                // Initialize sources and return grounded quiz
-                match presto_server::grounded_fixtures::initialize_sources(&pool).await {
-                    Ok(sources) => {
-                        if let Some(src) = sources.first() {
-                            println!(
-                                "content: grounded quiz initialized with source {} ({})",
-                                src.source_id,
-                                src.canonical_title.as_deref().unwrap_or("untitled")
-                            );
-                            return (
-                                Arc::new(GroundedQuizSource::new(&src.source_id)),
-                                Arc::new(FixtureBreakoutSource),
-                                Arc::new(FixtureFlashcardSource),
-                                Arc::new(FixtureIngestor),
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "grounded source initialization failed ({e}); falling back to fixture"
+        if let Ok(url) = std::env::var("DATABASE_URL")
+            && let Ok(pool) = sqlx::PgPool::connect(&url).await
+        {
+            // Initialize sources and return grounded quiz
+            match presto_server::grounded_fixtures::initialize_sources(&pool).await {
+                Ok(sources) => {
+                    if let Some(src) = sources.first() {
+                        println!(
+                            "content: grounded quiz initialized with source {} ({})",
+                            src.source_id,
+                            src.canonical_title.as_deref().unwrap_or("untitled")
+                        );
+                        return (
+                            Arc::new(GroundedQuizSource::new(&src.source_id)),
+                            Arc::new(FixtureBreakoutSource),
+                            Arc::new(FixtureFlashcardSource),
+                            Arc::new(FixtureIngestor),
                         );
                     }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "grounded source initialization failed ({e}); falling back to fixture"
+                    );
                 }
             }
         }
