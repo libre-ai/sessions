@@ -25,10 +25,23 @@
         padding: 0.5rem 1rem;
         margin: 0.25rem 0.25rem 0.25rem 0;
         cursor: pointer;
+        border: 1px solid currentColor;
+        border-radius: 0.25rem;
+        background: transparent;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
       input {
         font-size: 1rem;
         padding: 0.4rem;
+        border: 1px solid currentColor;
+        border-radius: 0.25rem;
+      }
+      input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
       #choices button {
         display: block;
@@ -54,6 +67,10 @@
   </head>
   <body>
     <h1>Presto-Matic</h1>
+
+    <div id="loader" hidden style="text-align: center; padding: 1rem">
+      <p>⏳ Traitement en cours…</p>
+    </div>
 
     <section id="landing" hidden>
       <button id="create">Créer une session (host)</button>
