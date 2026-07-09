@@ -45,6 +45,38 @@ pub struct SourceRef {
     pub metadata: serde_json::Value,
 }
 
+/// Schema for ingested source references, created like the other stores in
+/// this crate: programmatic, idempotent `CREATE TABLE IF NOT EXISTS` (this
+/// repo does not use a migrations directory). Column types mirror what the
+/// code binds/decodes: RFC3339 strings and JSON-as-text.
+const SOURCE_REFS_SCHEMA: &[&str] = &[
+    r#"
+    CREATE TABLE IF NOT EXISTS source_refs (
+        source_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        origin_product TEXT NOT NULL,
+        uri TEXT,
+        content_hash TEXT NOT NULL,
+        provenance_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'Active',
+        created_at TEXT NOT NULL,
+        canonical_title TEXT,
+        canonical_text TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}'
+    )
+    "#,
+    "CREATE INDEX IF NOT EXISTS idx_source_refs_provenance ON source_refs(provenance_id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_refs_state ON source_refs(state)",
+];
+
+/// Ensure the source_refs storage exists (idempotent).
+pub async fn ensure_schema(pool: &PgPool) -> Result<(), sqlx::Error> {
+    for statement in SOURCE_REFS_SCHEMA {
+        sqlx::query(*statement).execute(pool).await?;
+    }
+    Ok(())
+}
+
 impl SourceRef {
     /// Create a SourceRef from a gear-loader CanonicalSourceDocument.
     pub fn from_canonical(
@@ -81,7 +113,7 @@ impl SourceRef {
         sqlx::query(
             r#"
             INSERT INTO source_refs (source_id, source_type, origin_product, uri, content_hash, provenance_id, state, created_at, canonical_title, canonical_text, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (source_id) DO NOTHING
             "#,
         )
@@ -176,6 +208,7 @@ pub async fn ingest_markdown(
     let provenance_id = format!("prov_{}", uuid::Uuid::new_v4());
     let source_ref =
         SourceRef::from_canonical(&bundle.canonical_document, "rumble-lm", &provenance_id);
+    ensure_schema(pool).await?;
     source_ref.persist(pool).await?;
     Ok(source_ref)
 }

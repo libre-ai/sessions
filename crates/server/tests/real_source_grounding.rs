@@ -9,16 +9,12 @@ async fn test_markdown_ingestion_creates_source_ref() {
         .await
         .expect("Failed to connect to Postgres");
 
-    // Run migrations via the runtime Migrator: the `migrate!` proc-macro needs
-    // the sqlx `macros` feature (off here, default-features = false), and its
-    // path would resolve from this crate's manifest dir anyway.
-    let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../rag/migrations");
-    sqlx::migrate::Migrator::new(migrations)
+    // Schema is programmatic and idempotent, like the other stores in this
+    // repo (no migrations directory). ingest_markdown ensures it too; calling
+    // it here keeps the test meaningful if that internal call ever moves.
+    presto_server::ingestion::ensure_schema(&pool)
         .await
-        .expect("Failed to load migrations")
-        .run(&pool)
-        .await
-        .expect("Migrations failed");
+        .expect("schema init failed");
 
     let markdown_content = r#"# Test Document
 
