@@ -173,6 +173,68 @@ jobs:
           name: presto-server-artifact-manifest
           path: artifact-manifest.json
 
+  bolt-handoff:
+    name: Bolt planning-only handoff with evidence refs
+    runs-on: ubuntu-latest
+    needs: [rust, wrench-evidence]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: rumble-lm
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: constantin-jais/bolt-cos-matic
+          path: bolt-cos-matic
+          ref: 0d93b41d02e0b8c7093df748008d1dbe7e2efa21
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: bolt-cos-matic
+      - name: Download Wrench evidence report
+        uses: actions/download-artifact@06db2b9ef166563e4b4ef4a8564cd3ff779ae5a0 # v4
+        with:
+          name: wrench-portal-evidence
+          path: artifacts/
+      - name: Build bolt-cosmatic CLI
+        run: cargo build --release --manifest-path bolt-cos-matic/Cargo.toml --bin bolt-cosmatic
+      - name: Execute dry-run plan with evidence refs
+        run: |
+          ./bolt-cos-matic/target/release/bolt-cosmatic handoff plan \
+            rumble-lm/docs/handoff/lm-slice-handoff.json \
+            --dry-run --json \
+            --evidence-report artifacts/wrench-portal-evidence.json \
+            > bolt-handoff-dry-run.json
+      - name: Validate dry-run output
+        run: |
+          # Verify the dry-run produced a valid plan with gates and tasks
+          jq -e '.report.format' bolt-handoff-dry-run.json
+          jq -e '.gates | length >= 0' bolt-handoff-dry-run.json
+          jq -e '.tasks | length > 0' bolt-handoff-dry-run.json
+          echo "✓ Dry-run plan is well-formed"
+      - name: Display plan summary
+        if: always()
+        run: |
+          echo "=== Bolt Handoff Dry-Run Plan ==="
+          jq '.report | {format, kind, handoff_id, findings}' bolt-handoff-dry-run.json
+          jq '.gates[] | {code, status, detail}' bolt-handoff-dry-run.json
+          echo "=== Next Actions ==="
+          jq '.next_actions[]' bolt-handoff-dry-run.json
+      - name: Upload handoff dry-run result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bolt-handoff-dry-run
+          path: bolt-handoff-dry-run.json
+      - name: Gate on handoff validity
+        run: |
+          validity=$(jq -r '.report | if (.findings | map(select(.severity == "error")) | length) == 0 then "valid" else "invalid" end' bolt-handoff-dry-run.json)
+          if [ "$validity" = "invalid" ]; then
+            echo "::error::Bolt handoff has validation errors"
+            jq '.report.findings[] | select(.severity == "error")' bolt-handoff-dry-run.json
+            exit 1
+          fi
+          echo "✓ Handoff passed validation; safe for planning"
+
   e2e:
     name: End-to-end tests (Playwright)
     runs-on: ubuntu-latest
