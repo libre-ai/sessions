@@ -42,3 +42,6 @@ multiple-versions = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = [
+    "https://github.com/constantin-jais/gear-loader", # ADR-0033: Gear substrate (ingestion service)
+]

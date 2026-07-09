@@ -68,6 +68,29 @@ impl QuizSource for FixtureQuizSource {
     }
 }
 
+/// Grounded source: real questions backed by ingested sources (gear-loader).
+pub struct GroundedQuizSource {
+    questions: Vec<Question>,
+}
+
+impl GroundedQuizSource {
+    pub fn new(source_id: &str) -> Self {
+        Self {
+            questions: crate::grounded_fixtures::grounded_quiz(source_id),
+        }
+    }
+}
+
+#[async_trait]
+impl QuizSource for GroundedQuizSource {
+    async fn next_question(&self, _query: &str) -> Option<Question> {
+        // Deterministic like FixtureQuizSource: always the first grounded
+        // question. A server-wide rotating index would make the question a
+        // session receives depend on how many sessions asked before it.
+        self.questions.first().cloned()
+    }
+}
+
 /// Produces grounded clarifications (breakouts) for a confused source section.
 #[async_trait]
 pub trait BreakoutSource: Send + Sync {

@@ -45,12 +45,19 @@ test.describe('Session lifecycle', () => {
     await expect(host.locator('#hoststatus')).toContainText('1 participant');
 
     await host.getByRole('button', { name: 'Ouvrir une question' }).click();
-    await expect(participant.locator('#question')).toHaveText('Capital of France?');
-    await expect(participant.locator('#grounding')).toContainText('Question sourcée');
-    await expect(participant.locator('#grounding')).toContainText('fixture de démonstration');
-    await expect(participant.locator('#grounding')).toContainText('refs privées');
+    await expect(participant.locator('#question')).not.toHaveText('');
+    const grounding = participant.locator('#grounding');
+    await expect(grounding).toContainText('Question sourcée');
+    await expect(grounding).toContainText('refs privées');
 
-    await participant.getByRole('button', { name: 'Paris' }).click();
+    // The served quiz depends on the server's content mode: fixture quiz
+    // without DATABASE_URL, grounded quiz (real ingested source) with it.
+    // Scoring >= 500 below requires answering correctly in both modes.
+    const fixtureMode = ((await grounding.textContent()) ?? '').includes(
+      'fixture de démonstration',
+    );
+    const correctAnswer = fixtureMode ? 'Paris' : 'Data races and use-after-free';
+    await participant.getByRole('button', { name: correctAnswer }).click();
     await expect(host.locator('#log')).toContainText('réponse reçue');
 
     await host.getByRole('button', { name: 'Révéler' }).click();
@@ -127,5 +134,42 @@ test.describe('Session lifecycle', () => {
     await expect(page.locator('#log')).toContainText('connecté');
 
     await page.close();
+  });
+
+  test('grounded question cites a real ingested source (not fixture)', async ({ browser }) => {
+    const host = await browser.newPage();
+    const participant = await browser.newPage();
+
+    // Host creates the session from the home page (the join_url flow yields
+    // the participant UI, which has no "Ouvrir une question" control).
+    await host.goto('/');
+    await host.getByRole('button', { name: 'Créer une session (host)' }).click();
+    const joinHref = await host.locator('#joinlink').getAttribute('href');
+    await expect(host.locator('#log')).toContainText('connecté');
+
+    await participant.goto(joinHref!);
+    await participant.locator('#name').fill('Student');
+    await participant.getByRole('button', { name: 'Rejoindre' }).click();
+    await expect(participant.locator('#log')).toContainText('connecté');
+
+    await host.getByRole('button', { name: 'Ouvrir une question' }).click();
+    const grounding = participant.locator('#grounding');
+    await expect(grounding).toContainText('Question sourcée');
+
+    const groundingText = (await grounding.textContent()) ?? '';
+    test.skip(
+      groundingText.includes('fixture de démonstration'),
+      'server runs in fixture mode (no DATABASE_URL locally); the grounded path is asserted in CI, whose e2e job has Postgres',
+    );
+
+    // Grounded mode: the question comes from the ingested Rust ownership
+    // guide (gear-loader → SourceRef) and its citation was verified.
+    await expect(grounding).toContainText('validée par grounding-verifier');
+    await expect(grounding).toContainText('1 citation');
+    await expect(grounding).not.toContainText('fixture de démonstration');
+    await expect(participant.locator('#question')).toContainText(/ownership/i);
+
+    await host.close();
+    await participant.close();
   });
 });

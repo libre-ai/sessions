@@ -19,6 +19,7 @@ rumble-lm-ui = { path = "crates/ui" }
 dioxus = { version = "0.7", default-features = false, features = ["macro", "html", "signals"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+gear-loader = { git = "https://github.com/constantin-jais/gear-loader", rev = "2d1bf33" }
 
 [profile.release]
 strip = true

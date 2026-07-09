@@ -16,8 +16,8 @@ use presto_server::fanout::{BroadcastFanout, Fanout};
 use presto_server::postgres_store::PostgresSessionStore;
 use presto_server::quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
-    FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource, RagBreakoutSource,
-    RagFlashcardSource, RagIngestor, RagQuizSource,
+    FixtureIngestor, FixtureQuizSource, FlashcardSource, GroundedQuizSource, QuizSource,
+    RagBreakoutSource, RagFlashcardSource, RagIngestor, RagQuizSource,
 };
 use presto_server::ratelimit::TokenBucket;
 use presto_server::redis_fanout::RedisFanout;
@@ -85,19 +85,56 @@ type Content = (
     Arc<dyn DocumentIngestor>,
 );
 
-async fn build_content() -> Content {
+async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
     let fixture: Content = (
         Arc::new(FixtureQuizSource),
         Arc::new(FixtureBreakoutSource),
         Arc::new(FixtureFlashcardSource),
         Arc::new(FixtureIngestor),
     );
+
+    // Try RAG pipeline first
     let (Ok(database_url), Ok(provider)) =
         (std::env::var("DATABASE_URL"), OpenAiCompatible::from_env())
     else {
+        // No RAG pipeline: try grounded quiz (real sources)
+        println!("content: grounded quiz (real ingested sources)");
+
+        // Attempt to ingest and initialize grounded sources
+        // Extract PgPool if available (Postgres store)
+        if let Ok(url) = std::env::var("DATABASE_URL")
+            && let Ok(pool) = sqlx::PgPool::connect(&url).await
+        {
+            // Initialize sources and return grounded quiz
+            match presto_server::grounded_fixtures::initialize_sources(&pool).await {
+                Ok(sources) => {
+                    if let Some(src) = sources.first() {
+                        println!(
+                            "content: grounded quiz initialized with source {} ({})",
+                            src.source_id,
+                            src.canonical_title.as_deref().unwrap_or("untitled")
+                        );
+                        return (
+                            Arc::new(GroundedQuizSource::new(&src.source_id)),
+                            Arc::new(FixtureBreakoutSource),
+                            Arc::new(FixtureFlashcardSource),
+                            Arc::new(FixtureIngestor),
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "grounded source initialization failed ({e}); falling back to fixture"
+                    );
+                }
+            }
+        }
+
+        // Fallback to fixture
         println!("content: fixture (set DATABASE_URL + AI_BASE_URL + AI_API_KEY for RAG)");
         return fixture;
     };
+
     match CorpusStore::connect(&database_url).await {
         Ok(corpus) => {
             println!(
@@ -144,9 +181,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let (quiz, breakout, flashcards, ingestor) = build_content().await;
+    let store = build_store().await?;
+    let (quiz, breakout, flashcards, ingestor) = build_content(&store).await;
     let state = AppState {
-        store: build_store().await?,
+        store,
         fanout: build_fanout().await?,
         auth: build_auth()?,
         quiz,
