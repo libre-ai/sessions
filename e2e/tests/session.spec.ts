@@ -157,17 +157,14 @@ test.describe('Session lifecycle', () => {
 
     // Verify grounding shows verified status (not fixture)
     const groundingLocator = participant.locator('#grounding');
-    const groundingText = await groundingLocator.textContent();
+    // Wait for grounding to appear (verified citation, not fixture)
+    await expect(groundingLocator).toContainText('Question sourcée', { timeout: 5000 });
 
-    // Should contain verification marker (verified) NOT fixture marker
-    if (groundingText && groundingText.includes('Rust')) {
-      // This is a grounded question from the ingested source
-      expect(groundingText).toContain('sourcée');
-      // Should NOT say "fixture"
-      expect(groundingText).not.toContain('fixture de démonstration');
-      // Should indicate verified citations
-      expect(groundingText).toContainText(/verified|1 citation|source réelle/i);
-    }
+    // Assert: must NOT contain fixture marker
+    await expect(groundingLocator).not.toContainText('fixture de démonstration');
+
+    // Assert: must indicate verified citation (1 citation confirmed)
+    await expect(groundingLocator).toContainText(/sourcée|1 citation/i);
 
     await host.close();
     await participant.close();
