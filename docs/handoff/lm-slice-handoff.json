@@ -1,0 +1,78 @@
+{
+  "format": "canvas.bolt_handoff.v0.1",
+  "kind": "planning_request",
+  "source": {
+    "product": "rumble-lm",
+    "workspace_id": "rumble-lm-dod-2026-07",
+    "handoff_id": "lm-slice-dod-chain-2026-07-09",
+    "created_by": "claude-code",
+    "created_at": "2026-07-09T00:00:00Z"
+  },
+  "package": {
+    "package_id": "lm-slice-planning-handoff",
+    "version": "0.1.0",
+    "package_hash": "sha256:55b6129a61aba0d91fee87c53c5a1e80b2ae344fc4099cf9357d85f88ae2aa65",
+    "items": [
+      {
+        "section_id": "evidence-sources",
+        "revision_id": "ci-generated",
+        "description": "Wrench Portal inspection evidence + Gear ArtifactManifest for presto-server release binary"
+      }
+    ]
+  },
+  "planning_scope": {
+    "mode": "full_package",
+    "target_objects": [],
+    "excluded_objects": [],
+    "goal": "Deliver planning-only Bolt handoff with real Wrench inspection + Gear artifact evidence for the DoD chain maillon"
+  },
+  "spec_context": {
+    "context_slice": "rumble-lm",
+    "context_focus": "can emit a planning-only Bolt handoff with evidence refs",
+    "dod_chain_maillon": "planning-only handoff with evidence refs"
+  },
+  "traceability_links": [
+    {
+      "source_type": "feature",
+      "source_id": "bolt-handoff-dod-chain",
+      "target_type": "slice",
+      "target_id": "rumble-lm",
+      "relation_type": "proves"
+    },
+    {
+      "source_type": "ci_job",
+      "source_id": "wrench-evidence",
+      "target_type": "evidence",
+      "target_id": "portal-inspection",
+      "relation_type": "produces"
+    },
+    {
+      "source_type": "ci_job",
+      "source_id": "artifact-manifest",
+      "target_type": "artifact",
+      "target_id": "presto-server-binary",
+      "relation_type": "produces"
+    }
+  ],
+  "active_waivers": [],
+  "open_questions": [],
+  "risks": [
+    {
+      "code": "evidence-generation-timing",
+      "description": "Wrench inspection and ArtifactManifest are generated during CI; bolt-handoff job must run after both",
+      "severity": "medium",
+      "mitigation": "Enforce job dependency ordering in GitHub Actions workflow"
+    }
+  ],
+  "capability_candidates": [],
+  "requested_outputs": [
+    "implementation_plan",
+    "evidence_summary",
+    "gate_status"
+  ],
+  "execution_policy": {
+    "planning_only": true,
+    "allow_execution": false,
+    "requires_human_approval_for_execution": true
+  }
+}
