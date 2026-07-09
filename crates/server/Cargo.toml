@@ -26,7 +26,7 @@ biscuit-auth = "6.0.0"
 # stays sovereign + permissively licensed. Validates OIDC id_tokens (SP-A inc-1).
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 # Keyed content-integrity tags (HMAC-SHA256) for the SP-B grounding moat.
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 async-trait.workspace = true
 redis = { version = "1.2.4", features = ["tokio-comp", "aio"] }

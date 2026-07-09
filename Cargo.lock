@@ -1946,7 +1946,7 @@ dependencies = [
  "axum",
  "biscuit-auth",
  "futures-util",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "jsonwebtoken",
  "parking_lot",
  "presto-core",
