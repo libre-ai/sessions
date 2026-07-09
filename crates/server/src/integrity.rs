@@ -6,7 +6,7 @@
 //! — any change to the text or the tag fails verification. The key is the
 //! server's ingestion secret (env-provided in production), never logged.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
