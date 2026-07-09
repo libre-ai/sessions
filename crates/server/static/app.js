@@ -1,62 +1,182 @@
-// Minimal Presto-Matic web client: host creates a session and opens questions;
+// Presto-Matic web client: host creates a session and opens questions;
 // participants join by link, answer, and see the leaderboard. The server is the
 // authority (Biscuit tokens, server-side timing); this is a thin view over the
 // WS protocol.
+//
+// Features:
+// - Robust error handling and user feedback
+// - Automatic WS reconnection with exponential backoff
+// - Loading states and disabled inputs during API calls
+// - Validation of user inputs
+// - Late-join support (question snapshot on connect)
 
 const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 const show = (id) => ($("#" + id).hidden = false);
 const hide = (id) => ($("#" + id).hidden = true);
 const log = (m) => ($("#log").textContent += m + "\n");
-const postJSON = (path) => fetch(path, { method: "POST" }).then((r) => r.json());
+const setLoading = (enabled) => {
+  $$("button, input").forEach((el) => {
+    el.disabled = enabled;
+  });
+  const loader = $("#loader");
+  if (loader) loader.hidden = !enabled;
+};
+const postJSON = async (path) => {
+  try {
+    const r = await fetch(path, { method: "POST" });
+    if (!r.ok) {
+      const msg = r.status === 404 ? "Session introuvable (code expiré?)" : `Erreur HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return await r.json();
+  } catch (e) {
+    log(`erreur réseau: ${e.message}`);
+    throw e;
+  }
+};
 
 let ws;
 let sessionId;
 let currentQid;
 let isHost = false;
+let currentName = "";
+let reconnectAttempt = 0;
+let maxReconnectAttempts = 5;
+let reconnectDelay = 1000;  // ms, exponential backoff
 
-function wsUrl(token, name) {
+function wsUrl(token) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   let u = `${proto}://${location.host}/ws/${sessionId}?token=${encodeURIComponent(token)}`;
-  if (name) u += `&name=${encodeURIComponent(name)}`;
+  if (currentName) u += `&name=${encodeURIComponent(currentName)}`;
   return u;
 }
 
 function connect(token, name) {
-  ws = new WebSocket(wsUrl(token, name));
-  ws.onopen = () => log("connecté");
-  ws.onclose = () => log("déconnecté");
-  ws.onmessage = (e) => onMessage(JSON.parse(e.data));
+  if (name) currentName = name;
+
+  if (ws) {
+    try {
+      ws.close();
+    } catch (e) {}
+  }
+
+  log("connexion en cours...");
+  ws = new WebSocket(wsUrl(token));
+
+  ws.onopen = () => {
+    log("connecté");
+    reconnectAttempt = 0;
+    reconnectDelay = 1000;
+    setLoading(false);
+  };
+
+  ws.onclose = () => {
+    log("déconnecté");
+    // Attempt reconnection with exponential backoff.
+    if (reconnectAttempt < maxReconnectAttempts) {
+      reconnectAttempt++;
+      log(`reconnexion dans ${reconnectDelay}ms...`);
+      setTimeout(() => {
+        if (token && sessionId) {
+          connect(token, currentName);
+          reconnectDelay = Math.min(reconnectDelay * 2, 10000);  // cap at 10s
+        }
+      }, reconnectDelay);
+    } else {
+      log("reconnexion échouée, rechargez la page.");
+      setLoading(true);
+    }
+  };
+
+  ws.onerror = (e) => {
+    log(`erreur WS: ${e.message || "connexion perdue"}`);
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      onMessage(msg);
+    } catch (e) {
+      log(`erreur parsing: ${e.message}`);
+    }
+  };
 }
 
 function onMessage(m) {
+  if (!m || !m.type) {
+    log("message malformé reçu");
+    return;
+  }
+
   switch (m.type) {
     case "joined":
-      $("#hoststatus").textContent = `${m.participants} participant(s)`;
+      if (m.participants !== undefined) {
+        $("#hoststatus").textContent = `${m.participants} participant(s)`;
+      }
       break;
     case "question_opened":
-      renderQuestion(m.question);
+      if (m.question) {
+        renderQuestion(m.question);
+      } else {
+        log("erreur: question vide");
+      }
       break;
     case "answer_received":
-      log("réponse reçue : " + m.participant_id);
+      if (m.participant_id) {
+        log("réponse reçue : " + m.participant_id);
+      }
       break;
     case "answers_revealed":
-      renderLeaderboard(m);
+      if (m.leaderboard !== undefined) {
+        renderLeaderboard(m);
+      } else {
+        log("erreur: leaderboard vide");
+      }
       break;
     case "breakout_opened":
-      renderBreakout(m);
+      if (m.section_id && m.explanation) {
+        renderBreakout(m);
+      } else {
+        log("erreur: breakout incomplet");
+      }
       break;
     case "flashcards_ready":
-      renderFlashcards(m);
+      if (m.cards !== undefined) {
+        renderFlashcards(m);
+      } else {
+        log("erreur: flashcards non disponibles");
+      }
       break;
     case "error":
-      log("erreur : " + m.reason);
+      log("erreur serveur : " + (m.reason || "inconnu"));
       break;
+    case "pong":
+      // Heartbeat response; do nothing.
+      break;
+    default:
+      log(`type de message inconnu: ${m.type}`);
   }
 }
 
 function submitAnswer(choicesArr, container) {
-  ws.send(JSON.stringify({ type: "submit_answer", question_id: currentQid, choices: choicesArr }));
-  [...container.children].forEach((x) => (x.disabled = true));
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log("erreur: pas de connexion (reconnexion en cours?)");
+    return;
+  }
+
+  if (!currentQid || !choicesArr || choicesArr.length === 0) {
+    log("erreur: question ou choix invalide");
+    return;
+  }
+
+  try {
+    ws.send(JSON.stringify({ type: "submit_answer", question_id: currentQid, choices: choicesArr }));
+    [...container.children].forEach((x) => (x.disabled = true));
+    log("réponse envoyée");
+  } catch (e) {
+    log(`erreur envoi: ${e.message}`);
+  }
 }
 
 function validationLabel(status) {
@@ -71,24 +191,43 @@ function validationLabel(status) {
 }
 
 function renderQuestion(q) {
+  if (!q || !q.id) {
+    log("erreur: question invalide");
+    return;
+  }
+
   currentQid = q.id;
   hide("leaderboard");
   hide("breakout");
   show("play");
-  $("#question").textContent = q.text;
+
+  // Display question text.
+  const questionEl = $("#question");
+  questionEl.textContent = q.text || "(pas de texte)";
+
+  // Display grounding information.
   const grounding = q.grounding || {};
   const count = grounding.citation_count || 0;
-  $("#grounding").textContent = grounding.grounded
+  const groundingEl = $("#grounding");
+  groundingEl.textContent = grounding.grounded
     ? `Question sourcée (${validationLabel(grounding.validation_status)}, ${count} citation(s), refs privées)`
     : "Question non validée par citation.";
+
+  // Render choices.
   const choices = $("#choices");
   choices.innerHTML = "";
   const multi = q.kind === "multi";
   const selected = new Set();
 
+  if (!q.choices || q.choices.length === 0) {
+    log("erreur: aucun choix disponible");
+    return;
+  }
+
   q.choices.forEach((choice, i) => {
     const b = document.createElement("button");
     b.textContent = choice;
+    b.dataset.index = i;
     b.onclick = () => {
       if (multi) {
         if (selected.has(i)) {
@@ -106,10 +245,17 @@ function renderQuestion(q) {
     choices.appendChild(b);
   });
 
+  // Add validation button for multi-select.
   if (multi) {
     const validate = document.createElement("button");
     validate.textContent = "Valider";
-    validate.onclick = () => submitAnswer([...selected], choices);
+    validate.onclick = () => {
+      if (selected.size === 0) {
+        log("choisissez au moins une réponse");
+        return;
+      }
+      submitAnswer([...selected], choices);
+    };
     choices.appendChild(validate);
   }
 }
@@ -162,63 +308,163 @@ function renderFlashcards(m) {
 }
 
 async function createSession() {
-  const { data } = await postJSON("/sessions");
-  isHost = true;
-  sessionId = data.session_id;
-  $("#code").textContent = data.session_id;
-  const a = $("#joinlink");
-  a.href = data.join_url;
-  a.textContent = location.origin + data.join_url;
-  hide("landing");
-  show("host");
-  connect(data.host_token);
+  setLoading(true);
+  try {
+    const { data } = await postJSON("/sessions");
+    if (!data || !data.session_id || !data.host_token) {
+      throw new Error("réponse invalide du serveur");
+    }
+    isHost = true;
+    sessionId = data.session_id;
+    $("#code").textContent = data.session_id;
+    const a = $("#joinlink");
+    a.href = data.join_url;
+    a.textContent = location.origin + data.join_url;
+    hide("landing");
+    show("host");
+    connect(data.host_token);
+  } catch (e) {
+    setLoading(false);
+    log(`création échouée: ${e.message}`);
+  }
 }
 
 async function joinSession() {
-  const name = $("#name").value || "anon";
-  const { data } = await postJSON(`/sessions/${sessionId}/participants`);
-  hide("join");
-  connect(data.participant_token, name);
+  const name = $("#name").value.trim();
+  if (!name) {
+    log("entrez un nom");
+    return;
+  }
+  if (!sessionId) {
+    log("erreur: session ID manquant");
+    return;
+  }
+
+  setLoading(true);
+  try {
+    const { data } = await postJSON(`/sessions/${sessionId}/participants`);
+    if (!data || !data.participant_token) {
+      throw new Error("réponse invalide du serveur");
+    }
+    hide("join");
+    connect(data.participant_token, name);
+  } catch (e) {
+    setLoading(false);
+    log(`join échoué: ${e.message}`);
+  }
 }
 
 function init() {
+  // Initialize event handlers.
   const s = new URLSearchParams(location.search).get("s");
   if (s) {
-    sessionId = s;
-    $("#join-code").textContent = s;
+    sessionId = s.trim().toUpperCase();  // Normalize code.
+    $("#join-code").textContent = sessionId;
     show("join");
     $("#do-join").onclick = joinSession;
+    // Focus name input for quick interaction.
+    setTimeout(() => $("#name").focus(), 100);
   } else {
     show("landing");
     $("#create").onclick = createSession;
   }
-  $("#generate").onclick = () =>
-    ws.send(JSON.stringify({ type: "generate_question", query: $("#query").value || "general" }));
-  $("#reveal").onclick = () => ws.send(JSON.stringify({ type: "reveal" }));
-  $("#get-flashcards").onclick = () => ws.send(JSON.stringify({ type: "flashcards" }));
+
+  // Host controls.
+  $("#generate").onclick = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log("erreur: pas de connexion");
+      return;
+    }
+    const query = $("#query").value.trim() || "general";
+    try {
+      ws.send(JSON.stringify({ type: "generate_question", query }));
+    } catch (e) {
+      log(`erreur envoi: ${e.message}`);
+    }
+  };
+
+  $("#reveal").onclick = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log("erreur: pas de connexion");
+      return;
+    }
+    try {
+      ws.send(JSON.stringify({ type: "reveal" }));
+    } catch (e) {
+      log(`erreur envoi: ${e.message}`);
+    }
+  };
+
+  // Participant controls.
+  $("#get-flashcards").onclick = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log("erreur: pas de connexion");
+      return;
+    }
+    try {
+      ws.send(JSON.stringify({ type: "flashcards" }));
+    } catch (e) {
+      log(`erreur envoi: ${e.message}`);
+    }
+  };
+
+  // Document ingestion.
   $("#do-ingest").onclick = ingestDocument;
+
+  // Heartbeat (optional but good for detecting stale connections).
+  setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "ping" }));
+      } catch (e) {
+        // Ignore; connection will close and reconnect.
+      }
+    }
+  }, 30000);
 }
 
 async function ingestDocument() {
   const id = $("#doc-id").value.trim();
-  const text = $("#doc-text").value;
-  if (!id || !text.trim()) {
-    $("#ingest-status").textContent = "Renseigne un ID et du texte.";
+  const text = $("#doc-text").value.trim();
+  const statusEl = $("#ingest-status");
+
+  if (!id) {
+    statusEl.textContent = "erreur: entrez un ID de document";
     return;
   }
-  $("#ingest-status").textContent = "Ingestion…";
+  if (!text) {
+    statusEl.textContent = "erreur: entrez du texte";
+    return;
+  }
+
+  statusEl.textContent = "ingestion en cours…";
   try {
     const r = await fetch(`/corpus/documents?document_id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "content-type": "text/markdown" },
       body: text,
     });
+
+    if (!r.ok) {
+      statusEl.textContent = `erreur HTTP ${r.status}`;
+      log(`ingestion échouée: ${r.status}`);
+      return;
+    }
+
     const j = await r.json().catch(() => ({}));
-    $("#ingest-status").textContent = r.ok
-      ? `${j.data.chunks_stored} chunks ingérés pour ${j.data.document_id}.`
-      : `Échec (${r.status}).`;
-  } catch {
-    $("#ingest-status").textContent = "Erreur réseau.";
+    if (j.data && j.data.chunks_stored !== undefined) {
+      statusEl.textContent = `✓ ${j.data.chunks_stored} chunks ingérés pour "${j.data.document_id}"`;
+      log("document ingéré avec succès");
+      // Clear form.
+      $("#doc-id").value = "";
+      $("#doc-text").value = "";
+    } else {
+      statusEl.textContent = "erreur: réponse invalide";
+      log("réponse d'ingestion invalide");
+    }
+  } catch (e) {
+    statusEl.textContent = `erreur réseau: ${e.message}`;
+    log(`erreur ingestion: ${e.message}`);
   }
 }
 

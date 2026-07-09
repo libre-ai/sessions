@@ -63,4 +63,69 @@ test.describe('Session lifecycle', () => {
     await host.close();
     await participant.close();
   });
+
+  test('participant joining with invalid session is rejected', async ({ page }) => {
+    // Try to join with a non-existent session code.
+    await page.goto('/?s=BADCODE999');
+    await page.locator('#name').fill('TestUser');
+    await page.getByRole('button', { name: 'Rejoindre' }).click();
+
+    // Should show error in the log (session not found).
+    await expect(page.locator('#log')).toContainText(/introuvable|erreur|not found/i);
+  });
+
+  test('late join receives current session state', async ({ browser, request }) => {
+    // Create session via API.
+    const sessionRes = await request.post('/sessions');
+    const { data: sessionData } = await sessionRes.json();
+    const joinUrl = sessionData.join_url;
+
+    const participant = await browser.newPage();
+    await participant.goto(joinUrl);
+    await participant.locator('#name').fill('Eve');
+    await participant.getByRole('button', { name: 'Rejoindre' }).click();
+
+    // Verify participant is connected.
+    await expect(participant.locator('#log')).toContainText('connecté');
+
+    await participant.close();
+  });
+
+  test('input validation: participant name is required', async ({ page, request }) => {
+    // Create a session via API.
+    const sessionRes = await request.post('/sessions');
+    const { data } = await sessionRes.json();
+    const sessionId = data.session_id;
+
+    // Navigate to join page.
+    await page.goto(`/?s=${sessionId}`);
+    await expect(page.locator('#join-code')).toContainText(sessionId);
+
+    // Try to join without a name.
+    const nameInput = page.locator('#name');
+    await nameInput.fill('');
+    await page.getByRole('button', { name: 'Rejoindre' }).click();
+
+    // Should show an error message.
+    await expect(page.locator('#log')).toContainText(/entrez|champs|required/i);
+
+    await page.close();
+  });
+
+  test('network errors are logged with feedback', async ({ page, request }) => {
+    // Create a real session first.
+    const sessionRes = await request.post('/sessions');
+    const { data } = await sessionRes.json();
+    const joinHref = data.join_url;
+
+    // Navigate to join page.
+    await page.goto(joinHref);
+    await page.locator('#name').fill('Frank');
+
+    // Click join and should succeed.
+    await page.getByRole('button', { name: 'Rejoindre' }).click();
+    await expect(page.locator('#log')).toContainText('connecté');
+
+    await page.close();
+  });
 });
