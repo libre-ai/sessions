@@ -26,7 +26,7 @@ Cadre des sessions pédagogiques avec sources, citations, rôles et délégation
 
 ## Dogfooding
 
-This repository is part of the Daidalos dogfooding loop: the ecosystem should use its own tools to make specs, maturity, contracts, releases, and product documentation observable.
+This repository is part of the **Free AI** tool family — one tool, one job, stacked.
 
 Current visible evidence:
 
