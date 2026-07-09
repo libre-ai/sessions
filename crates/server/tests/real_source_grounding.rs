@@ -9,8 +9,13 @@ async fn test_markdown_ingestion_creates_source_ref() {
         .await
         .expect("Failed to connect to Postgres");
 
-    // Run migrations
-    sqlx::migrate!("crates/rag/migrations")
+    // Run migrations via the runtime Migrator: the `migrate!` proc-macro needs
+    // the sqlx `macros` feature (off here, default-features = false), and its
+    // path would resolve from this crate's manifest dir anyway.
+    let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../rag/migrations");
+    sqlx::migrate::Migrator::new(migrations)
+        .await
+        .expect("Failed to load migrations")
         .run(&pool)
         .await
         .expect("Migrations failed");
