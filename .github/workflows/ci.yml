@@ -191,7 +191,7 @@ jobs:
         with:
           workspaces: bolt-cos-matic
       - name: Download Wrench evidence report
-        uses: actions/download-artifact@06db2b9ef166563e4b4ef4a8564cd3ff779ae5a0 # v4
+        uses: actions/download-artifact@9c19ed7fe5d278cd40c7b5e5f6a111205f8de5c8 # v4.1.7
         with:
           name: wrench-portal-evidence
           path: artifacts/
