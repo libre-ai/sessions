@@ -11,10 +11,10 @@ fn wrench_evidence_report_schema_v0_1() {
     // (format, valid field, checks array, etc.).
     //
     // When CI runs locally or in testing, the report file should be validated
-    // against this checklist:
+    // against this checklist (verified against real wrench-inspect output):
     // - format: "wrench.evidence_report.v0.1"
-    // - valid: boolean (true or false)
-    // - checks: array of { code, status, findings? }
+    // - status: "passed" | "failed"
+    // - checks: array of { code, status, summary }
     // - summary: { errors, warnings, infos }
     // - generated_at: RFC3339 timestamp
     // - producer: { name, version }
@@ -34,9 +34,10 @@ fn wrench_evidence_report_schema_v0_1() {
             "report must have correct format version"
         );
 
+        let status = report["status"].as_str();
         assert!(
-            report["valid"].is_boolean(),
-            "report must have a 'valid' boolean field"
+            status == Some("passed") || status == Some("failed"),
+            "report must have a 'status' of passed or failed"
         );
 
         assert!(
@@ -49,17 +50,16 @@ fn wrench_evidence_report_schema_v0_1() {
             "report must have a 'summary' object"
         );
 
-        if let Some(valid) = report["valid"].as_bool() {
-            assert!(
-                valid,
-                "Portal evidence report inspection failed; see findings: {}",
-                report
-                    .get("findings")
-                    .and_then(|f| f.as_array())
-                    .map(|f| f.len())
-                    .unwrap_or(0)
-            );
-        }
+        assert_eq!(
+            status,
+            Some("passed"),
+            "Portal evidence report inspection failed; findings: {}",
+            report
+                .get("findings")
+                .and_then(|f| f.as_array())
+                .map(|f| f.len())
+                .unwrap_or(0)
+        );
     }
     // If the file doesn't exist (e.g., test run without CI), we pass silently.
     // This allows the test suite to remain green in non-CI environments.
