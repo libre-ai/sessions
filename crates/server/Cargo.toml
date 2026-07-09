@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "presto-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "emit-artifact-manifest"
+path = "src/bin/emit-artifact-manifest.rs"
+
 [dependencies]
 axum = { version = "0.8.9", features = ["ws"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
@@ -36,6 +40,7 @@ rand = "0.10.1"
 gear-loader.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 futures-util = "0.3.32"
