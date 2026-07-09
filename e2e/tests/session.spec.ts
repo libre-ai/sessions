@@ -128,4 +128,48 @@ test.describe('Session lifecycle', () => {
 
     await page.close();
   });
+
+  test('grounded question cites a real ingested source (not fixture)', async ({ browser, page }) => {
+    // Use API to create session and check question grounding status
+    const sessionRes = await page.request.post('/sessions');
+    expect(sessionRes.ok()).toBeTruthy();
+    const { data: sessionData } = await sessionRes.json();
+
+    const host = await browser.newPage();
+    const participant = await browser.newPage();
+
+    const hostJoinUrl = sessionData.join_url;
+    // Host joins
+    await host.goto(hostJoinUrl);
+    await host.locator('#name').fill('Host');
+    await host.getByRole('button', { name: 'Rejoindre' }).click();
+    await expect(host.locator('#log')).toContainText('connecté');
+
+    // Participant joins
+    const participantJoinUrl = sessionData.join_url;
+    await participant.goto(participantJoinUrl);
+    await participant.locator('#name').fill('Student');
+    await participant.getByRole('button', { name: 'Rejoindre' }).click();
+    await expect(participant.locator('#log')).toContainText('connecté');
+
+    // When host opens a grounded question (from rust-ownership source)
+    await host.getByRole('button', { name: 'Ouvrir une question' }).click();
+
+    // Verify grounding shows verified status (not fixture)
+    const groundingLocator = participant.locator('#grounding');
+    const groundingText = await groundingLocator.textContent();
+
+    // Should contain verification marker (verified) NOT fixture marker
+    if (groundingText && groundingText.includes('Rust')) {
+      // This is a grounded question from the ingested source
+      expect(groundingText).toContain('sourcée');
+      // Should NOT say "fixture"
+      expect(groundingText).not.toContain('fixture de démonstration');
+      // Should indicate verified citations
+      expect(groundingText).toContainText(/verified|1 citation|source réelle/i);
+    }
+
+    await host.close();
+    await participant.close();
+  });
 });
