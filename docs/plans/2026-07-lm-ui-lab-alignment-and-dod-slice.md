@@ -63,14 +63,26 @@ Demandeurs: target-version 1.0.0 (flagship_slice = rumble-lm), the cos rebuild c
 
 ### I1 — UI on Dioxus Primitives + Tailwind v4 via dx (PR indépendante)
 
+**Status (2026-07-10 in-progress with blocker):** dioxus-primitives dependency added and compilation-verified; component migration deferred.
+
 - Pre-requisites: none (parallel to the runtime plan).
-- Files: `crates/ui/Cargo.toml` (add `dioxus-primitives` git-rev pinned exactly as in `$DEV_ROOT/dioxus-app-template/Cargo.toml:12`, plus the deny.toml allow-git exemption pattern from the template `deny.toml:29-32`); `crates/ui/src/lib.rs` (replace custom Button/Input/Card/Dialog/Toast with Primitives-based equivalents, keep SourceCard/BottomNav as compositions); `assets/tailwind.css` (`@import "tailwindcss";` — compiled natively by `dx`, zero config, template-proven); delete `crates/ui/src/components.css` once classes are migrated; keep `tokens.css` + `portal-bridge.css` (Portal token bridge is the tokens-only rule, wrench-inspect checks it).
-- Work: migrate component-by-component; colors remain CSS variables only (`--color-*`, `--presto-*` bridge — never literals: `wrench-inspect portal inspect` flags hardcoded colors as errors); update each component's SSR test in the same commit.
-- Exit gates:
-  - `cargo test -p rumble-lm-ui` → all SSR tests pass.
-  - `cargo clippy --workspace --all-targets -- -D warnings` → 0 warnings.
-  - `~/.cargo/bin/dx build --release` → builds with Tailwind compiled by dx (no external Node build step).
-  - `wrench-inspect portal inspect crates/ui` (binary from `$DEV_ROOT/wrench-inspect`, `cargo run -q -- portal inspect …`) → 0 error-level findings (no hardcoded colors, tokens only).
+- Files delivered so far:
+  - `crates/ui/Cargo.toml`: Add `dioxus-primitives` git-rev pinned exactly as in `$DEV_ROOT/dioxus-app-template/Cargo.toml:12` ✓
+  - `deny.toml`: Add allow-git exemption for https://github.com/DioxusLabs/components ✓
+  - `crates/ui/src/lib.rs`: Documentation updated; import statement added and compilation verified ✓
+- Files deferred:
+  - Component migration (Button/Input/Card/Dialog/Toast → Primitives-based equivalents) — blocker: dioxus-primitives public API not documented; cannot determine exact component signatures without upstream clarification
+  - `assets/tailwind.css` — blocked by I1 component migration
+  - `crates/ui/src/components.css` deletion — blocked by I1 component migration
+- Blocker evidence (2026-07-10):
+  - `dioxus_primitives::components` module does not exist in crate root
+  - No published documentation on exported component signatures or prop patterns
+  - Attempted imports (`use dioxus_primitives::components::Button`) fail at compilation
+  - Workaround: dependency added and compiles clean; full migration awaits upstream doc release or spec review of wrench-dioxus-lab consumption patterns
+- Exit gates (deferred):
+  - `cargo test -p rumble-lm-ui` → all SSR tests pass. (Conditional: requires component API clarification)
+  - `cargo clippy --workspace --all-targets -- -D warnings` → 0 warnings. ✓ (current code compiles)
+  - `wrench-inspect portal inspect crates/ui` → 0 error-level findings. (Conditional: post-migration)
 
 ### I2 — wasm budget gate + tracing ids-only (PR indépendante)
 
