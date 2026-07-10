@@ -37,6 +37,8 @@ redis = { version = "1.2.4", features = ["tokio-comp", "aio"] }
 futures-util = "0.3.32"
 sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "migrate"] }
 rand = "0.10.1"
+tracing.workspace = true
+tracing-subscriber.workspace = true
 gear-loader.workspace = true
 gear-memory.workspace = true
 uuid.workspace = true

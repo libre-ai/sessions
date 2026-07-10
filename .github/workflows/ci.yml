@@ -57,6 +57,12 @@ jobs:
           if git ls-files | grep -iE '[.](env|pem|key|p12)$' ; then
             echo "::error::secret file committed"; exit 1
           fi
+      - name: No println!/eprintln! in server handlers (I2 observability gate)
+        run: |
+          # Handlers use tracing; startup banners (main.rs) and exempted CLI outputs (allow-println) are exempt.
+          if grep -rn "println!\|eprintln!" crates/server/src --include='*.rs' | grep -v main.rs | grep -v "allow-println" ; then
+            echo "::error::println!/eprintln! found in server code (use tracing instead; mark as 'allow-println' if intentional CLI output)"; exit 1
+          fi
 
   integration:
     name: Integration + coverage

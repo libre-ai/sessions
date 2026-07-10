@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use tracing::{error, info};
 
 /// Mimics the gear-depot ArtifactType for serialization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,13 +140,13 @@ fn compute_sha256_file(path: &Path) -> std::io::Result<String> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-binary> [--json-out <path>]", args[0]);
+        error!("usage error: invalid argument count");
         std::process::exit(1);
     }
 
     let binary_path = Path::new(&args[1]);
     if !binary_path.exists() {
-        eprintln!("Binary not found: {}", binary_path.display());
+        error!(path = %binary_path.display(), "binary not found");
         std::process::exit(1);
     }
 
@@ -216,12 +217,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(out_path) = output_path {
         fs::write(&out_path, &json)?;
-        eprintln!("✓ Manifest written to {}", out_path.display());
+        info!(path = %out_path.display(), "manifest written");
     } else {
-        println!("{}", json);
+        println!("{}", json); // allow-println: CLI output (--json-out not set)
     }
 
-    eprintln!("✓ Manifest is valid and conforms to gear-depot schema");
+    info!("manifest is valid and conforms to gear-depot schema");
     Ok(())
 }
 
