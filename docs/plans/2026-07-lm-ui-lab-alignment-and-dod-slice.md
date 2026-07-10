@@ -7,7 +7,7 @@
 - **I3** (gear-loader consumption): ✓ DELIVERED (PR #65, #68) — SourceRef persisted via gear-memory FileStore
 - **I4** (ArtifactRef export + Bolt handoff): ✓ DELIVERED (PR #66, #69) — wrench evidence + bolt handoff planning-only
 
-The DoD chain is now 6/8 complete: loader/memory/depot/wrench/bolt implemented and CI-proven; canvas verification pending (2 implementations + fixture = D11 threshold).
+The ecosystem DoD chain was met on 2026-07-09 via rumble-lm (8/8 links CI-gated; see the ecosystem `remaining-work.md` banner). Canvas D11 adoption (2 implementations + fixture) and cos production proof are follow-on targets outside this plan, not chain gaps.
 
 ```yaml
 # forge.plan.v0.1 — bolt-handoff-compatible header (maps onto canvas.bolt_handoff.v0.1)
