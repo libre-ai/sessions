@@ -10,6 +10,11 @@
 use dioxus::prelude::*;
 use presto_core::api::SourceCitation;
 
+// Dioxus Primitives: headless ARIA-compliant components.
+// Status (2026-07-10): dioxus-primitives dependency added and compilation-verified.
+// Component migration deferred pending upstream documentation clarification on public API.
+// See: docs/plans/2026-07-lm-ui-lab-alignment-and-dod-slice.md I1 blocker note.
+
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
 
