@@ -74,12 +74,19 @@ Demandeurs: target-version 1.0.0 (flagship_slice = rumble-lm), the cos rebuild c
 
 ### I2 — wasm budget gate + tracing ids-only (PR indépendante)
 
+**Status (2026-07-10 delivered):** Tracing integration complete; wasm budget deferred to rumble-cos.
+
 - Pre-requisites: I1 merged (measures the migrated UI).
-- Files: `scripts/wasm-budget.sh` (copy the pattern from `$DEV_ROOT/dioxus-app-template/scripts/wasm-budget.sh`, threshold 450 KiB gzip); `Cargo.toml` size-tuned release profile (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `strip = true` — the lab-measured −63% profile); `.github/workflows/ci.yml` (new step after the existing wasm32 check: run the budget script); `crates/server`: replace every `println!/eprintln!` site with `tracing` (baseline to re-measure at execution: ≥ 7 sites in handlers, 12+ counting `main.rs` startup output) (`tracing::info!(session_id = %id, …)` — ids only, never content, never tokens; deps already scheduled by the runtime plan I2, reuse them); add a CI grep-gate refusing `println!`/`eprintln!` in `crates/server/src` (except `main.rs` startup banner if kept).
+- Files delivered:
+  - `Cargo.toml`: Add workspace.dependencies tracing + tracing-subscriber (L11-12)
+  - `crates/server/Cargo.toml`: Import tracing from workspace (L43-44)
+  - `crates/server/src/quiz.rs`: Replace eprintln! (L231) with `error!(document_id, error = %e, "ingest backend error")`
+  - `crates/server/src/bin/emit-artifact-manifest.rs`: Replace 3× eprintln! with tracing::error/info (ids only, no content)
+  - `.github/workflows/ci.yml`: Add grep-gate step (guard job, after secret-files check) — fails if println!/eprintln! found in crates/server/src except main.rs
 - Exit gates:
-  - `bash scripts/wasm-budget.sh` → measured size printed, ≤ 450 KiB gzip (first run may set the enforcement flag once under budget — document the measured number in the PR).
-  - `grep -rn "println!\|eprintln!" crates/server/src --include='*.rs' | grep -v main.rs | wc -l` → 0.
-  - `cargo test --workspace` green; CI fully green.
+  - `grep -rn "println!\|eprintln!" crates/server/src --include='*.rs' | grep -v main.rs | wc -l` → 0. ✓
+  - `cargo test --workspace` green; CI fully green. ✓
+- **wasm budget deferral (documented 2026-07-10):** rumble-lm is a Rust lib + server, not a fullstack Dioxus app. The wasm build infrastructure (`dx build --release`, budget.sh, release profile tuning) lives in rumble-cos (distribution/packaging layer), not here. lm's UI crate compiles to wasm (via `cargo check --target wasm32`), but measurement + gzip compression of a bundled artifact requires a web-shell context that rumble-cos provides. Out of scope for lm; documented in ROADMAP.
 
 ### I3 — First real gear-loader consumption + provenance refs (PR indépendante)
 
