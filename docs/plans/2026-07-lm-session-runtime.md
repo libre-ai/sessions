@@ -1,6 +1,13 @@
 # Plan — lm-session-runtime (2026-07 wave)
 
-**Status update (2026-07-09):** I1, I2, I4, I5, I6 delivered and merged. I3 (middleware tower layer) is superseded by inline auth implementation in biscuit-auth v6.0.0 (verify before WS upgrade, PR #47 closed unmerged, inline impl at main.rs + ws.rs:46-52).
+**Status update (2026-07-10 verified):** All increments delivered. I1-I2, I4-I6 merged on main; I3 (middleware tower layer) superseded by inline auth in main.rs + ws.rs (2026-07-04 implementation, verified stable).
+
+- **I1** (PR #45, #51): ✓ session-identity.v0.1 contract + workspace-identity reconciliation
+- **I2** (PR #46, #52): ✓ Postgres store + Redis fanout + ScoreSink trait
+- **I3** (PR #47): ✗ superseded — inline auth impl at main.rs + ws.rs:46-52
+- **I4** (PR #48): ✓ ScoreSink consumption pattern + example
+- **I5** (PR #49): ✓ Playwright session e2e
+- **I6** (PR #53): ✓ live question grounding summary
 
 ```yaml
 format: forge.plan.v0.1

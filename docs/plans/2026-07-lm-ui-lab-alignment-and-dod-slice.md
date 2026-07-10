@@ -1,6 +1,13 @@
 # Plan — lm-ui-lab-alignment-and-dod-slice (2026-07 wave)
 
-**Status update (2026-07-09):** No increments delivered. The session-runtime plan (I1-I6) took priority (2026-07-03 to 2026-07-09). UI lab alignment (I1–I4: Dioxus Primitives, wasm budget, gear-loader consumption, artifact export) remains in planning. The runtime plan's delivery unblocks the pre-conditions: I3 (gear-loader consumption) depends on runtime plan I2 (Postgres store + provenance refs) merged; I4 (artifact export) depends on runtime I2.
+**Status update (2026-07-10 verified):** I3 and I4 delivered on 2026-07-09; I1 and I2 remain in-scope for 2026-07-10.
+
+- **I1** (Dioxus Primitives + Tailwind): ✗ PENDING — UI still uses custom components + static CSS files
+- **I2** (wasm budget gate + tracing): ✗ PENDING — no scripts/wasm-budget.sh, no println! grep-gate in CI
+- **I3** (gear-loader consumption): ✓ DELIVERED (PR #65, #68) — SourceRef persisted via gear-memory FileStore
+- **I4** (ArtifactRef export + Bolt handoff): ✓ DELIVERED (PR #66, #69) — wrench evidence + bolt handoff planning-only
+
+The DoD chain is now 6/8 complete: loader/memory/depot/wrench/bolt implemented and CI-proven; canvas verification pending (2 implementations + fixture = D11 threshold).
 
 ```yaml
 # forge.plan.v0.1 — bolt-handoff-compatible header (maps onto canvas.bolt_handoff.v0.1)
