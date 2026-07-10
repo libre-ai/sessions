@@ -8,13 +8,15 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use dioxus_primitives::dialog::{DialogContent, DialogTitle};
+use dioxus_primitives::label::Label;
 use presto_core::api::SourceCitation;
 
-// Dioxus Primitives: headless ARIA-compliant components.
-// Imported by module (collapsible, dialog, toast, label, tabs, etc.).
-// Dialog and Toast migrated to Primitives (I1 2026-07-10).
-// Button/Input/Card remain custom (no primitive equivalents at this rev; Radix philosophy).
+// Dioxus Primitives: headless ARIA-compliant components, imported by module
+// (label, dialog, collapsible, tabs, …). TextInput consumes `label::Label`
+// (I1 2026-07-10). Button/Card remain custom: no primitive equivalents at the
+// pinned rev (Radix philosophy — no primitives for trivially-native
+// elements). Dialog and Toast stay custom too: see the notes on each
+// component for the verified reasons.
 
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
@@ -89,7 +91,7 @@ pub fn TextInput(
     let described_by = help.as_ref().map(|_| format!("{id}-help"));
     rsx! {
         div { class: "presto-field",
-            label { class: "presto-label", r#for: "{id}", "{label}" }
+            Label { class: "presto-label", html_for: "{id}", "{label}" }
             input {
                 class: "presto-input",
                 id: "{id}",
@@ -122,11 +124,12 @@ pub fn Card(
     }
 }
 
-/// Dialog component: consumer of Dioxus Primitives DialogContent/DialogTitle.
-/// **Implementation note (2026-07-10):** Direct SSR rendering of DialogContent fails (needs DialogCtx).
-/// Pattern: Dioxus Primitives provides ARIA-semantic dialog building blocks.
-/// This wrapper consumes DialogTitle for semantic structure; DialogContent reserved for fullstack contexts.
-/// Styling via tokens.css (presto-dialog-* classes); framework ARIA roles defined by Primitives modules.
+/// Dialog stays custom — `dioxus_primitives::dialog` cannot render in static
+/// SSR at the pinned rev (verified 2026-07-10): `DialogRoot` gates its
+/// children behind `use_animated_open`, whose `show_in_dom` signal starts
+/// `false` and only flips inside a `use_effect` (never run by one-shot
+/// `dioxus_ssr::render`), and `DialogCtx` has private fields so the context
+/// cannot be provided manually to render `DialogContent` directly.
 #[component]
 pub fn Dialog(title: String, children: Element) -> Element {
     let title_id = format!("presto-dialog-{}", stable_id(&title));
@@ -137,8 +140,6 @@ pub fn Dialog(title: String, children: Element) -> Element {
                 role: "dialog",
                 aria_modal: "true",
                 aria_labelledby: "{title_id}",
-                // DialogTitle imported from dioxus_primitives::dialog for semantic structure reference;
-                // fallback to h2 for SSR compatibility while framework supports both paths.
                 h2 { id: "{title_id}", class: "presto-card__title", "{title}" }
                 {children}
             }
@@ -167,9 +168,11 @@ impl ToastTone {
 }
 
 /// Toast (alert) component for live region announcements.
-/// Status: Dioxus Primitives toast API is complex (required: id, title, description, index, toast_type).
-/// Keeping custom implementation for simplicity; Dialog uses Primitives DialogContent/DialogTitle.
-/// Future: align with Primitives API if design stabilizes.
+/// Deliberately NOT migrated to `dioxus_primitives::toast` (2026-07-10):
+/// that module is a client-side toast *system* (provider + stack + imperative
+/// push API), while this component is a static SSR live region
+/// (`role="status"`, `aria-live`). Adopting the provider would add client
+/// state for zero accessibility gain here.
 #[component]
 pub fn Toast(message: String, #[props(default)] tone: ToastTone) -> Element {
     rsx! {
@@ -361,16 +364,26 @@ mod tests {
 
     #[test]
     fn dialog_has_modal_a11y_attributes() {
-        // Dialog migrated to Dioxus Primitives DialogContent/DialogTitle.
-        // Primitives handles ARIA attributes (role, aria-modal, aria-labelledby).
-        // SSR test verifies Dialog renders its title and child content.
         let html = render(
             rsx! { Dialog { title: "Confirm".to_string(), Button { label: "Close".to_string() } } },
         );
-        // Verify content renders (DialogTitle + Button)
-        assert!(html.contains("Confirm"));
-        assert!(html.contains("Close"));
-        // ARIA attributes applied by Primitives are dynamic; verified in browser via wrench-inspect
+        assert!(html.contains("role=\"dialog\""));
+        assert!(html.contains("aria-modal=\"true\""));
+        assert!(html.contains("aria-labelledby=\"presto-dialog-confirm\""));
+        assert!(html.contains("id=\"presto-dialog-confirm\""));
+    }
+
+    #[test]
+    fn text_input_label_links_to_input_via_primitive() {
+        let html = render(rsx! { TextInput {
+            id: "email".to_string(),
+            label: "Email".to_string(),
+        } });
+        // The Primitives Label must render a real <label for=…> linked to the input.
+        assert!(html.contains("<label"));
+        assert!(html.contains("for=\"email\""));
+        assert!(html.contains("id=\"email\""));
+        assert!(html.contains("Email"));
     }
 
     #[test]

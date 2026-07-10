@@ -63,25 +63,21 @@ Demandeurs: target-version 1.0.0 (flagship_slice = rumble-lm), the cos rebuild c
 
 ### I1 — UI on Dioxus Primitives + Tailwind v4 via dx (PR indépendante)
 
-**Status (2026-07-10 delivered):** Dialog migrated to consume dioxus_primitives::dialog modules; SSR tests pass; wrench-inspect gate in CI.
+**Status (2026-07-10, delivered — verified scoping):** `dioxus-primitives` is consumed for real by `TextInput` (its label renders through `dioxus_primitives::label::Label`, `for`/`id` link SSR-tested). The rest of the increment's original component list is scoped out for verified reasons, each documented on the component:
 
 - Pre-requisites: none (parallel to the runtime plan).
-- Files delivered:
-  - `crates/ui/Cargo.toml`: Add `dioxus-primitives` git-rev pinned (bf007c15d0cf4d…) ✓
-  - `deny.toml`: Add allow-git exemption for https://github.com/DioxusLabs/components ✓
-  - `crates/ui/src/lib.rs`: Dialog migrated (`use dioxus_primitives::dialog::{DialogContent, DialogTitle}`); consumes Primitives API ✓; imports present + functional
-  - `crates/ui/src/lib.rs` tests: 8/8 SSR tests pass ✓ (Dialog test adapted for Primitives fallback rendering)
-- Design notes (legitimate scoping, not blockers):
-  - **Button/Input/Card**: No Primitives equivalents at this rev (Radix philosophy: primitives only for non-trivial composition). Remain custom. ✓
-  - **Dialog**: Migrated. DialogContent requires fullstack Dioxus context (SSR fallback: uses semantic h2 + ARIA attributes; Primitives applied in browser). ✓
-  - **Toast**: Primitives API requires `id`, `title`, `description`, `index`, `toast_type` (too prescriptive for simple alerts). Remain custom. ✓
-  - **Tailwind v4 via dx**: Deferred (requires fullstack Dioxus build). Not applicable to lib-only project.
-- Exit gates:
-  - ✓ `cargo test -p rumble-lm-ui` → 8/8 SSR tests pass
-  - ✓ `cargo check -p rumble-lm-ui` → 0 warnings
-  - ✓ `cargo clippy --workspace --all-targets -- -D warnings` → 0 warnings
-  - ⚠ `wrench-inspect portal inspect crates/ui`: Not available locally (binary from wrench-inspect repo, built in CI). CI gate invokes: `./wrench-inspect/target/release/wrench-inspect portal inspect rumble-lm/crates/ui --evidence`. Runs post-merge; results committed as evidence/wrench-portal-evidence.json.
-
+- Delivered:
+  - `crates/ui/Cargo.toml`: `dioxus-primitives` git dep pinned by full rev (`bf007c15d0cf4d04d3181cc46cf12325aa773955`, same rev as wrench-dioxus-lab); `deny.toml` allow-git exemption.
+  - `crates/ui/src/lib.rs`: `TextInput` consumes `label::Label`; new SSR test `text_input_label_links_to_input_via_primitive`.
+- Verified scoping (evidence, not preferences):
+  - **Button/Card**: no primitive equivalents at this rev (Radix philosophy — no primitives for trivially-native elements). Custom.
+  - **Dialog**: `dioxus_primitives::dialog` cannot render in one-shot SSR at this rev — `DialogRoot` gates children behind `use_animated_open` whose `show_in_dom` signal starts `false` and only flips inside a `use_effect` (never run by `dioxus_ssr::render`), and `DialogCtx` has private fields so the context cannot be provided manually to `DialogContent`. Custom, with the strong ARIA SSR test kept (`role`, `aria-modal`, `aria-labelledby`).
+  - **Toast**: the primitives `toast` module is a client-side toast *system* (provider + stack + imperative push API); lm's Toast is a static SSR live region (`role="status"`). Custom.
+  - **Tailwind v4 via dx**: not applicable — lm is lib + server, no fullstack web build (wasm budget lives in rumble-cos; see the I2 note).
+- Exit gates (run 2026-07-10):
+  - ✓ `cargo test -p rumble-lm-ui --lib` → 9/9 SSR tests pass
+  - ✓ `cargo clippy --workspace --all-targets -- -D warnings` → clean
+  - ✓ `wrench-inspect portal inspect crates/ui --components crates/ui/src/components.css --json` (binary built from wrench-inspect @ 973bd76a) → `valid: true` — 22 Portal tokens (fixtures/portal/tokens.css), 88 token references in components.css, 0 hardcoded colors.
 ### I2 — wasm budget gate + tracing ids-only (PR indépendante)
 
 **Status (2026-07-10 delivered):** Tracing integration complete; wasm budget deferred to rumble-cos.
