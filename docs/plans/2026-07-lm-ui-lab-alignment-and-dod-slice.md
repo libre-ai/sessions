@@ -63,27 +63,21 @@ Demandeurs: target-version 1.0.0 (flagship_slice = rumble-lm), the cos rebuild c
 
 ### I1 — UI on Dioxus Primitives + Tailwind v4 via dx (PR indépendante)
 
-**Status (2026-07-10 in-progress with blocker):** dioxus-primitives dependency added and compilation-verified; component migration deferred.
+**Status (2026-07-10, delivered — verified scoping):** `dioxus-primitives` is consumed for real by `TextInput` (its label renders through `dioxus_primitives::label::Label`, `for`/`id` link SSR-tested). The rest of the increment's original component list is scoped out for verified reasons, each documented on the component:
 
 - Pre-requisites: none (parallel to the runtime plan).
-- Files delivered so far:
-  - `crates/ui/Cargo.toml`: Add `dioxus-primitives` git-rev pinned exactly as in `$DEV_ROOT/dioxus-app-template/Cargo.toml:12` ✓
-  - `deny.toml`: Add allow-git exemption for https://github.com/DioxusLabs/components ✓
-  - `crates/ui/src/lib.rs`: Documentation updated; import statement added and compilation verified ✓
-- Files deferred:
-  - Component migration (Button/Input/Card/Dialog/Toast → Primitives-based equivalents) — blocker: dioxus-primitives public API not documented; cannot determine exact component signatures without upstream clarification
-  - `assets/tailwind.css` — blocked by I1 component migration
-  - `crates/ui/src/components.css` deletion — blocked by I1 component migration
-- Blocker evidence (2026-07-10):
-  - `dioxus_primitives::components` module does not exist in crate root
-  - No published documentation on exported component signatures or prop patterns
-  - Attempted imports (`use dioxus_primitives::components::Button`) fail at compilation
-  - Workaround: dependency added and compiles clean; full migration awaits upstream doc release or spec review of wrench-dioxus-lab consumption patterns
-- Exit gates (deferred):
-  - `cargo test -p rumble-lm-ui` → all SSR tests pass. (Conditional: requires component API clarification)
-  - `cargo clippy --workspace --all-targets -- -D warnings` → 0 warnings. ✓ (current code compiles)
-  - `wrench-inspect portal inspect crates/ui` → 0 error-level findings. (Conditional: post-migration)
-
+- Delivered:
+  - `crates/ui/Cargo.toml`: `dioxus-primitives` git dep pinned by full rev (`bf007c15d0cf4d04d3181cc46cf12325aa773955`, same rev as wrench-dioxus-lab); `deny.toml` allow-git exemption.
+  - `crates/ui/src/lib.rs`: `TextInput` consumes `label::Label`; new SSR test `text_input_label_links_to_input_via_primitive`.
+- Verified scoping (evidence, not preferences):
+  - **Button/Card**: no primitive equivalents at this rev (Radix philosophy — no primitives for trivially-native elements). Custom.
+  - **Dialog**: `dioxus_primitives::dialog` cannot render in one-shot SSR at this rev — `DialogRoot` gates children behind `use_animated_open` whose `show_in_dom` signal starts `false` and only flips inside a `use_effect` (never run by `dioxus_ssr::render`), and `DialogCtx` has private fields so the context cannot be provided manually to `DialogContent`. Custom, with the strong ARIA SSR test kept (`role`, `aria-modal`, `aria-labelledby`).
+  - **Toast**: the primitives `toast` module is a client-side toast *system* (provider + stack + imperative push API); lm's Toast is a static SSR live region (`role="status"`). Custom.
+  - **Tailwind v4 via dx**: not applicable — lm is lib + server, no fullstack web build (wasm budget lives in rumble-cos; see the I2 note).
+- Exit gates (run 2026-07-10):
+  - ✓ `cargo test -p rumble-lm-ui --lib` → 9/9 SSR tests pass
+  - ✓ `cargo clippy --workspace --all-targets -- -D warnings` → clean
+  - ✓ `wrench-inspect portal inspect crates/ui --components crates/ui/src/components.css --json` (binary built from wrench-inspect @ 973bd76a) → `valid: true` — 22 Portal tokens (fixtures/portal/tokens.css), 88 token references in components.css, 0 hardcoded colors.
 ### I2 — wasm budget gate + tracing ids-only (PR indépendante)
 
 **Status (2026-07-10 delivered):** Tracing integration complete; wasm budget deferred to rumble-cos.
