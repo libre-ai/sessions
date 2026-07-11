@@ -59,16 +59,18 @@ clever env set REDIS_URL    "<redis connection uri>"
 #   cargo run -p presto-server -- keygen
 clever env set BISCUIT_PRIVATE_KEY "<hex from keygen>"
 
-# AI provider (sovereign default = Mistral, Paris). Omit for the fixture quiz.
-# AI_BASE_URL is the origin WITHOUT /v1 — the client appends /v1/... itself.
-clever env set AI_BASE_URL  "https://api.mistral.ai"
-clever env set AI_API_KEY   "<your mistral key>"
-clever env set AI_EMBED_MODEL "mistral-embed"
-clever env set AI_CHAT_MODEL  "mistral-small-latest"
+# Hosted AI is Clever AI only. Values stay unset until the private contract,
+# region, retention and endpoint reference have been approved.
+clever env set CLEVER_AI_ENABLED "1"
+clever env set CLEVER_AI_BASE_URL "<approved Clever AI HTTPS origin>"
+clever env set CLEVER_AI_API_KEY "<secret managed outside Git>"
+clever env set CLEVER_AI_CONTRACT_REF "<versioned non-secret contract reference>"
+clever env set CLEVER_AI_EMBED_MODEL "<approved embedding model>"
+clever env set CLEVER_AI_CHAT_MODEL "<approved chat model>"
 ```
 
-> Clever AI is not GA (private alpha as of 2026-06); Mistral API (Paris,
-> GDPR, OpenAI-compatible) is the production-ready sovereign default.
+> This is a configuration reference, not a provisioning instruction. Direct
+> third-party hosted fallbacks are rejected by the provider policy.
 
 ## 4. Deploy + scale
 

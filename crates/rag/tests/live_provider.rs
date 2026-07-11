@@ -3,15 +3,14 @@
 //! question, and verification returns a parseable verdict. The value of a real
 //! model's verdict is model-dependent, so only parseability is asserted.
 //!
-//! Ignored by default. The endpoint is vendor-agnostic — run against any
-//! OpenAI-compatible server. Local default: LM Studio. Hosted sovereign default:
-//! Mistral (Paris); Clever AI is not yet GA (private alpha as of 2026-06).
+//! Ignored by default. Local runs are loopback-only. The only hosted route is
+//! explicitly enabled Clever AI with a versioned contract reference.
 //!
-//! `AI_BASE_URL` is the server **origin without `/v1`** — the client appends
+//! The base URL is the server **origin without `/v1`** — the client appends
 //! `/v1/chat/completions` and `/v1/embeddings` itself.
 //!
-//! Some local runtimes (e.g. Gemma on LM Studio) reject `response_format:
-//! json_object` with a 400; set `AI_JSON_MODE=0` and the pipeline parses the JSON
+//! Some local runtimes reject `response_format: json_object`; set
+//! `LOCAL_AI_JSON_MODE=0` and the pipeline parses the JSON
 //! out of the plain-text reply. Use `127.0.0.1` rather than `localhost` — LM
 //! Studio binds IPv4 only, and `localhost` may resolve to `::1` first.
 //!
@@ -19,17 +18,13 @@
 //! # LM Studio (local): in the app, load BOTH an embedding model and a chat
 //! #   model, then Developer -> Start Server (default port 1234). The model ids
 //! #   must match what is loaded (check GET http://127.0.0.1:1234/v1/models).
-//! AI_BASE_URL=http://127.0.0.1:1234 AI_API_KEY=lm-studio AI_JSON_MODE=0 \
-//!   AI_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5 \
-//!   AI_CHAT_MODEL=google/gemma-4-12b-qat \
+//! LOCAL_AI_ENABLED=1 LOCAL_AI_BASE_URL=http://127.0.0.1:1234 \
+//!   LOCAL_AI_JSON_MODE=0 LOCAL_AI_EMBED_MODEL=<loaded-embedding-model> \
+//!   LOCAL_AI_CHAT_MODEL=<loaded-chat-model> \
 //!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
-//! # Verified 2026-06-28: nomic-embed v1.5 (dim 768) + gemma-4-12b-qat,
-//! #   embed + generate + grounding-verify all green.
 //!
-//! # Mistral (Paris, hosted sovereign):
-//! AI_BASE_URL=https://api.mistral.ai AI_API_KEY=$MISTRAL_KEY \
-//!   AI_EMBED_MODEL=mistral-embed AI_CHAT_MODEL=mistral-small-latest \
-//!   cargo test -p presto-rag --test live_provider -- --ignored --nocapture
+//! # Hosted Clever AI requires CLEVER_AI_ENABLED=1 plus endpoint, models,
+//! # credential and CLEVER_AI_CONTRACT_REF. Do not run without contract approval.
 //! ```
 
 use presto_rag::corpus::Chunk;
@@ -38,10 +33,15 @@ use presto_rag::provider::{AiProvider, OpenAiCompatible};
 use presto_rag::verify::verify_grounding;
 
 #[tokio::test]
-#[ignore = "requires AI_BASE_URL + AI_API_KEY; see module docs"]
+#[ignore = "requires an explicitly enabled loopback or Clever AI route; see module docs"]
 async fn real_provider_embeds_generates_and_verifies() {
-    let Ok(provider) = OpenAiCompatible::from_env() else {
-        eprintln!("skipping: set AI_BASE_URL + AI_API_KEY to run");
+    let provider = if std::env::var("LOCAL_AI_ENABLED").as_deref() == Ok("1") {
+        OpenAiCompatible::from_local_env()
+    } else {
+        OpenAiCompatible::from_env()
+    };
+    let Ok(provider) = provider else {
+        eprintln!("skipping: no approved AI route is enabled");
         return;
     };
 

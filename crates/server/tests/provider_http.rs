@@ -35,12 +35,13 @@ async fn openai_compatible_embed_and_chat_over_http() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let provider = OpenAiCompatible::new(
+    let provider = OpenAiCompatible::new_local(
         format!("http://{addr}"),
         "test-key",
         "embed-model",
         "chat-model",
-    );
+    )
+    .expect("loopback provider");
 
     // embed(): two inputs → two consistent-dimension vectors.
     let vecs = provider
@@ -76,12 +77,13 @@ async fn openai_compatible_surfaces_http_errors() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let provider = OpenAiCompatible::new(
+    let provider = OpenAiCompatible::new_local(
         format!("http://{addr}"),
         "test-key",
         "embed-model",
         "chat-model",
-    );
+    )
+    .expect("loopback provider");
     assert!(provider.embed(&["x".into()]).await.is_err());
     assert!(provider.complete("s", "u").await.is_err());
 }

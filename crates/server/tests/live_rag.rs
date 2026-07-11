@@ -1,14 +1,14 @@
-//! Gated full-stack proof against a REAL OpenAI-compatible provider (LM Studio or
-//! Mistral) plus pgvector: ingest a document over HTTP (real embeddings into the
+//! Gated full-stack proof against a real loopback model or approved Clever AI
+//! route plus pgvector: ingest a document over HTTP (real embeddings into the
 //! corpus), then a host generates a question grounded in it over WS — exercising
 //! retrieve → generate → grounding-verify with a real model end to end.
 //!
-//! Requires `AI_BASE_URL` + `AI_API_KEY` + `DATABASE_URL`. Run:
+//! Requires the loopback policy variables plus `DATABASE_URL`. Run:
 //!
 //! ```text
-//! AI_BASE_URL=http://127.0.0.1:1234 AI_API_KEY=lm-studio AI_JSON_MODE=0 \
-//!   AI_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5 \
-//!   AI_CHAT_MODEL=google/gemma-4-12b-qat \
+//! LOCAL_AI_ENABLED=1 LOCAL_AI_BASE_URL=http://127.0.0.1:1234 LOCAL_AI_JSON_MODE=0 \
+//!   LOCAL_AI_EMBED_MODEL=<loaded-embedding-model> \
+//!   LOCAL_AI_CHAT_MODEL=<loaded-chat-model> \
 //!   DATABASE_URL=postgres://postgres:presto@127.0.0.1:5439/postgres \
 //!   cargo test -p presto-server --test live_rag -- --ignored --nocapture
 //! ```
@@ -53,11 +53,15 @@ async fn recv_until(ws: &mut Ws, kinds: &[&str]) -> Value {
 }
 
 #[tokio::test]
-#[ignore = "requires AI_BASE_URL + AI_API_KEY + DATABASE_URL; see module docs"]
+#[ignore = "requires DATABASE_URL plus an explicitly enabled approved AI route"]
 async fn host_generates_a_question_grounded_in_an_ingested_document() {
-    let (Ok(db), Ok(provider)) = (std::env::var("DATABASE_URL"), OpenAiCompatible::from_env())
-    else {
-        eprintln!("skipping: set DATABASE_URL + AI_BASE_URL + AI_API_KEY to run");
+    let provider = if std::env::var("LOCAL_AI_ENABLED").as_deref() == Ok("1") {
+        OpenAiCompatible::from_local_env()
+    } else {
+        OpenAiCompatible::from_env()
+    };
+    let (Ok(db), Ok(provider)) = (std::env::var("DATABASE_URL"), provider) else {
+        eprintln!("skipping: database or approved AI route is unavailable");
         return;
     };
 
