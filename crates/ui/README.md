@@ -8,7 +8,7 @@ Mobile-first Dioxus product UI primitives for `rumble-lm`.
 
 `rumble-lm-ui` renders only product-specific UI primitives for `rumble-lm`. Shared tokens, accessibility conventions, i18n UI, and native/web platform adapters belong to Portal. Product state, API contracts, and protocol transitions stay in `presto-core`; apps must not depend on `presto-server` as a Rust library.
 
-`fixtures/portal/` contains a generated Portal token bundle and contrast report from `portal-forge`. `src/portal-bridge.css` maps Portal token names to the current product-local CSS variables so the product can migrate incrementally without hard-coding shared styles.
+`fixtures/portal/` contient le bundle Libre IA Design System 2.0 généré par `portal-forge`, son rapport de contraste et son manifest SHA-256. `src/portal-bridge.css` ne porte plus aucun fallback visuel : il mappe uniquement les noms historiques du composant vers les tokens sémantiques partagés.
 
 ## Components
 
@@ -31,4 +31,5 @@ Mobile-first Dioxus product UI primitives for `rumble-lm`.
 - Toasts render as polite status regions.
 - No remote fonts, CDN, or component SaaS.
 - Component CSS must use token variables for colors; raw color values live only in
-  `tokens.css`.
+  the generated `tokens.css`.
+- Flat surfaces only: no gradient, glow, realistic shadow or remote font.

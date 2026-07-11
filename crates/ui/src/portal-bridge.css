@@ -1,32 +1,43 @@
 :root {
-  /* Portal compatibility bridge. When a Portal token bundle is loaded on the
-     page, these mappings make rumble-lm-ui consume it. Fallbacks preserve the
-     existing local theme until the product fully migrates to Portal names. */
-  --presto-color-bg: var(--color-background, #f8fafc);
-  --presto-color-surface: var(--color-surface, #ffffff);
-  --presto-color-surface-raised: var(--color-surface, #ffffff);
-  --presto-color-text: var(--color-text, #0f172a);
-  --presto-color-text-muted: var(--color-text-secondary, #475569);
-  --presto-color-border: var(--color-border, #cbd5e1);
-  --presto-color-primary: var(--color-brand, #2563eb);
-  --presto-color-primary-contrast: var(--color-background, #ffffff);
-  --presto-color-accent: var(--color-accent, #0f766e);
-  --presto-color-warning: var(--color-warning, #b45309);
-  --presto-color-danger: var(--color-danger, #b91c1c);
-  --presto-color-success: var(--color-success, #15803d);
+  /* Temporary product-name bridge; every value is a Libre IA semantic token. */
+  --presto-color-bg: var(--color-background);
+  --presto-color-surface: var(--color-surface-active);
+  --presto-color-surface-raised: var(--color-surface-active);
+  --presto-color-text: var(--color-foreground);
+  --presto-color-text-muted: var(--color-muted);
+  --presto-color-border: var(--color-border);
+  --presto-color-primary: var(--color-action);
+  --presto-color-primary-contrast: var(--color-action-text);
+  --presto-color-accent: var(--color-libre);
+  --presto-color-warning: var(--color-foreground);
+  --presto-color-danger: var(--color-foreground);
+  --presto-color-success: var(--color-libre);
+  --presto-color-focus: var(--color-focus);
+  --presto-color-backdrop: var(--color-surface);
 
-  --presto-space-1: var(--spacing-xs, 0.25rem);
-  --presto-space-2: var(--spacing-sm, 0.5rem);
-  --presto-space-4: var(--spacing-md, 1rem);
-  --presto-space-6: var(--spacing-lg, 1.5rem);
-  --presto-space-8: var(--spacing-xl, 2rem);
+  --presto-space-1: var(--space-1);
+  --presto-space-2: var(--space-2);
+  --presto-space-3: var(--space-3);
+  --presto-space-4: var(--space-4);
+  --presto-space-5: var(--space-4);
+  --presto-space-6: var(--space-6);
+  --presto-space-8: var(--space-8);
 
-  --presto-radius-sm: var(--radius-sm, 0.5rem);
-  --presto-radius-md: var(--radius-md, 0.75rem);
-  --presto-radius-lg: var(--radius-lg, 1rem);
+  --presto-radius-sm: var(--radius-sm);
+  --presto-radius-md: var(--radius-sm);
+  --presto-radius-lg: var(--radius-md);
+  --presto-radius-pill: var(--radius-sm);
 
-  --presto-font-sans: var(--font-family-body, ui-sans-serif, system-ui, sans-serif);
-  --presto-font-size-sm: var(--font-size-sm, 0.875rem);
-  --presto-font-size-md: var(--font-size-base, 1rem);
-  --presto-font-size-lg: var(--font-size-lg, 1.125rem);
+  --presto-font-sans: var(--font-body);
+  --presto-font-size-sm: 0.875rem;
+  --presto-font-size-md: 1rem;
+  --presto-font-size-lg: 1.125rem;
+  --presto-line-height: 1.5;
+
+  --presto-motion-fast: var(--motion-fast);
+  --presto-touch-target: var(--control-touchTarget);
+  --presto-safe-top: env(safe-area-inset-top, 0px);
+  --presto-safe-right: env(safe-area-inset-right, 0px);
+  --presto-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --presto-safe-left: env(safe-area-inset-left, 0px);
 }
