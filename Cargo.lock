@@ -1438,7 +1438,7 @@ dependencies = [
 [[package]]
 name = "gear-loader"
 version = "0.0.0"
-source = "git+https://github.com/libre-ai/gear?rev=eac241471da7be0cd1ed7c0398699cbd57ce87df#eac241471da7be0cd1ed7c0398699cbd57ce87df"
+source = "git+https://github.com/libre-ai/context-kit?rev=f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5#f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5"
 dependencies = [
  "async-trait",
  "libc",
@@ -1452,7 +1452,7 @@ dependencies = [
 [[package]]
 name = "gear-memory"
 version = "0.0.0"
-source = "git+https://github.com/libre-ai/gear?rev=eac241471da7be0cd1ed7c0398699cbd57ce87df#eac241471da7be0cd1ed7c0398699cbd57ce87df"
+source = "git+https://github.com/libre-ai/context-kit?rev=f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5#f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5"
 dependencies = [
  "serde",
  "serde_json",
