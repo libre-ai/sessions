@@ -10,16 +10,18 @@ Sessions needs resumable background work and grounded generation without turning
 
 ## Decision
 
-The product owns `jobs::JobStore` and its state machine. The first implementation is an in-memory reference adapter with:
+The product owns `jobs::JobStore` and its state machine. The implementation provides an in-memory reference adapter and a PostgreSQL adapter with:
 
 - organization/workspace-scoped idempotency;
 - exclusive expiring leases and revision guards;
 - heartbeats, recovery after lease expiry and bounded attempts;
 - cooperative cancellation;
-- metadata-only outbox events;
+- metadata-only outbox events with bounded claims, expiring publisher leases and one-shot acknowledgement;
+- PostgreSQL transactions, `FOR UPDATE SKIP LOCKED`, tenant settings and forced RLS on jobs and events;
+- explicit schema application separated from runtime connection;
 - no prompts, document bodies or credentials in records/events.
 
-Portal receives only a projection of progress; it never owns leases, retries or product transitions. PostgreSQL persistence and RLS remain a separate adapter/gate.
+Portal receives only a projection of progress; it never owns leases, retries or product transitions. A live PostgreSQL conformance test is opt-in through `JOBS_DATABASE_URL`; production credentials must be non-superuser and must not hold `BYPASSRLS`.
 
 The AI transport keeps the OpenAI wire shape but closes routing:
 
@@ -36,7 +38,7 @@ No hosted call, account operation or provisioning is part of this decision.
 
 A crashed worker can be recovered without duplicate concurrent ownership. Stale workers cannot complete a newer lease. Retry and cancellation are explicit observable transitions. Hosted provider activation remains impossible with legacy `AI_*` variables.
 
-The in-memory adapter is not production persistence. Before deployment, add PostgreSQL transactions/RLS, outbox claiming and Wrench evidence, then attach the approved Clever AI contract reference without copying private contract content.
+The PostgreSQL adapter remains pre-production until its ignored conformance test and Wrench RLS evidence run against the target PostgreSQL role. Before deployment, attach that evidence and the approved Clever AI contract reference without copying private contract content.
 
 ## Rollback
 

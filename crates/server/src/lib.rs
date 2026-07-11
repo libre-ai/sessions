@@ -19,6 +19,7 @@ pub mod integrity;
 pub mod jobs;
 pub mod membership;
 pub mod oidc;
+pub mod postgres_jobs;
 pub mod postgres_store;
 pub mod quiz;
 pub mod ratelimit;
