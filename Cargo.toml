@@ -22,8 +22,8 @@ dioxus = { version = "0.7", default-features = false, features = ["macro", "html
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "macros"] }
-gear-loader = { git = "https://github.com/constantin-jais/gear-loader", rev = "2d1bf33" }
-gear-memory = { git = "https://github.com/constantin-jais/gear-memory", rev = "b2ba37936643115b73f88a76999e48ea8ed37163", default-features = false }
+gear-loader = { git = "https://github.com/libre-ai/gear", rev = "3e269c2497fee0c1c486058200e685c163af3816" }
+gear-memory = { git = "https://github.com/libre-ai/gear", rev = "3e269c2497fee0c1c486058200e685c163af3816", default-features = false }
 
 [profile.release]
 strip = true
