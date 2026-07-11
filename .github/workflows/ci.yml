@@ -195,17 +195,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: bolt/engine
+          workspaces: bolt
       - name: Download Wrench evidence report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: wrench-portal-evidence
           path: artifacts/
       - name: Build bolt-cosmatic CLI
-        run: cargo build --release --manifest-path bolt/engine/Cargo.toml --bin bolt-cosmatic
+        run: cargo build --release --manifest-path bolt/Cargo.toml --bin bolt-cosmatic
       - name: Execute dry-run plan with evidence refs
         run: |
-          ./bolt/engine/target/release/bolt-cosmatic handoff plan \
+          ./bolt/target/release/bolt-cosmatic handoff plan \
             sessions/docs/handoff/lm-slice-handoff.json \
             --dry-run --json \
             --evidence-report artifacts/wrench-portal-evidence.json \

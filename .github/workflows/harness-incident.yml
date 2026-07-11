@@ -29,14 +29,14 @@ jobs:
       - name: Cache the Bolt engine build
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: bolt/engine
+          workspaces: bolt
 
       - name: Build bolt-cosmatic
-        working-directory: bolt/engine
+        working-directory: bolt
         run: cargo build --release --bin bolt-cosmatic
 
       - name: Open an incident for the CI failure
-        working-directory: bolt/engine
+        working-directory: bolt
         # Dynamic values are passed via env (never interpolated into the script
         # text) so an attacker-chosen branch name cannot inject shell.
         env:
