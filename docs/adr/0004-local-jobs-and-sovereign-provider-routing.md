@@ -21,7 +21,16 @@ The product owns `jobs::JobStore` and its state machine. The implementation prov
 - explicit schema application separated from runtime connection;
 - no prompts, document bodies or credentials in records/events.
 
-Portal receives only a projection of progress; it never owns leases, retries or product transitions. A live PostgreSQL conformance test is opt-in through `JOBS_DATABASE_URL`; production credentials must be non-superuser and must not hold `BYPASSRLS`.
+Portal receives only a projection of progress; it never owns leases, retries or product transitions. A live PostgreSQL conformance test is opt-in through `JOBS_DATABASE_URL`; production credentials must be non-superuser and must not hold `BYPASSRLS`. Static migration evidence is reproducible with:
+
+```text
+wrench-db-inspect run \
+  --manifest docs/db/jobs-manifest.json \
+  --schema-dump crates/server/migrations/0001_jobs_and_outbox.sql \
+  --profile protected_branch
+```
+
+The static report does not replace the live role/RLS conformance test.
 
 The AI transport keeps the OpenAI wire shape but closes routing:
 
