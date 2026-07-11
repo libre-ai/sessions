@@ -21,17 +21,23 @@ use presto_core::api::SourceCitation;
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
 
-/// Compatibility bridge from generated Portal token names to product-local variables.
+/// Libre IA semantic light/dark theme adapter.
+pub const THEMES_CSS: &str = include_str!("themes.css");
+
+/// Temporary bridge from shared Libre IA names to product-local class variables.
 pub const PORTAL_BRIDGE_CSS: &str = include_str!("portal-bridge.css");
 
 /// Component classes built exclusively on top of token variables.
 pub const COMPONENTS_CSS: &str = include_str!("components.css");
 
+/// Version and SHA-256 contract for the vendored Design System bundle.
+pub const DESIGN_MANIFEST: &str = include_str!("../fixtures/portal/manifest.json");
+
 /// Include once near the root of a Dioxus app.
 #[component]
 pub fn ThemeStyles() -> Element {
     rsx! {
-        style { "{TOKENS_CSS}\n{PORTAL_BRIDGE_CSS}\n{COMPONENTS_CSS}" }
+        style { "{TOKENS_CSS}\n{THEMES_CSS}\n{PORTAL_BRIDGE_CSS}\n{COMPONENTS_CSS}" }
     }
 }
 
@@ -291,9 +297,10 @@ mod tests {
     fn theme_styles_include_tokens_and_reduced_motion() {
         let html = render(rsx! { ThemeStyles {} });
         assert!(html.contains("--presto-color-primary"));
-        assert!(html.contains("--presto-touch-target: 44px"));
+        assert!(html.contains("--presto-touch-target: var(--control-touchTarget)"));
         assert!(html.contains("prefers-reduced-motion"));
-        assert!(html.contains("--presto-color-primary: var(--color-brand"));
+        assert!(html.contains("--presto-color-primary: var(--color-action)"));
+        assert!(DESIGN_MANIFEST.contains("\"version\": \"2.0.0\""));
         assert!(
             !COMPONENTS_CSS.contains("#"),
             "component CSS must use token colors only"
@@ -307,13 +314,13 @@ mod tests {
             include_str!("../fixtures/portal/contrast-report.json");
 
         for token in [
-            "--color-background:",
-            "--color-surface:",
-            "--color-text:",
-            "--color-brand:",
-            "--spacing-md:",
+            "--color-libre:",
+            "--color-theme-dark-background:",
+            "--color-theme-light-foreground:",
+            "--space-4:",
             "--radius-md:",
-            "--font-family-body:",
+            "--font-body:",
+            "--control-touchTarget:",
         ] {
             assert!(
                 PORTAL_TOKENS.contains(token),
@@ -323,12 +330,12 @@ mod tests {
 
         for mapping in [
             "var(--color-background",
-            "var(--color-surface",
-            "var(--color-text",
-            "var(--color-brand",
-            "var(--spacing-md",
+            "var(--color-surface-active",
+            "var(--color-foreground",
+            "var(--color-action",
+            "var(--space-4",
             "var(--radius-md",
-            "var(--font-family-body",
+            "var(--font-body",
         ] {
             assert!(
                 PORTAL_BRIDGE_CSS.contains(mapping),
