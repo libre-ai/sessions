@@ -79,18 +79,16 @@ fn validated_origin(raw: String, kind: ProviderKind) -> Result<String, AiError> 
         .ok_or_else(|| AiError("provider endpoint has no host".into()))?;
     match kind {
         ProviderKind::Local => {
-            let loopback = host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|address| address.is_loopback());
+            let loopback = host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback());
             if !loopback || !matches!(url.scheme(), "http" | "https") {
                 return Err(AiError("local AI endpoint must be loopback".into()));
             }
         }
         ProviderKind::CleverAi => {
             let host = host.to_ascii_lowercase();
-            let approved_domain =
-                host == "clever-cloud.com" || host.ends_with(".clever-cloud.com");
+            let approved_domain = host == "clever-cloud.com" || host.ends_with(".clever-cloud.com");
             if url.scheme() != "https"
                 || host.parse::<std::net::IpAddr>().is_ok()
                 || !approved_domain
@@ -408,6 +406,9 @@ mod tests {
     #[test]
     fn endpoint_policy_rejects_non_loopback_local_and_direct_providers() {
         assert!(OpenAiCompatible::new_local("https://example.eu", "key", "embed", "chat").is_err());
+        assert!(
+            OpenAiCompatible::new_local("http://localhost:8080", "key", "embed", "chat").is_err()
+        );
         assert!(
             validated_origin("https://api.mistral.ai".to_string(), ProviderKind::CleverAi).is_err()
         );
