@@ -10,6 +10,9 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub(crate) const MAX_JOB_LEASE_MS: u64 = 15 * 60 * 1_000;
+pub(crate) const MAX_OUTBOX_LEASE_MS: u64 = 5 * 60 * 1_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
@@ -90,6 +93,15 @@ pub struct JobEvent {
     pub event_type: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboxClaim {
+    pub event: JobEvent,
+    pub publisher_id: String,
+    pub claim_id: String,
+    pub claim_expires_at_ms: u64,
+    pub delivery_attempt: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobError {
     InvalidInput,
@@ -98,6 +110,7 @@ pub enum JobError {
     LeaseOwnerMismatch,
     LeaseExpired,
     StaleRevision,
+    OutboxClaimMismatch,
     Internal,
 }
 
@@ -110,6 +123,7 @@ impl std::fmt::Display for JobError {
             Self::LeaseOwnerMismatch => "job lease belongs to another worker",
             Self::LeaseExpired => "job lease has expired",
             Self::StaleRevision => "job revision is stale",
+            Self::OutboxClaimMismatch => "outbox claim is stale or belongs to another publisher",
             Self::Internal => "job store operation failed",
         })
     }
@@ -141,6 +155,24 @@ pub trait JobStore: Send + Sync {
         organization_id: &str,
         workspace_id: &str,
     ) -> Result<Vec<JobEvent>, JobError>;
+    async fn claim_events(
+        &self,
+        organization_id: &str,
+        workspace_id: &str,
+        publisher_id: &str,
+        now_ms: u64,
+        lease_ms: u64,
+        limit: u32,
+    ) -> Result<Vec<OutboxClaim>, JobError>;
+    async fn acknowledge_event(
+        &self,
+        organization_id: &str,
+        workspace_id: &str,
+        event_id: &str,
+        publisher_id: &str,
+        claim_id: &str,
+        now_ms: u64,
+    ) -> Result<(), JobError>;
 }
 
 #[derive(Default)]
@@ -152,7 +184,20 @@ pub struct InMemoryJobStore {
 struct Inner {
     jobs: HashMap<TenantJobKey, JobRecord>,
     idempotency: HashMap<IdempotencyKey, String>,
-    events: Vec<JobEvent>,
+    events: Vec<OutboxEntry>,
+}
+
+struct OutboxEntry {
+    event: JobEvent,
+    claim: Option<OutboxClaimState>,
+    published: bool,
+    delivery_attempts: u32,
+}
+
+struct OutboxClaimState {
+    publisher_id: String,
+    claim_id: String,
+    expires_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -229,7 +274,8 @@ impl JobStore for InMemoryJobStore {
         if !safe_id(organization_id)
             || !safe_id(workspace_id)
             || !safe_id(worker_id)
-            || lease_ms == 0
+            || !safe_timestamp(now_ms)
+            || !(1..=MAX_JOB_LEASE_MS).contains(&lease_ms)
         {
             return Err(JobError::InvalidInput);
         }
@@ -294,7 +340,8 @@ impl JobStore for InMemoryJobStore {
     }
 
     async fn heartbeat(&self, heartbeat: Heartbeat) -> Result<JobRecord, JobError> {
-        if heartbeat.extend_by_ms == 0 {
+        validate_lease_guard(&heartbeat.lease)?;
+        if !(1..=MAX_JOB_LEASE_MS).contains(&heartbeat.extend_by_ms) {
             return Err(JobError::InvalidInput);
         }
         let lease_expires_at_ms = heartbeat
@@ -328,6 +375,9 @@ impl JobStore for InMemoryJobStore {
         workspace_id: &str,
         job_id: &str,
     ) -> Result<JobRecord, JobError> {
+        if !safe_id(organization_id) || !safe_id(workspace_id) || !safe_id(job_id) {
+            return Err(JobError::InvalidInput);
+        }
         let mut inner = self.inner.lock();
         let key = tenant_key(organization_id, workspace_id, job_id);
         let job = inner.jobs.get_mut(&key).ok_or(JobError::NotFound)?;
@@ -350,6 +400,8 @@ impl JobStore for InMemoryJobStore {
     }
 
     async fn complete(&self, request: CompleteJob) -> Result<JobRecord, JobError> {
+        validate_lease_guard(&request.lease)?;
+        validate_completion(&request.completion)?;
         let mut inner = self.inner.lock();
         let key = tenant_key(
             &request.lease.organization_id,
@@ -373,17 +425,16 @@ impl JobStore for InMemoryJobStore {
             "job_cancelled"
         } else {
             match request.completion {
-                Completion::Succeeded { result_ref } if safe_reference(&result_ref) => {
+                Completion::Succeeded { result_ref } => {
                     job.state = JobState::Succeeded;
                     job.result_ref = Some(result_ref);
                     job.failure_code = None;
                     "job_succeeded"
                 }
-                Completion::Succeeded { .. } => return Err(JobError::InvalidInput),
                 Completion::Failed {
                     failure_code,
                     retryable,
-                } if safe_code(&failure_code) => {
+                } => {
                     job.failure_code = Some(failure_code);
                     if retryable && job.attempts < job.max_attempts {
                         job.state = JobState::Queued;
@@ -393,7 +444,6 @@ impl JobStore for InMemoryJobStore {
                         "job_failed"
                     }
                 }
-                Completion::Failed { .. } => return Err(JobError::InvalidInput),
             }
         };
         let record = job.clone();
@@ -414,15 +464,135 @@ impl JobStore for InMemoryJobStore {
             .lock()
             .events
             .iter()
-            .filter(|event| {
-                event.organization_id == organization_id && event.workspace_id == workspace_id
+            .filter(|entry| {
+                entry.event.organization_id == organization_id
+                    && entry.event.workspace_id == workspace_id
             })
-            .cloned()
+            .map(|entry| entry.event.clone())
             .collect())
+    }
+
+    async fn claim_events(
+        &self,
+        organization_id: &str,
+        workspace_id: &str,
+        publisher_id: &str,
+        now_ms: u64,
+        lease_ms: u64,
+        limit: u32,
+    ) -> Result<Vec<OutboxClaim>, JobError> {
+        if !safe_id(organization_id)
+            || !safe_id(workspace_id)
+            || !safe_id(publisher_id)
+            || !safe_timestamp(now_ms)
+            || !(1..=MAX_OUTBOX_LEASE_MS).contains(&lease_ms)
+            || !(1..=100).contains(&limit)
+        {
+            return Err(JobError::InvalidInput);
+        }
+        let claim_expires_at_ms = now_ms.checked_add(lease_ms).ok_or(JobError::InvalidInput)?;
+        let mut inner = self.inner.lock();
+        let mut claimed = Vec::new();
+        for entry in inner.events.iter_mut().filter(|entry| {
+            !entry.published
+                && entry.event.organization_id == organization_id
+                && entry.event.workspace_id == workspace_id
+                && entry
+                    .claim
+                    .as_ref()
+                    .is_none_or(|claim| claim.expires_at_ms <= now_ms)
+        }) {
+            if claimed.len() >= limit as usize {
+                break;
+            }
+            entry.delivery_attempts = entry.delivery_attempts.saturating_add(1);
+            let claim_id = format!("claim_{}", Uuid::new_v4().simple());
+            entry.claim = Some(OutboxClaimState {
+                publisher_id: publisher_id.to_string(),
+                claim_id: claim_id.clone(),
+                expires_at_ms: claim_expires_at_ms,
+            });
+            claimed.push(OutboxClaim {
+                event: entry.event.clone(),
+                publisher_id: publisher_id.to_string(),
+                claim_id,
+                claim_expires_at_ms,
+                delivery_attempt: entry.delivery_attempts,
+            });
+        }
+        Ok(claimed)
+    }
+
+    async fn acknowledge_event(
+        &self,
+        organization_id: &str,
+        workspace_id: &str,
+        event_id: &str,
+        publisher_id: &str,
+        claim_id: &str,
+        now_ms: u64,
+    ) -> Result<(), JobError> {
+        if !safe_id(organization_id)
+            || !safe_id(workspace_id)
+            || !safe_id(event_id)
+            || !safe_id(publisher_id)
+            || !safe_id(claim_id)
+            || !safe_timestamp(now_ms)
+        {
+            return Err(JobError::InvalidInput);
+        }
+        let mut inner = self.inner.lock();
+        let entry = inner
+            .events
+            .iter_mut()
+            .find(|entry| {
+                entry.event.organization_id == organization_id
+                    && entry.event.workspace_id == workspace_id
+                    && entry.event.event_id == event_id
+            })
+            .ok_or(JobError::NotFound)?;
+        let Some(claim) = &entry.claim else {
+            return Err(JobError::OutboxClaimMismatch);
+        };
+        if entry.published
+            || claim.publisher_id != publisher_id
+            || claim.claim_id != claim_id
+            || claim.expires_at_ms <= now_ms
+        {
+            return Err(JobError::OutboxClaimMismatch);
+        }
+        entry.published = true;
+        entry.claim = None;
+        Ok(())
     }
 }
 
-fn validate_enqueue(request: &EnqueueJob) -> Result<(), JobError> {
+pub(crate) fn validate_completion(completion: &Completion) -> Result<(), JobError> {
+    let valid = match completion {
+        Completion::Succeeded { result_ref } => safe_reference(result_ref),
+        Completion::Failed { failure_code, .. } => safe_code(failure_code),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(JobError::InvalidInput)
+    }
+}
+
+pub(crate) fn validate_lease_guard(lease: &LeaseGuard) -> Result<(), JobError> {
+    if safe_id(&lease.organization_id)
+        && safe_id(&lease.workspace_id)
+        && safe_id(&lease.job_id)
+        && safe_id(&lease.worker_id)
+        && safe_timestamp(lease.now_ms)
+    {
+        Ok(())
+    } else {
+        Err(JobError::InvalidInput)
+    }
+}
+
+pub(crate) fn validate_enqueue(request: &EnqueueJob) -> Result<(), JobError> {
     if !safe_id(&request.organization_id)
         || !safe_id(&request.workspace_id)
         || !safe_code(&request.kind)
@@ -434,7 +604,7 @@ fn validate_enqueue(request: &EnqueueJob) -> Result<(), JobError> {
     Ok(())
 }
 
-fn verify_lease(
+pub(crate) fn verify_lease(
     job: &JobRecord,
     worker_id: &str,
     expected_revision: u64,
@@ -479,17 +649,26 @@ fn insert_with_event(inner: &mut Inner, record: JobRecord, event_type: &str) {
 }
 
 fn append_event(inner: &mut Inner, record: &JobRecord, event_type: &str) {
-    inner.events.push(JobEvent {
-        event_id: format!("evt_{}", Uuid::new_v4().simple()),
-        organization_id: record.organization_id.clone(),
-        workspace_id: record.workspace_id.clone(),
-        job_id: record.job_id.clone(),
-        revision: record.revision,
-        event_type: event_type.to_string(),
+    inner.events.push(OutboxEntry {
+        event: JobEvent {
+            event_id: format!("evt_{}", Uuid::new_v4().simple()),
+            organization_id: record.organization_id.clone(),
+            workspace_id: record.workspace_id.clone(),
+            job_id: record.job_id.clone(),
+            revision: record.revision,
+            event_type: event_type.to_string(),
+        },
+        claim: None,
+        published: false,
+        delivery_attempts: 0,
     });
 }
 
-fn safe_id(value: &str) -> bool {
+pub(crate) fn safe_timestamp(value: u64) -> bool {
+    value <= i64::MAX as u64
+}
+
+pub(crate) fn safe_id(value: &str) -> bool {
     (1..=128).contains(&value.len())
         && value
             .bytes()
@@ -648,6 +827,106 @@ mod tests {
             .unwrap();
         assert_eq!(cancelled.state, JobState::Cancelled);
         assert_eq!(heartbeat.lease_owner.as_deref(), Some("worker_a"));
+    }
+
+    #[tokio::test]
+    async fn invalid_completion_does_not_mutate_the_lease() {
+        let store = InMemoryJobStore::new();
+        let job = store.enqueue(request()).await.unwrap();
+        let leased = store
+            .lease_next("org_a", "ws_a", "worker_a", 100, 20)
+            .await
+            .unwrap()
+            .unwrap();
+        let invalid = store
+            .complete(CompleteJob {
+                lease: guard(&job.job_id, "worker_a", leased.revision, 110),
+                completion: Completion::Succeeded {
+                    result_ref: "https://forbidden.example/result".to_string(),
+                },
+            })
+            .await;
+        assert_eq!(invalid, Err(JobError::InvalidInput));
+        let completed = store
+            .complete(CompleteJob {
+                lease: guard(&job.job_id, "worker_a", leased.revision, 110),
+                completion: Completion::Succeeded {
+                    result_ref: "artifact:valid".to_string(),
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(completed.state, JobState::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn outbox_claims_are_tenant_scoped_recoverable_and_one_shot() {
+        let store = InMemoryJobStore::new();
+        store.enqueue(request()).await.unwrap();
+        let mut other_tenant = request();
+        other_tenant.organization_id = "org_b".to_string();
+        store.enqueue(other_tenant).await.unwrap();
+
+        let first = store
+            .claim_events("org_a", "ws_a", "publisher_a", 100, 10, 10)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].delivery_attempt, 1);
+        assert!(
+            store
+                .claim_events("org_b", "ws_a", "publisher_a", 100, 10, 10)
+                .await
+                .unwrap()
+                .iter()
+                .all(|claim| claim.event.organization_id == "org_b")
+        );
+        assert!(
+            store
+                .claim_events("org_a", "ws_a", "publisher_b", 105, 10, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let recovered = store
+            .claim_events("org_a", "ws_a", "publisher_b", 111, 10, 10)
+            .await
+            .unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].delivery_attempt, 2);
+        assert_ne!(first[0].claim_id, recovered[0].claim_id);
+        assert_eq!(
+            store
+                .acknowledge_event(
+                    "org_a",
+                    "ws_a",
+                    &first[0].event.event_id,
+                    "publisher_a",
+                    &first[0].claim_id,
+                    112,
+                )
+                .await,
+            Err(JobError::OutboxClaimMismatch)
+        );
+        store
+            .acknowledge_event(
+                "org_a",
+                "ws_a",
+                &recovered[0].event.event_id,
+                "publisher_b",
+                &recovered[0].claim_id,
+                112,
+            )
+            .await
+            .unwrap();
+        assert!(
+            store
+                .claim_events("org_a", "ws_a", "publisher_c", 113, 10, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
