@@ -12,10 +12,22 @@
 use std::time::{Duration, SystemTime};
 
 use biscuit_auth::macros::{authorizer, biscuit, fact};
-use biscuit_auth::{Algorithm, Biscuit, KeyPair, PrivateKey, PublicKey};
+use biscuit_auth::{Algorithm, AuthorizerLimits, Biscuit, KeyPair, PrivateKey, PublicKey};
 use presto_core::RoleAssignment;
 
 use crate::session_identity::{SessionRole, SessionScope, role_assignment_for_actor};
+
+const AUTHORIZER_MAX_FACTS: u64 = 256;
+const AUTHORIZER_MAX_ITERATIONS: u64 = 32;
+const AUTHORIZER_MAX_TIME: Duration = Duration::from_millis(50);
+
+fn authorizer_limits() -> AuthorizerLimits {
+    AuthorizerLimits {
+        max_facts: AUTHORIZER_MAX_FACTS,
+        max_iterations: AUTHORIZER_MAX_ITERATIONS,
+        max_time: AUTHORIZER_MAX_TIME,
+    }
+}
 
 /// What a token-holder may do in a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +256,7 @@ impl Auth {
             legacy_host = legacy_host,
             legacy_participant = legacy_participant,
         )
+        .set_limits(authorizer_limits())
         .build(&token)
         .map_err(|e| AuthError(format!("build: {e}")))?;
         authorizer
@@ -335,6 +348,7 @@ impl Auth {
             space_id = space_id,
             cap = cap,
         )
+        .set_limits(authorizer_limits())
         .build(&token)
         .map_err(|e| AuthError(format!("build: {e}")))?;
         authorizer
@@ -543,9 +557,19 @@ mod tests {
                 t,
             )
             .unwrap();
-        let claims = b.verify(&token, "s1", t).unwrap();
-        assert_eq!(claims.participant_id, "p1");
-        assert_eq!(claims.capability, Capability::Participant);
+        for _ in 0..64 {
+            let claims = b.verify(&token, "s1", t).unwrap();
+            assert_eq!(claims.participant_id, "p1");
+            assert_eq!(claims.capability, Capability::Participant);
+        }
+    }
+
+    #[test]
+    fn authorizer_limits_are_explicit_and_bounded() {
+        let limits = authorizer_limits();
+        assert_eq!(limits.max_facts, 256);
+        assert_eq!(limits.max_iterations, 32);
+        assert_eq!(limits.max_time, Duration::from_millis(50));
     }
 
     #[test]
