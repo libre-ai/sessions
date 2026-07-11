@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS presto_jobs (
     organization_id    TEXT NOT NULL,
     workspace_id       TEXT NOT NULL,
     job_id              TEXT NOT NULL,
+    queue_seq           BIGSERIAL UNIQUE,
     kind                TEXT NOT NULL,
     idempotency_key     TEXT NOT NULL,
     state               TEXT NOT NULL,
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS presto_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS presto_jobs_lease_idx
-    ON presto_jobs (organization_id, workspace_id, state, lease_expires_at_ms, job_id);
+    ON presto_jobs (organization_id, workspace_id, state, lease_expires_at_ms, queue_seq);
 
 CREATE TABLE IF NOT EXISTS presto_job_events (
     event_seq           BIGSERIAL PRIMARY KEY,

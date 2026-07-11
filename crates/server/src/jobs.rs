@@ -154,6 +154,7 @@ pub trait JobStore: Send + Sync {
         &self,
         organization_id: &str,
         workspace_id: &str,
+        limit: u32,
     ) -> Result<Vec<JobEvent>, JobError>;
     async fn claim_events(
         &self,
@@ -185,6 +186,8 @@ struct Inner {
     jobs: HashMap<TenantJobKey, JobRecord>,
     idempotency: HashMap<IdempotencyKey, String>,
     events: Vec<OutboxEntry>,
+    job_sequences: HashMap<TenantJobKey, u64>,
+    next_job_sequence: u64,
 }
 
 struct OutboxEntry {
@@ -259,6 +262,14 @@ impl JobStore for InMemoryJobStore {
             failure_code: None,
         };
         inner.idempotency.insert(idempotency, record.job_id.clone());
+        let key = tenant_key(
+            &record.organization_id,
+            &record.workspace_id,
+            &record.job_id,
+        );
+        let sequence = inner.next_job_sequence;
+        inner.next_job_sequence = inner.next_job_sequence.saturating_add(1);
+        inner.job_sequences.insert(key, sequence);
         insert_with_event(&mut inner, record.clone(), "job_queued");
         Ok(record)
     }
@@ -318,10 +329,20 @@ impl JobStore for InMemoryJobStore {
                                 .lease_expires_at_ms
                                 .is_some_and(|expiry| expiry <= now_ms))
             })
-            .map(|(key, job)| (key.clone(), job.revision))
+            .map(|(key, job)| {
+                (
+                    key.clone(),
+                    job.revision,
+                    inner.job_sequences.get(key).copied().unwrap_or(u64::MAX),
+                )
+            })
             .collect();
-        candidates.sort_by(|left, right| left.0.job_id.cmp(&right.0.job_id));
-        let Some((key, expected_revision)) = candidates.first().cloned() else {
+        candidates.sort_by(|left, right| {
+            left.2
+                .cmp(&right.2)
+                .then_with(|| left.0.job_id.cmp(&right.0.job_id))
+        });
+        let Some((key, expected_revision, _)) = candidates.first().cloned() else {
             return Ok(None);
         };
         let job = inner.jobs.get_mut(&key).ok_or(JobError::Internal)?;
@@ -455,21 +476,26 @@ impl JobStore for InMemoryJobStore {
         &self,
         organization_id: &str,
         workspace_id: &str,
+        limit: u32,
     ) -> Result<Vec<JobEvent>, JobError> {
-        if !safe_id(organization_id) || !safe_id(workspace_id) {
+        if !safe_id(organization_id) || !safe_id(workspace_id) || !(1..=1_000).contains(&limit) {
             return Err(JobError::InvalidInput);
         }
-        Ok(self
+        let mut events = self
             .inner
             .lock()
             .events
             .iter()
+            .rev()
             .filter(|entry| {
                 entry.event.organization_id == organization_id
                     && entry.event.workspace_id == workspace_id
             })
+            .take(limit as usize)
             .map(|entry| entry.event.clone())
-            .collect())
+            .collect::<Vec<_>>();
+        events.reverse();
+        Ok(events)
     }
 
     async fn claim_events(
@@ -729,11 +755,31 @@ mod tests {
         assert_ne!(first.job_id, other.job_id);
         assert!(
             store
-                .events("org_b", "ws_a")
+                .events("org_b", "ws_a", 100)
                 .await
                 .unwrap()
                 .iter()
                 .all(|event| event.organization_id == "org_b")
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_order_is_fifo_and_event_reads_are_bounded() {
+        let store = InMemoryJobStore::new();
+        let first = store.enqueue(request()).await.unwrap();
+        let mut second_request = request();
+        second_request.idempotency_key = "sha256:second".to_string();
+        store.enqueue(second_request).await.unwrap();
+        let leased = store
+            .lease_next("org_a", "ws_a", "worker_a", 100, 20)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(leased.job_id, first.job_id);
+        assert_eq!(store.events("org_a", "ws_a", 1).await.unwrap().len(), 1);
+        assert_eq!(
+            store.events("org_a", "ws_a", 0).await,
+            Err(JobError::InvalidInput)
         );
     }
 
@@ -787,7 +833,7 @@ mod tests {
                 .unwrap(),
             None
         );
-        let events = store.events("org_a", "ws_a").await.unwrap();
+        let events = store.events("org_a", "ws_a", 100).await.unwrap();
         assert!(
             events
                 .iter()

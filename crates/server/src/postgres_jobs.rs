@@ -164,7 +164,7 @@ impl JobStore for PostgresJobStore {
              cancel_requested, result_ref, failure_code FROM presto_jobs \
              WHERE organization_id = $1 AND workspace_id = $2 AND attempts < max_attempts \
                AND (state = 'queued' OR (state = 'leased' AND lease_expires_at_ms <= $3)) \
-             ORDER BY job_id FOR UPDATE SKIP LOCKED LIMIT 1",
+             ORDER BY queue_seq FOR UPDATE SKIP LOCKED LIMIT 1",
         )
         .bind(organization_id)
         .bind(workspace_id)
@@ -317,21 +317,30 @@ impl JobStore for PostgresJobStore {
         &self,
         organization_id: &str,
         workspace_id: &str,
+        limit: u32,
     ) -> Result<Vec<JobEvent>, JobError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(JobError::InvalidInput);
+        }
         let mut transaction = self
             .scoped_transaction(organization_id, workspace_id)
             .await?;
         let rows = sqlx::query(
             "SELECT event_id, organization_id, workspace_id, job_id, revision, event_type \
              FROM presto_job_events WHERE organization_id = $1 AND workspace_id = $2 \
-             ORDER BY event_seq",
+             ORDER BY event_seq DESC LIMIT $3",
         )
         .bind(organization_id)
         .bind(workspace_id)
+        .bind(i64::from(limit))
         .fetch_all(&mut *transaction)
         .await
         .map_err(internal)?;
-        let events = rows.iter().map(event_from_row).collect::<Result<_, _>>()?;
+        let mut events = rows
+            .iter()
+            .map(event_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        events.reverse();
         transaction.commit().await.map_err(internal)?;
         Ok(events)
     }
