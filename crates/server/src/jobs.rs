@@ -48,6 +48,7 @@ pub struct EnqueueJob {
     pub kind: String,
     pub idempotency_key: String,
     pub max_attempts: u32,
+    pub now_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +92,7 @@ pub struct JobEvent {
     pub job_id: String,
     pub revision: u64,
     pub event_type: String,
+    pub occurred_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +150,7 @@ pub trait JobStore: Send + Sync {
         organization_id: &str,
         workspace_id: &str,
         job_id: &str,
+        now_ms: u64,
     ) -> Result<JobRecord, JobError>;
     async fn complete(&self, request: CompleteJob) -> Result<JobRecord, JobError>;
     async fn events(
@@ -270,7 +273,7 @@ impl JobStore for InMemoryJobStore {
         let sequence = inner.next_job_sequence;
         inner.next_job_sequence = inner.next_job_sequence.saturating_add(1);
         inner.job_sequences.insert(key, sequence);
-        insert_with_event(&mut inner, record.clone(), "job_queued");
+        insert_with_event(&mut inner, record.clone(), "job_queued", request.now_ms);
         Ok(record)
     }
 
@@ -314,7 +317,7 @@ impl JobStore for InMemoryJobStore {
             job.lease_expires_at_ms = None;
             job.failure_code = Some("lease_attempts_exhausted".to_string());
             let record = job.clone();
-            append_event(&mut inner, &record, "job_failed");
+            append_event(&mut inner, &record, "job_failed", now_ms);
         }
         let mut candidates: Vec<_> = inner
             .jobs
@@ -356,7 +359,7 @@ impl JobStore for InMemoryJobStore {
         job.lease_expires_at_ms = Some(lease_expires_at_ms);
         job.failure_code = None;
         let record = job.clone();
-        append_event(&mut inner, &record, "job_leased");
+        append_event(&mut inner, &record, "job_leased", now_ms);
         Ok(Some(record))
     }
 
@@ -386,7 +389,7 @@ impl JobStore for InMemoryJobStore {
         job.revision += 1;
         job.lease_expires_at_ms = Some(lease_expires_at_ms);
         let record = job.clone();
-        append_event(&mut inner, &record, "job_heartbeat");
+        append_event(&mut inner, &record, "job_heartbeat", heartbeat.lease.now_ms);
         Ok(record)
     }
 
@@ -395,8 +398,13 @@ impl JobStore for InMemoryJobStore {
         organization_id: &str,
         workspace_id: &str,
         job_id: &str,
+        now_ms: u64,
     ) -> Result<JobRecord, JobError> {
-        if !safe_id(organization_id) || !safe_id(workspace_id) || !safe_id(job_id) {
+        if !safe_id(organization_id)
+            || !safe_id(workspace_id)
+            || !safe_id(job_id)
+            || !safe_timestamp(now_ms)
+        {
             return Err(JobError::InvalidInput);
         }
         let mut inner = self.inner.lock();
@@ -416,7 +424,7 @@ impl JobStore for InMemoryJobStore {
             }
         }
         let record = job.clone();
-        append_event(&mut inner, &record, "job_cancel_requested");
+        append_event(&mut inner, &record, "job_cancel_requested", now_ms);
         Ok(record)
     }
 
@@ -468,7 +476,7 @@ impl JobStore for InMemoryJobStore {
             }
         };
         let record = job.clone();
-        append_event(&mut inner, &record, event_type);
+        append_event(&mut inner, &record, event_type, request.lease.now_ms);
         Ok(record)
     }
 
@@ -624,6 +632,7 @@ pub(crate) fn validate_enqueue(request: &EnqueueJob) -> Result<(), JobError> {
         || !safe_code(&request.kind)
         || !safe_reference(&request.idempotency_key)
         || !(1..=10).contains(&request.max_attempts)
+        || !safe_timestamp(request.now_ms)
     {
         return Err(JobError::InvalidInput);
     }
@@ -662,8 +671,8 @@ fn tenant_key(organization_id: &str, workspace_id: &str, job_id: &str) -> Tenant
     }
 }
 
-fn insert_with_event(inner: &mut Inner, record: JobRecord, event_type: &str) {
-    append_event(inner, &record, event_type);
+fn insert_with_event(inner: &mut Inner, record: JobRecord, event_type: &str, occurred_at_ms: u64) {
+    append_event(inner, &record, event_type, occurred_at_ms);
     inner.jobs.insert(
         tenant_key(
             &record.organization_id,
@@ -674,7 +683,7 @@ fn insert_with_event(inner: &mut Inner, record: JobRecord, event_type: &str) {
     );
 }
 
-fn append_event(inner: &mut Inner, record: &JobRecord, event_type: &str) {
+fn append_event(inner: &mut Inner, record: &JobRecord, event_type: &str, occurred_at_ms: u64) {
     inner.events.push(OutboxEntry {
         event: JobEvent {
             event_id: format!("evt_{}", Uuid::new_v4().simple()),
@@ -683,6 +692,7 @@ fn append_event(inner: &mut Inner, record: &JobRecord, event_type: &str) {
             job_id: record.job_id.clone(),
             revision: record.revision,
             event_type: event_type.to_string(),
+            occurred_at_ms,
         },
         claim: None,
         published: false,
@@ -728,6 +738,7 @@ mod tests {
             kind: "source_ingestion".to_string(),
             idempotency_key: "sha256:synthetic-idempotency".to_string(),
             max_attempts: 2,
+            now_ms: 90,
         }
     }
 
@@ -776,7 +787,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(leased.job_id, first.job_id);
-        assert_eq!(store.events("org_a", "ws_a", 1).await.unwrap().len(), 1);
+        let latest = store.events("org_a", "ws_a", 1).await.unwrap();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].occurred_at_ms, 100);
         assert_eq!(
             store.events("org_a", "ws_a", 0).await,
             Err(JobError::InvalidInput)
@@ -858,7 +871,7 @@ mod tests {
             .await
             .unwrap();
         let cancelling = store
-            .request_cancel("org_a", "ws_a", &job.job_id)
+            .request_cancel("org_a", "ws_a", &job.job_id, 114)
             .await
             .unwrap();
         assert!(cancelling.cancel_requested);

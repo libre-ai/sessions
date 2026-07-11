@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS presto_job_events (
     job_id               TEXT NOT NULL,
     revision             BIGINT NOT NULL,
     event_type           TEXT NOT NULL,
+    occurred_at_ms       BIGINT NOT NULL,
     claim_owner          TEXT,
     claim_id             TEXT,
     claim_expires_at_ms  BIGINT,

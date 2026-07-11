@@ -96,7 +96,7 @@ impl JobStore for PostgresJobStore {
 
         let record = if let Some(row) = inserted {
             let record = job_from_row(&row)?;
-            append_event(&mut transaction, &record, "job_queued").await?;
+            append_event(&mut transaction, &record, "job_queued", request.now_ms).await?;
             record
         } else {
             let row = sqlx::query(
@@ -155,7 +155,7 @@ impl JobStore for PostgresJobStore {
             .map_err(internal)?;
         for row in exhausted {
             let record = job_from_row(&row)?;
-            append_event(&mut transaction, &record, "job_failed").await?;
+            append_event(&mut transaction, &record, "job_failed", now_ms).await?;
         }
 
         let candidate = sqlx::query(
@@ -184,7 +184,7 @@ impl JobStore for PostgresJobStore {
         record.lease_expires_at_ms = Some(u64::try_from(expires).map_err(|_| JobError::Internal)?);
         record.failure_code = None;
         save_job(&mut transaction, &record).await?;
-        append_event(&mut transaction, &record, "job_leased").await?;
+        append_event(&mut transaction, &record, "job_leased", now_ms).await?;
         transaction.commit().await.map_err(internal)?;
         Ok(Some(record))
     }
@@ -222,7 +222,13 @@ impl JobStore for PostgresJobStore {
         record.revision = record.revision.checked_add(1).ok_or(JobError::Internal)?;
         record.lease_expires_at_ms = Some(expires);
         save_job(&mut transaction, &record).await?;
-        append_event(&mut transaction, &record, "job_heartbeat").await?;
+        append_event(
+            &mut transaction,
+            &record,
+            "job_heartbeat",
+            heartbeat.lease.now_ms,
+        )
+        .await?;
         transaction.commit().await.map_err(internal)?;
         Ok(record)
     }
@@ -232,8 +238,9 @@ impl JobStore for PostgresJobStore {
         organization_id: &str,
         workspace_id: &str,
         job_id: &str,
+        now_ms: u64,
     ) -> Result<JobRecord, JobError> {
-        if !safe_id(job_id) {
+        if !safe_id(job_id) || !safe_timestamp(now_ms) {
             return Err(JobError::InvalidInput);
         }
         let mut transaction = self
@@ -249,7 +256,7 @@ impl JobStore for PostgresJobStore {
         }
         record.revision = record.revision.checked_add(1).ok_or(JobError::Internal)?;
         save_job(&mut transaction, &record).await?;
-        append_event(&mut transaction, &record, "job_cancel_requested").await?;
+        append_event(&mut transaction, &record, "job_cancel_requested", now_ms).await?;
         transaction.commit().await.map_err(internal)?;
         Ok(record)
     }
@@ -308,7 +315,7 @@ impl JobStore for PostgresJobStore {
             }
         };
         save_job(&mut transaction, &record).await?;
-        append_event(&mut transaction, &record, event_type).await?;
+        append_event(&mut transaction, &record, event_type, request.lease.now_ms).await?;
         transaction.commit().await.map_err(internal)?;
         Ok(record)
     }
@@ -326,8 +333,8 @@ impl JobStore for PostgresJobStore {
             .scoped_transaction(organization_id, workspace_id)
             .await?;
         let rows = sqlx::query(
-            "SELECT event_id, organization_id, workspace_id, job_id, revision, event_type \
-             FROM presto_job_events WHERE organization_id = $1 AND workspace_id = $2 \
+            "SELECT event_id, organization_id, workspace_id, job_id, revision, event_type, \
+             occurred_at_ms FROM presto_job_events WHERE organization_id = $1 AND workspace_id = $2 \
              ORDER BY event_seq DESC LIMIT $3",
         )
         .bind(organization_id)
@@ -368,8 +375,8 @@ impl JobStore for PostgresJobStore {
             .scoped_transaction(organization_id, workspace_id)
             .await?;
         let rows = sqlx::query(
-            "SELECT event_id, organization_id, workspace_id, job_id, revision, event_type \
-             FROM presto_job_events \
+            "SELECT event_id, organization_id, workspace_id, job_id, revision, event_type, \
+             occurred_at_ms FROM presto_job_events \
              WHERE organization_id = $1 AND workspace_id = $2 AND published_at_ms IS NULL \
                AND (claim_expires_at_ms IS NULL OR claim_expires_at_ms <= $3) \
              ORDER BY event_seq FOR UPDATE SKIP LOCKED LIMIT $4",
@@ -529,11 +536,12 @@ async fn append_event(
     transaction: &mut Transaction<'_, Postgres>,
     record: &JobRecord,
     event_type: &str,
+    occurred_at_ms: u64,
 ) -> Result<(), JobError> {
     sqlx::query(
         "INSERT INTO presto_job_events \
-         (event_id, organization_id, workspace_id, job_id, revision, event_type) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
+         (event_id, organization_id, workspace_id, job_id, revision, event_type, occurred_at_ms) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(format!("evt_{}", Uuid::new_v4().simple()))
     .bind(&record.organization_id)
@@ -541,6 +549,7 @@ async fn append_event(
     .bind(&record.job_id)
     .bind(as_i64(record.revision)?)
     .bind(event_type)
+    .bind(as_i64(occurred_at_ms)?)
     .execute(&mut **transaction)
     .await
     .map_err(internal)?;
@@ -579,6 +588,7 @@ fn event_from_row(row: &PgRow) -> Result<JobEvent, JobError> {
         job_id: row.try_get("job_id").map_err(internal)?,
         revision: from_i64(row.try_get("revision").map_err(internal)?)?,
         event_type: row.try_get("event_type").map_err(internal)?,
+        occurred_at_ms: from_i64(row.try_get("occurred_at_ms").map_err(internal)?)?,
     })
 }
 
