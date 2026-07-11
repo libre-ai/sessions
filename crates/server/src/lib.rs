@@ -16,6 +16,7 @@ pub mod grounded_fixtures;
 pub mod http;
 pub mod ingestion;
 pub mod integrity;
+pub mod jobs;
 pub mod membership;
 pub mod oidc;
 pub mod postgres_store;
