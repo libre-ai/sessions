@@ -43,6 +43,6 @@ multiple-versions = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
-    "https://github.com/libre-ai/gear", # canonical Gear monorepo; full commit pins in Cargo.toml
+    "https://github.com/libre-ai/gear", # ADR-0033: consolidated Gear Context crates
     "https://github.com/DioxusLabs/components", # Dioxus Primitives (headless ARIA components, I1 UI lab migration); not published on crates.io
 ]

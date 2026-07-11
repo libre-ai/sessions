@@ -6,7 +6,7 @@ members = ["crates/core", "crates/rag", "crates/server", "crates/ui"]
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/constantin-jais/Presto-Matic"
+repository = "https://github.com/libre-ai/sessions"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

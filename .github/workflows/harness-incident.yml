@@ -1,9 +1,9 @@
 name: harness-incident
 
 # The "CI red → incident" watcher: when the `ci` workflow finishes with a
-# failure, build the Agent-O-Matic harness and let it open (idempotently) a
-# GitHub incident issue — closing the first link of the autonomous loop without a
-# human. The harness then drives dispatch → gate → merge from that issue.
+# failure, build the pinned Bolt engine and let it open (idempotently) a GitHub
+# incident issue — closing the first link of the autonomous loop without a
+# human. Bolt then drives dispatch → gate → merge from that issue.
 on:
   workflow_run:
     workflows: ["ci"]
@@ -19,23 +19,24 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the harness (Agent-O-Matic, public)
+      - name: Check out the consolidated Bolt engine
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: constantin-jais/Agent-O-Matic
-          path: harness
+          repository: libre-ai/bolt
+          ref: f037784f01a62bf69a0e73e2cb7646e2c3d90acf
+          path: bolt
 
-      - name: Cache the harness build
+      - name: Cache the Bolt engine build
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: harness
+          workspaces: bolt
 
-      - name: Build aom
-        working-directory: harness
-        run: cargo build --release --bin aom
+      - name: Build bolt-cosmatic
+        working-directory: bolt
+        run: cargo build --release --bin bolt-cosmatic
 
       - name: Open an incident for the CI failure
-        working-directory: harness
+        working-directory: bolt
         # Dynamic values are passed via env (never interpolated into the script
         # text) so an attacker-chosen branch name cannot inject shell.
         env:
@@ -46,7 +47,7 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           WF_NAME: ${{ github.event.workflow_run.name }}
         run: |
-          ./target/release/aom incident open \
+          ./target/release/bolt-cosmatic incident open \
             --kind ci-failure \
             --repo "$TARGET_REPO" \
             --severity high \

@@ -13,15 +13,15 @@ Five adjacent capabilities now have a different governance shape: they are reusa
 
 ## Decision
 
-Create public companion repositories under `constantin-jais/`, each with a narrow mandate and an upstream-first policy:
+Consume narrowly owned components from the consolidated public infrastructure repositories, each with an upstream-first policy:
 
-| Companion repo | Upstream inspiration / dependency | Role | Relationship to Presto-Matic |
+| Companion component | Upstream inspiration / dependency | Role | Relationship to Presto-Matic |
 | --- | --- | --- | --- |
-| [`gear-memory`](https://github.com/constantin-jais/gear-memory) | basemind | Local agentic context: code map, repo memory, document/search layer for agents | Dev/operator tool only; never a product runtime dependency |
-| [`gear-loader`](https://github.com/constantin-jais/gear-loader) | Xberg | Runtime-capable source ingestion: PDF/Office/OCR/HTML/archives/feeds into canonical text + metadata | External ingestion worker/service or linkable runtime substrate; integrates by queue/HTTP/object-store/contract artifacts |
-| [`wrench-db-inspect`](https://github.com/constantin-jais/wrench-db-inspect) | Scythe | SQL audit, schema linting, Postgres/pgvector/RLS/security inspection | CI/security tool consuming SQL/schema artifacts; does not replace `wrench-inspect` or `sqlx` |
-| [`gear-depot`](https://github.com/constantin-jais/gear-depot) | Starmetal | Sovereign registry proxy/cache + supply-chain policy POC | Infrastructure POC; not on Presto-Matic's critical production path until promoted |
-| [`gear-cable`](https://github.com/constantin-jais/gear-cable) | cos-matic distribution doctrine | Rust-first multi-platform distribution substrate: release manifests, artifact plans, checksums/signatures/provenance, sovereign install floors | External distribution tool; cos-matic is first consumer, Presto-Matic may later consume release plans/artifacts |
+| [Gear Context Memory](https://github.com/libre-ai/gear/tree/main/context/memory) | basemind | Local agentic context: code map, repo memory, document/search layer for agents | Dev/operator tool only; never a product runtime dependency |
+| [Gear Context Loader](https://github.com/libre-ai/gear/tree/main/context/loader) | Xberg | Runtime-capable source ingestion: PDF/Office/OCR/HTML/archives/feeds into canonical text + metadata | External ingestion worker/service or linkable runtime substrate; integrates by queue/HTTP/object-store/contract artifacts |
+| [Wrench DB Inspect](https://github.com/libre-ai/wrench/tree/main/db-inspect) | Scythe | SQL audit, schema linting, Postgres/pgvector/RLS/security inspection | CI/security tool consuming SQL/schema artifacts; does not replace `wrench-inspect` or `sqlx` |
+| [Gear Supply Depot](https://github.com/libre-ai/gear/tree/main/supply/depot) | Starmetal | Sovereign registry proxy/cache + supply-chain policy POC | Infrastructure POC; not on Presto-Matic's critical production path until promoted |
+| [Gear Supply Cable](https://github.com/libre-ai/gear/tree/main/supply/cable) | cos-matic distribution doctrine | Rust-first multi-platform distribution substrate: release manifests, artifact plans, checksums/signatures/provenance, sovereign install floors | External distribution tool; cos-matic is first consumer, Presto-Matic may later consume release plans/artifacts |
 
 Presto-Matic remains the product repo. Companion repos may consume Presto-Matic contracts/artifacts, and Presto-Matic may call their services over stable interfaces, but the product must not gain accidental code dependencies on their internals.
 
