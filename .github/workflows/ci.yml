@@ -189,7 +189,7 @@ jobs:
           path: sessions
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: libre-ai/bolt
+          repository: libre-ai/agent-factory
           path: bolt
           ref: f037784f01a62bf69a0e73e2cb7646e2c3d90acf
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
