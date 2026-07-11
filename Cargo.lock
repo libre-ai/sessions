@@ -1438,18 +1438,21 @@ dependencies = [
 [[package]]
 name = "gear-loader"
 version = "0.0.0"
-source = "git+https://github.com/constantin-jais/gear-loader?rev=2d1bf33#2d1bf33af24c97744129aaa68293439059b6b9d8"
+source = "git+https://github.com/libre-ai/gear?rev=eac241471da7be0cd1ed7c0398699cbd57ce87df#eac241471da7be0cd1ed7c0398699cbd57ce87df"
 dependencies = [
+ "async-trait",
+ "libc",
  "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]
 name = "gear-memory"
 version = "0.0.0"
-source = "git+https://github.com/constantin-jais/gear-memory?rev=b2ba37936643115b73f88a76999e48ea8ed37163#b2ba37936643115b73f88a76999e48ea8ed37163"
+source = "git+https://github.com/libre-ai/gear?rev=eac241471da7be0cd1ed7c0398699cbd57ce87df#eac241471da7be0cd1ed7c0398699cbd57ce87df"
 dependencies = [
  "serde",
  "serde_json",
