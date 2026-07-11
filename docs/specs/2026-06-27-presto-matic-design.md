@@ -73,7 +73,7 @@ orchestration. One self-hostable artifact; deployable to Clever Cloud (reads `PO
 - **PostgreSQL + pgvector** (RAG: hybrid vector + FTS). **Cellar** (S3) for uploads +
   generated artifacts. **Clever Cloud** region `par`.
 - AI behind an **OpenAI-compatible** abstraction → **Clever AI** default; **BYOK**
-  (Mistral / OpenAI-compatible / local). Embeddings + LLM + TTS.
+  (Clever AI sous contrat, ou runtime local loopback). Embeddings + LLM + TTS.
 - **Cost discipline (mandatory): precompute-once, serve-to-many** + per-session
   rate-limits. Never 200 concurrent LLM streams; shared artifacts are generated once
   (idempotent, content-addressed) and served from Cellar/cache.

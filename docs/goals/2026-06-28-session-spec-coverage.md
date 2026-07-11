@@ -69,7 +69,7 @@ production inference + SP-C + the §4 compliance surface.
 
 ## 4. Sovereignty / compliance KPIs (DoD)
 
-- **100%** deps OSS (MIT/Apache/MPL) · **EU** residency (Clever/Mistral, or local LM Studio)
+- **100%** deps OSS (MIT/Apache/MPL) · **EU** residency (Clever AI sous contrat, ou runtime local)
 - Audit: **100%** of sensitive actions logged · **0 PII** in logs **and** audit (`actor_sub` pseudonymous, Art. 17(3) retention basis)
 - RGPD: erasure cascades to chunks/embeddings + audit ; deletion endpoint present
 - A11y (SP-C): **WCAG** conformance (level TBD) · cross-browser e2e **chromium/firefox/webkit** green

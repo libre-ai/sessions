@@ -1,6 +1,6 @@
 //! §3 observability SLO: the grounded-question pipeline (retrieve + generate +
 //! verify) p99 under 5 s against a real model. Gated; run with DATABASE_URL +
-//! AI_* env (e.g. a fast local model). Measures the real pipeline — short JSON
+//! an explicitly enabled approved AI route. Measures the real pipeline — short JSON
 //! questions, not an arbitrary 200-token completion.
 
 use std::time::Instant;
@@ -10,11 +10,15 @@ use presto_rag::pipeline::grounded_question;
 use presto_rag::provider::OpenAiCompatible;
 
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + AI_BASE_URL (real model); §3 generation SLO"]
+#[ignore = "requires DATABASE_URL plus an explicitly enabled approved AI route"]
 async fn generation_pipeline_p99_under_5s() {
-    let (Ok(db), Ok(provider)) = (std::env::var("DATABASE_URL"), OpenAiCompatible::from_env())
-    else {
-        eprintln!("skipping: set DATABASE_URL + AI_BASE_URL to run");
+    let provider = if std::env::var("LOCAL_AI_ENABLED").as_deref() == Ok("1") {
+        OpenAiCompatible::from_local_env()
+    } else {
+        OpenAiCompatible::from_env()
+    };
+    let (Ok(db), Ok(provider)) = (std::env::var("DATABASE_URL"), provider) else {
+        eprintln!("skipping: database or approved AI route is unavailable");
         return;
     };
     let corpus = CorpusStore::connect(&db).await.expect("connect");

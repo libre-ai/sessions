@@ -1,0 +1,47 @@
+{
+  "data": {
+    "format": "wrench.db_inspect.manifest.v0.1",
+    "product": "sessions",
+    "tenant": {
+      "canonical_name": "organization",
+      "column": "organization_id",
+      "setting": "presto.organization_id"
+    },
+    "roles": {
+      "app": ["sessions_app"],
+      "readonly": [],
+      "migration": ["sessions_migrator"]
+    },
+    "tables": [
+      {
+        "name": "presto_jobs",
+        "classification": "tenant_scoped",
+        "tenant_column": "organization_id",
+        "tenant_derivation": "direct",
+        "tenant_settings": {
+          "organization_id": "presto.organization_id",
+          "workspace_id": "presto.workspace_id"
+        },
+        "contains_personal_data": false,
+        "contains_embeddings": false
+      },
+      {
+        "name": "presto_job_events",
+        "classification": "tenant_scoped",
+        "tenant_column": "organization_id",
+        "tenant_derivation": "direct",
+        "tenant_settings": {
+          "organization_id": "presto.organization_id",
+          "workspace_id": "presto.workspace_id"
+        },
+        "contains_personal_data": false,
+        "contains_embeddings": false
+      }
+    ],
+    "waivers": []
+  },
+  "meta": {
+    "schema_version": "0.1",
+    "generated_at": "2026-07-11T00:00:00Z"
+  }
+}

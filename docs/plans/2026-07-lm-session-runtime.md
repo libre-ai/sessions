@@ -677,8 +677,9 @@ evidence_expectations: "Each increment = green CI (cargo test, fmt, check, clipp
    BISCUIT_PRIVATE_KEY=<paste output of: presto-server keygen>
 
    # RAG (optional)
-   AI_BASE_URL=http://localhost:8000/v1
-   AI_API_KEY=<api-key>
+   LOCAL_AI_ENABLED=1
+   LOCAL_AI_BASE_URL=http://127.0.0.1:8000
+   LOCAL_AI_API_KEY=<local-only-key>
    ```
 
 8. Update `Cargo.toml` (workspace dependencies):
@@ -1801,8 +1802,9 @@ evidence_expectations: "Each increment = green CI (cargo test, fmt, check, clipp
    BISCUIT_PRIVATE_KEY=<paste output of: presto-server keygen>
 
    # RAG (optional)
-   AI_BASE_URL=http://localhost:8000/v1
-   AI_API_KEY=<api-key>
+   LOCAL_AI_ENABLED=1
+   LOCAL_AI_BASE_URL=http://127.0.0.1:8000
+   LOCAL_AI_API_KEY=<local-only-key>
 
    # === E2E Tests (see e2e/.env.example for details) ===
 

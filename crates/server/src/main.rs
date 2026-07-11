@@ -93,10 +93,14 @@ async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
         Arc::new(FixtureIngestor),
     );
 
-    // Try RAG pipeline first
-    let (Ok(database_url), Ok(provider)) =
-        (std::env::var("DATABASE_URL"), OpenAiCompatible::from_env())
-    else {
+    // Try RAG pipeline first. Hosted routing is Clever AI only; local
+    // development must opt into a loopback endpoint explicitly.
+    let provider = if std::env::var("LOCAL_AI_ENABLED").as_deref() == Ok("1") {
+        OpenAiCompatible::from_local_env()
+    } else {
+        OpenAiCompatible::from_env()
+    };
+    let (Ok(database_url), Ok(provider)) = (std::env::var("DATABASE_URL"), provider) else {
         // No RAG pipeline: try grounded quiz (real sources)
         println!("content: grounded quiz (real ingested sources)");
 
@@ -143,7 +147,9 @@ async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
         }
 
         // Fallback to fixture
-        println!("content: fixture (set DATABASE_URL + AI_BASE_URL + AI_API_KEY for RAG)");
+        println!(
+            "content: fixture (configure DATABASE_URL plus loopback local AI or enabled Clever AI for RAG)"
+        );
         return fixture;
     };
 

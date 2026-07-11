@@ -130,7 +130,7 @@ Increments 2 (guest/join + live UI) and 3 (Tauri desktop + offline RAG) follow.
 ## Open items / known caveats
 
 - **AI-gated tests** (`live_rag`, `slo_generation`) self-skip without
-  `AI_BASE_URL`/`DATABASE_URL`; run locally with LM Studio + a pgvector container
+  `LOCAL_AI_BASE_URL`/`DATABASE_URL`; run locally with a loopback model + a pgvector container
   (port **5439**, never 5432) to exercise them.
 - **`Pf2` HNSW index** (evolution roadmap) not built — retrieval uses a full scan
   (fine at wedge scale; needed for the retrieval SLO at scale, but the column is
