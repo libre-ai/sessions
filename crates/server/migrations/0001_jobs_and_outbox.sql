@@ -38,16 +38,19 @@ CREATE TABLE IF NOT EXISTS presto_job_events (
     job_id               TEXT NOT NULL,
     revision             BIGINT NOT NULL,
     event_type           TEXT NOT NULL,
+    actor_ref            TEXT NOT NULL,
     occurred_at_ms       BIGINT NOT NULL,
     claim_owner          TEXT,
     claim_id             TEXT,
     claim_expires_at_ms  BIGINT,
     delivery_attempts    INTEGER NOT NULL DEFAULT 0,
     published_at_ms      BIGINT,
+    published_by         TEXT,
     FOREIGN KEY (organization_id, workspace_id, job_id)
         REFERENCES presto_jobs (organization_id, workspace_id, job_id),
     CHECK (revision > 0),
     CHECK (delivery_attempts >= 0),
+    CHECK ((published_at_ms IS NULL) = (published_by IS NULL)),
     CHECK (
         (claim_owner IS NULL AND claim_id IS NULL AND claim_expires_at_ms IS NULL)
         OR

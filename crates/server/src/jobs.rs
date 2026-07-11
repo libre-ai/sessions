@@ -48,6 +48,7 @@ pub struct EnqueueJob {
     pub kind: String,
     pub idempotency_key: String,
     pub max_attempts: u32,
+    pub actor_ref: String,
     pub now_ms: u64,
 }
 
@@ -92,6 +93,7 @@ pub struct JobEvent {
     pub job_id: String,
     pub revision: u64,
     pub event_type: String,
+    pub actor_ref: String,
     pub occurred_at_ms: u64,
 }
 
@@ -150,6 +152,7 @@ pub trait JobStore: Send + Sync {
         organization_id: &str,
         workspace_id: &str,
         job_id: &str,
+        actor_ref: &str,
         now_ms: u64,
     ) -> Result<JobRecord, JobError>;
     async fn complete(&self, request: CompleteJob) -> Result<JobRecord, JobError>;
@@ -273,7 +276,13 @@ impl JobStore for InMemoryJobStore {
         let sequence = inner.next_job_sequence;
         inner.next_job_sequence = inner.next_job_sequence.saturating_add(1);
         inner.job_sequences.insert(key, sequence);
-        insert_with_event(&mut inner, record.clone(), "job_queued", request.now_ms);
+        insert_with_event(
+            &mut inner,
+            record.clone(),
+            "job_queued",
+            &request.actor_ref,
+            request.now_ms,
+        );
         Ok(record)
     }
 
@@ -317,7 +326,7 @@ impl JobStore for InMemoryJobStore {
             job.lease_expires_at_ms = None;
             job.failure_code = Some("lease_attempts_exhausted".to_string());
             let record = job.clone();
-            append_event(&mut inner, &record, "job_failed", now_ms);
+            append_event(&mut inner, &record, "job_failed", "jobs_runtime", now_ms);
         }
         let mut candidates: Vec<_> = inner
             .jobs
@@ -359,7 +368,7 @@ impl JobStore for InMemoryJobStore {
         job.lease_expires_at_ms = Some(lease_expires_at_ms);
         job.failure_code = None;
         let record = job.clone();
-        append_event(&mut inner, &record, "job_leased", now_ms);
+        append_event(&mut inner, &record, "job_leased", worker_id, now_ms);
         Ok(Some(record))
     }
 
@@ -389,7 +398,13 @@ impl JobStore for InMemoryJobStore {
         job.revision += 1;
         job.lease_expires_at_ms = Some(lease_expires_at_ms);
         let record = job.clone();
-        append_event(&mut inner, &record, "job_heartbeat", heartbeat.lease.now_ms);
+        append_event(
+            &mut inner,
+            &record,
+            "job_heartbeat",
+            &heartbeat.lease.worker_id,
+            heartbeat.lease.now_ms,
+        );
         Ok(record)
     }
 
@@ -398,11 +413,13 @@ impl JobStore for InMemoryJobStore {
         organization_id: &str,
         workspace_id: &str,
         job_id: &str,
+        actor_ref: &str,
         now_ms: u64,
     ) -> Result<JobRecord, JobError> {
         if !safe_id(organization_id)
             || !safe_id(workspace_id)
             || !safe_id(job_id)
+            || !safe_id(actor_ref)
             || !safe_timestamp(now_ms)
         {
             return Err(JobError::InvalidInput);
@@ -424,7 +441,13 @@ impl JobStore for InMemoryJobStore {
             }
         }
         let record = job.clone();
-        append_event(&mut inner, &record, "job_cancel_requested", now_ms);
+        append_event(
+            &mut inner,
+            &record,
+            "job_cancel_requested",
+            actor_ref,
+            now_ms,
+        );
         Ok(record)
     }
 
@@ -476,7 +499,13 @@ impl JobStore for InMemoryJobStore {
             }
         };
         let record = job.clone();
-        append_event(&mut inner, &record, event_type, request.lease.now_ms);
+        append_event(
+            &mut inner,
+            &record,
+            event_type,
+            &request.lease.worker_id,
+            request.lease.now_ms,
+        );
         Ok(record)
     }
 
@@ -632,6 +661,7 @@ pub(crate) fn validate_enqueue(request: &EnqueueJob) -> Result<(), JobError> {
         || !safe_code(&request.kind)
         || !safe_reference(&request.idempotency_key)
         || !(1..=10).contains(&request.max_attempts)
+        || !safe_id(&request.actor_ref)
         || !safe_timestamp(request.now_ms)
     {
         return Err(JobError::InvalidInput);
@@ -671,8 +701,14 @@ fn tenant_key(organization_id: &str, workspace_id: &str, job_id: &str) -> Tenant
     }
 }
 
-fn insert_with_event(inner: &mut Inner, record: JobRecord, event_type: &str, occurred_at_ms: u64) {
-    append_event(inner, &record, event_type, occurred_at_ms);
+fn insert_with_event(
+    inner: &mut Inner,
+    record: JobRecord,
+    event_type: &str,
+    actor_ref: &str,
+    occurred_at_ms: u64,
+) {
+    append_event(inner, &record, event_type, actor_ref, occurred_at_ms);
     inner.jobs.insert(
         tenant_key(
             &record.organization_id,
@@ -683,7 +719,13 @@ fn insert_with_event(inner: &mut Inner, record: JobRecord, event_type: &str, occ
     );
 }
 
-fn append_event(inner: &mut Inner, record: &JobRecord, event_type: &str, occurred_at_ms: u64) {
+fn append_event(
+    inner: &mut Inner,
+    record: &JobRecord,
+    event_type: &str,
+    actor_ref: &str,
+    occurred_at_ms: u64,
+) {
     inner.events.push(OutboxEntry {
         event: JobEvent {
             event_id: format!("evt_{}", Uuid::new_v4().simple()),
@@ -692,6 +734,7 @@ fn append_event(inner: &mut Inner, record: &JobRecord, event_type: &str, occurre
             job_id: record.job_id.clone(),
             revision: record.revision,
             event_type: event_type.to_string(),
+            actor_ref: actor_ref.to_string(),
             occurred_at_ms,
         },
         claim: None,
@@ -738,6 +781,7 @@ mod tests {
             kind: "source_ingestion".to_string(),
             idempotency_key: "sha256:synthetic-idempotency".to_string(),
             max_attempts: 2,
+            actor_ref: "actor_synthetic".to_string(),
             now_ms: 90,
         }
     }
@@ -871,7 +915,7 @@ mod tests {
             .await
             .unwrap();
         let cancelling = store
-            .request_cancel("org_a", "ws_a", &job.job_id, 114)
+            .request_cancel("org_a", "ws_a", &job.job_id, "actor_synthetic", 114)
             .await
             .unwrap();
         assert!(cancelling.cancel_requested);

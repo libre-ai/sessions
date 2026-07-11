@@ -42,6 +42,7 @@ async fn postgres_jobs_are_tenant_scoped_exclusive_and_publish_once() {
         kind: "synthetic_test".to_string(),
         idempotency_key: idempotency_key.clone(),
         max_attempts: 2,
+        actor_ref: "actor_synthetic".to_string(),
         now_ms: 90,
     };
     let first = store.enqueue(enqueue(&organization_a)).await.unwrap();
