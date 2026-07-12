@@ -30,7 +30,7 @@ test.describe('Owner mobile shell', () => {
     await nav.getByRole('link', { name: 'Corpus' }).click();
     await expect(page).toHaveURL(/\/app\/corpus$/);
     await expect(page.getByRole('heading', { name: 'Corpus', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ajouter un document' })).toBeDisabled();
+    await expect(page.getByLabel('Choisir exactement un document')).toHaveCount(0);
 
     nav = page.getByRole('navigation', { name: 'Navigation owner' });
     await nav.getByRole('link', { name: 'Réglages' }).click();

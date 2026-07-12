@@ -9,9 +9,10 @@ use std::time::{Duration, SystemTime};
 
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse};
+use axum::middleware::Next;
+use axum::response::{Html, IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use presto_core::WorkspaceIdentity;
@@ -19,6 +20,8 @@ use presto_core::p0_contract::{
     P0StubWorkflowProof, P0ValidationReport, run_p0_stub_workflow, valid_p0_fixture,
     validate_p0_fixture,
 };
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::AppState;
 use crate::auth::Capability;
@@ -28,6 +31,8 @@ use crate::session_identity::{SessionRole, SessionScope, workspace_identity_for_
 const TOKEN_TTL: Duration = Duration::from_secs(6 * 3600);
 /// Unambiguous alphabet (no 0/O/1/I) for human-typable codes.
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+pub(crate) const MAX_LEGACY_INGEST_BODY_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_CONCURRENT_LEGACY_INGESTS: usize = 4;
 
 fn code(n: usize) -> String {
     (0..n)
@@ -209,38 +214,60 @@ pub(crate) async fn p0_stub_run() -> Json<Envelope<P0StubWorkflowProof>> {
     })
 }
 
-/// Constant-time byte comparison for the ingest token (avoids leaking how many
-/// leading bytes matched via response timing).
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
+/// Validate configuration once at the composition root. Tokens are deliberately
+/// strong and header-safe; absence or weak values are configuration errors.
+pub fn validate_legacy_ingest_token(value: &str) -> bool {
+    value.len() >= 32
+        && value.len() <= 512
+        && !value
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+}
+
+/// Fail-closed legacy ingestion gate. Digest comparison has fixed length and is
+/// performed before the request body limit/extractor and expensive ingestion.
+pub(crate) async fn authorize_legacy_ingest(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let expected = state
+        .legacy_ingest_token
+        .as_deref()
+        .filter(|token| validate_legacy_ingest_token(token));
+    let presented = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("");
+    let accepted = expected
+        .map(|expected| {
+            let expected_digest = Sha256::digest(expected.as_bytes());
+            let presented_digest = Sha256::digest(presented.as_bytes());
+            bool::from(expected_digest.ct_eq(&presented_digest))
+        })
+        .unwrap_or(false);
+    if !accepted {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, "no-store")],
+            "invalid ingest token",
+        )
+            .into_response();
     }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    next.run(request).await
 }
 
 /// Ingest a `text/plain` or `text/markdown` document into the corpus (parse →
-/// chunk → embed → store) so the RAG sources ground on it. Optionally gated by a
-/// bearer `INGEST_TOKEN` (open when the env var is unset, for local dev).
+/// chunk → embed → store) so the RAG sources ground on it. Authentication has
+/// already completed in the pre-body route middleware.
 pub(crate) async fn ingest_document(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<IngestParams>,
     body: Bytes,
 ) -> Result<Json<Envelope<IngestResult>>, (StatusCode, String)> {
-    if let Ok(expected) = std::env::var("INGEST_TOKEN") {
-        let presented = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .unwrap_or("");
-        if !ct_eq(presented.as_bytes(), expected.as_bytes()) {
-            return Err((StatusCode::UNAUTHORIZED, "invalid ingest token".into()));
-        }
-    }
     if params.document_id.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "document_id is required".into()));
     }
@@ -332,11 +359,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ct_eq_matches_only_identical_bytes() {
-        assert!(ct_eq(b"secret", b"secret"));
-        assert!(ct_eq(b"", b""));
-        assert!(!ct_eq(b"secret", b"secrXt")); // same length, one byte differs
-        assert!(!ct_eq(b"secret", b"secre")); // different length
-        assert!(!ct_eq(b"", b"x"));
+    fn legacy_ingest_token_requires_strong_header_safe_entropy() {
+        assert!(validate_legacy_ingest_token(
+            "0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!validate_legacy_ingest_token(""));
+        assert!(!validate_legacy_ingest_token("short"));
+        assert!(!validate_legacy_ingest_token(
+            "0123456789abcdef 0123456789abcdef"
+        ));
+        assert!(!validate_legacy_ingest_token(&"x".repeat(513)));
     }
 }

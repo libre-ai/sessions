@@ -136,7 +136,8 @@ pub enum DocumentApprovalStatus {
 }
 
 /// Bounded metadata returned by the owner corpus API. Document content is never
-/// part of list or upload responses.
+/// part of list or upload responses. `Pending` bodies/chunks are discarded, so
+/// their `chunk_count` is always zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentSummary {
@@ -288,7 +289,7 @@ mod tests {
             title: "a.md".into(),
             mime_type: "text/markdown".into(),
             byte_size: 1,
-            chunk_count: 1,
+            chunk_count: 0,
             approval_status: DocumentApprovalStatus::Pending,
         };
         let json = serde_json::to_string(&summary).unwrap();

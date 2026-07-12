@@ -259,6 +259,13 @@ fn build_session_rate() -> Arc<TokenBucket> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .try_init();
+
     // `presto-server keygen` mints a shared Biscuit private key and exits.
     if std::env::args().nth(1).as_deref() == Some("keygen") {
         println!("{}", Auth::generate().private_key_hex());
@@ -272,6 +279,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::env::var_os("DATABASE_URL").is_some(),
         std::env::var_os("REDIS_URL").is_some(),
     )?;
+
+    let legacy_ingest_token = std::env::var("INGEST_TOKEN")
+        .map_err(|_| "INGEST_TOKEN is required for the legacy ingestion route")?;
+    if !presto_server::http::validate_legacy_ingest_token(&legacy_ingest_token) {
+        return Err("INGEST_TOKEN must be 32-512 non-whitespace bytes".into());
+    }
+    let legacy_ingest_token: Arc<str> = Arc::from(legacy_ingest_token);
 
     let store = build_store().await?;
     let (quiz, breakout, flashcards, ingestor) = build_content(&store).await;
@@ -298,6 +312,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         breakout,
         flashcards,
         ingestor,
+        legacy_ingest_token: Some(legacy_ingest_token),
         session_rate: build_session_rate(),
     };
 

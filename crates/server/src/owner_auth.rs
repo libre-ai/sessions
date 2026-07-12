@@ -398,14 +398,25 @@ impl OwnerAuth {
         })
     }
 
-    /// Capability verification plus current membership authority recheck for a
-    /// sensitive write. A valid but revoked session is denied fail-closed.
+    /// Capability verification plus a current membership authority recheck.
+    /// A valid but revoked session is denied fail-closed.
     pub async fn authenticate_sensitive_headers(
         &self,
         headers: &HeaderMap,
         required_capability: &str,
     ) -> Result<AuthenticatedOwner, OwnerAuthError> {
         let owner = self.authenticate_headers(headers, required_capability)?;
+        self.recheck_owner(&owner, required_capability).await?;
+        Ok(owner)
+    }
+
+    /// Revalidates an already authenticated request immediately before a
+    /// security-sensitive side effect or publication.
+    pub(crate) async fn recheck_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        required_capability: &str,
+    ) -> Result<(), OwnerAuthError> {
         let role = crate::membership::recheck_sensitive(
             self.membership.as_ref(),
             &owner.space.space.id,
@@ -416,7 +427,7 @@ impl OwnerAuth {
         if required_capability == "add_document" && role < Role::Contributor {
             return Err(OwnerAuthError::Unauthenticated);
         }
-        Ok(owner)
+        Ok(())
     }
 
     fn logout(&self, headers: &HeaderMap) {

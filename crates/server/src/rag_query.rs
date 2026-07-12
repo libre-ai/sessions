@@ -28,7 +28,11 @@ pub(crate) async fn query(
     headers: HeaderMap,
     payload: Result<Json<RagQueryRequest>, JsonRejection>,
 ) -> Response {
-    let owner = match state.owner_auth.authenticate_headers(&headers, "read") {
+    let owner = match state
+        .owner_auth
+        .authenticate_sensitive_headers(&headers, "read")
+        .await
+    {
         Ok(owner) => owner,
         Err(error) => return owner_error(error),
     };
@@ -87,6 +91,11 @@ pub(crate) async fn query(
     .await;
     match execution {
         Ok(Ok(NotebookRagOutcome::Candidate(candidate))) => {
+            // The pipeline may outlive a membership change. Recheck immediately
+            // before the only branch capable of publishing Grounded.
+            if let Err(error) = state.owner_auth.recheck_owner(&owner, "read").await {
+                return owner_error(error);
+            }
             let data = state
                 .approved_claims
                 .approve(permit, candidate, max_sources)
@@ -336,6 +345,66 @@ mod tests {
         assert_eq!(
             json_body(response).await,
             json!({"data":{"status":"rejected","reason":"no_approved_claim"}})
+        );
+    }
+
+    struct BlockingEngine {
+        inner: StagedNotebookRagEngine,
+        completed_pipeline: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl NotebookRagEngine for BlockingEngine {
+        async fn run(
+            &self,
+            space_id: &str,
+            effective_clearance: ConfidentialityLevel,
+            query: &str,
+        ) -> Result<NotebookRagOutcome, NotebookRagError> {
+            let result = self.inner.run(space_id, effective_clearance, query).await;
+            self.completed_pipeline.notify_one();
+            self.resume.notified().await;
+            result
+        }
+    }
+
+    #[tokio::test]
+    async fn revocation_after_pipeline_prevents_grounded_publication() {
+        let authority = Arc::new(Auth::generate());
+        let (owner_auth, cookie) = OwnerAuth::test_session(
+            authority.clone(),
+            ORIGIN,
+            "space-a",
+            ConfidentialityLevel::Internal,
+            &[SpaceCapability::Read],
+        );
+        let owner_auth = Arc::new(owner_auth);
+        let completed_pipeline = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let mut state = AppState::in_memory(authority);
+        state.owner_auth = owner_auth.clone();
+        state.notebook_rag = Arc::new(BlockingEngine {
+            inner: StagedNotebookRagEngine::fixture(),
+            completed_pipeline: completed_pipeline.clone(),
+            resume: resume.clone(),
+        });
+        let task = tokio::spawn(async move {
+            post_query(
+                app(state),
+                Some(&cookie),
+                json!({"space_id":"space-a","query":"capitale de la france"}),
+            )
+            .await
+        });
+        completed_pipeline.notified().await;
+        owner_auth.revoke_test_owner("space-a").await;
+        resume.notify_one();
+        let response = task.await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            json_body(response).await,
+            json!({"error":"unauthenticated"})
         );
     }
 

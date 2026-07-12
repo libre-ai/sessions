@@ -34,6 +34,7 @@ async fn http_ingest_stores_chunks_in_the_corpus() {
     let provider = Arc::new(FakeAiProvider);
     let mut state = AppState::in_memory(Arc::new(Auth::generate()));
     state.ingestor = Arc::new(RagIngestor::new(corpus, provider));
+    state.legacy_ingest_token = Some(Arc::from("0123456789abcdef0123456789abcdef"));
 
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -47,6 +48,7 @@ async fn http_ingest_stores_chunks_in_the_corpus() {
                 .method("POST")
                 .uri(format!("/corpus/documents?document_id={doc}"))
                 .header("content-type", "text/markdown; charset=utf-8")
+                .header("authorization", "Bearer 0123456789abcdef0123456789abcdef")
                 .body(Body::from(
                     "Paris is the capital of France.\n\nRust is memory safe.",
                 ))

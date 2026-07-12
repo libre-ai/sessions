@@ -48,10 +48,11 @@ gear-memory.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 time.workspace = true
+tower = { version = "0.5.3", features = ["limit"] }
 
 [dev-dependencies]
 futures-util = "0.3.32"
 tokio-tungstenite = "0.29.0"
-tower = { version = "0.5.3", features = ["util"] }
+tower = { version = "0.5.3", features = ["util", "limit"] }
 rsa = "0.9"
 tempfile = "3"

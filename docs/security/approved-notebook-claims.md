@@ -66,11 +66,13 @@ niveau maximal affiché pour l’espace.
 
 ## Frontière et erreurs
 
-`POST /api/rag/query` exige cookie owner + capability `read`, espace identique
-avant moteur, CSRF same-origin (`Origin` et `Sec-Fetch-Site`), body ≤ 8 KiB,
+`POST /api/rag/query` exige cookie owner + capability `read`, relecture de la
+membership actuelle, espace identique avant moteur, CSRF same-origin (`Origin` et `Sec-Fetch-Site`), body ≤ 8 KiB,
 query non vide ≤ 4 096 octets et `max_sources` entre 1 et 5. L’exécution globale
 est limitée à trois secondes ; retrieval/generation/verifier sont fail-closed ;
-les sorties provider sont bornées. Les erreurs deviennent un `503
+les sorties provider sont bornées. Après pipeline/timeout, la membership est
+relue juste avant toute publication `Grounded`; voir la sémantique de course
+documentée dans [`owner-corpus.md`](owner-corpus.md). Les erreurs deviennent un `503
 rag_unavailable` sans payload interne, l’absence/non-conformité devient
 `Rejected`, et toutes les réponses portent `Cache-Control: no-store`.
 

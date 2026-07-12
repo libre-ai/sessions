@@ -103,19 +103,32 @@ impl OwnerCorpusStore {
         if chunks.is_empty() || chunks.len() > MAX_CHUNKS {
             return Err(CorpusStoreError::TooLarge);
         }
-        // Release attacker-influenced spare capacity outside the lock, then
-        // count actual retained capacities twice plus structural overhead.
+        // Admission of transient request/body/chunk memory is handled by the
+        // HTTP body and concurrency limits. Charge only allocations retained
+        // after insertion: metadata/hash/overhead for Pending, plus exact
+        // content and chunk ranges for Approved.
         request.filename.shrink_to_fit();
         request.mime_type.shrink_to_fit();
         request.content.shrink_to_fit();
+        let mut chunks = chunks;
+        chunks.shrink_to_fit();
+        let approved = approval_status == DocumentApprovalStatus::Approved;
         let memory_charge = request
-            .content
+            .filename
             .capacity()
-            .saturating_mul(2)
-            .saturating_add(request.filename.capacity().saturating_mul(2))
-            .saturating_add(request.mime_type.capacity().saturating_mul(2))
-            .saturating_add(chunks.len().saturating_mul(32))
-            .saturating_add(DOCUMENT_OVERHEAD);
+            .saturating_add(request.mime_type.capacity())
+            .saturating_add(64) // retained hexadecimal SHA-256
+            .saturating_add(28) // `doc_` plus 24 server-generated hex chars
+            .saturating_add(DOCUMENT_OVERHEAD)
+            .saturating_add(if approved {
+                request.content.capacity().saturating_add(
+                    chunks
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<Range<usize>>()),
+                )
+            } else {
+                0
+            });
         Ok(PreparedDocument {
             filename: request.filename,
             mime_type: request.mime_type,
@@ -175,7 +188,11 @@ impl OwnerCorpusStore {
             title: prepared.filename,
             mime_type: prepared.mime_type,
             byte_size: prepared.content.len() as u32,
-            chunk_count: prepared.chunks.len() as u16,
+            chunk_count: if approved {
+                prepared.chunks.len() as u16
+            } else {
+                0
+            },
             approval_status: prepared.approval_status,
         };
         let (content, chunks) = if approved {
@@ -466,31 +483,28 @@ mod tests {
     }
 
     #[test]
-    fn memory_and_process_caps_fail_without_partial_insert() {
-        let memory_store = OwnerCorpusStore::new();
-        let large = "x".repeat(240 * 1024);
-        let mut inserted = 0;
-        loop {
-            let content = format!("{inserted}:{large}");
-            match memory_store.insert(
-                "space-memory",
-                OwnerCorpusStore::prepare(request(
-                    &format!("{inserted}.txt"),
-                    "text/plain",
-                    content,
-                ))
-                .unwrap(),
-            ) {
-                Ok(_) => inserted += 1,
-                Err(error) => {
-                    assert_eq!(error, CorpusStoreError::Capacity);
-                    break;
-                }
-            }
-        }
-        assert!(inserted < MAX_SPACE_DOCUMENTS);
-        assert_eq!(memory_store.list("space-memory").unwrap().len(), inserted);
+    fn pending_charge_is_exactly_retained_metadata_not_discarded_content() {
+        let small = OwnerCorpusStore::prepare(request("a.txt", "text/plain", "x".into())).unwrap();
+        let large =
+            OwnerCorpusStore::prepare(request("a.txt", "text/plain", "x".repeat(240 * 1024)))
+                .unwrap();
+        let expected = "a.txt".len() + "text/plain".len() + 64 + 28 + DOCUMENT_OVERHEAD;
+        assert_eq!(small.memory_charge, expected);
+        assert_eq!(large.memory_charge, expected);
 
+        let store = OwnerCorpusStore::new();
+        let (summary, _) = store.insert("space-memory", large).unwrap();
+        assert_eq!(summary.chunk_count, 0);
+        let state = store.state.lock().unwrap();
+        assert_eq!(state.memory_charge, expected);
+        let retained = &state.spaces["space-memory"][0];
+        assert!(retained.content.is_none());
+        assert!(retained.chunks.is_empty());
+        assert_eq!(retained.memory_charge, expected);
+    }
+
+    #[test]
+    fn process_document_cap_fails_without_partial_insert() {
         let process_store = OwnerCorpusStore::new();
         for index in 0..MAX_PROCESS_DOCUMENTS {
             let space = format!("space-{}", index / MAX_SPACE_DOCUMENTS);

@@ -402,7 +402,21 @@ enum UploadState {
     Selected(DocumentUploadRequest),
     Uploading,
     Complete(DocumentApprovalStatus),
-    Failed(&'static str),
+    Failed {
+        message: &'static str,
+        retry: Option<DocumentUploadRequest>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+enum UploadFailure {
+    SessionExpired,
+    Invalid,
+    TooLarge,
+    Capacity,
+    Unavailable,
+    Rejected,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -437,33 +451,36 @@ async fn load_documents() -> Result<(CurrentSpace, Vec<DocumentSummary>), Networ
 #[cfg(target_arch = "wasm32")]
 async fn upload_document(
     request: &DocumentUploadRequest,
-) -> Result<DocumentUploadResult, NetworkFailure> {
+) -> Result<DocumentUploadResult, UploadFailure> {
     use gloo_net::http::Request;
 
     let response = Request::post("/api/corpus/documents")
         .json(request)
-        .map_err(|_| NetworkFailure::Unavailable)?
+        .map_err(|_| UploadFailure::Rejected)?
         .send()
         .await
-        .map_err(|_| NetworkFailure::Unavailable)?;
-    if response.status() == 401 {
-        return Err(NetworkFailure::SessionExpired);
-    }
-    if !response.ok() {
-        return Err(NetworkFailure::Unavailable);
+        .map_err(|_| UploadFailure::Rejected)?;
+    match response.status() {
+        401 => return Err(UploadFailure::SessionExpired),
+        400 => return Err(UploadFailure::Invalid),
+        413 => return Err(UploadFailure::TooLarge),
+        507 => return Err(UploadFailure::Capacity),
+        503 => return Err(UploadFailure::Unavailable),
+        status if !(200..300).contains(&status) => return Err(UploadFailure::Rejected),
+        _ => {}
     }
     response
         .json::<ApiEnvelope<DocumentUploadResult>>()
         .await
         .map(|envelope| envelope.data)
-        .map_err(|_| NetworkFailure::Unavailable)
+        .map_err(|_| UploadFailure::Rejected)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn upload_document(
     _request: &DocumentUploadRequest,
-) -> Result<DocumentUploadResult, NetworkFailure> {
-    Err(NetworkFailure::Unavailable)
+) -> Result<DocumentUploadResult, UploadFailure> {
+    Err(UploadFailure::Unavailable)
 }
 
 fn mime_for_file(name: &str, reported: Option<String>) -> Option<String> {
@@ -502,7 +519,11 @@ pub fn Corpus() -> Element {
     let current_upload = upload_state.read().clone();
     let can_add = matches!(&current, CorpusSession::Ready { space, .. }
         if space.space.capabilities.contains(&SpaceCapability::AddDocument));
-    let can_submit = can_add && matches!(current_upload, UploadState::Selected(_));
+    let can_submit = can_add
+        && matches!(
+            current_upload,
+            UploadState::Selected(_) | UploadState::Failed { retry: Some(_), .. }
+        );
 
     rsx! {
         OwnerFrame { current: Screen::Corpus,
@@ -547,7 +568,11 @@ pub fn Corpus() -> Element {
                 if can_add {
                     form { class: "owner-upload", onsubmit: move |event| {
                         event.prevent_default();
-                        let UploadState::Selected(request) = upload_state.read().clone() else { return; };
+                        let request = match upload_state.read().clone() {
+                            UploadState::Selected(request)
+                            | UploadState::Failed { retry: Some(request), .. } => request,
+                            _ => return,
+                        };
                         upload_state.set(UploadState::Uploading);
                         spawn(async move {
                             match upload_document(&request).await {
@@ -562,11 +587,15 @@ pub fn Corpus() -> Element {
                                     }
                                     upload_state.set(UploadState::Complete(status));
                                 }
-                                Err(NetworkFailure::SessionExpired) => {
+                                Err(UploadFailure::SessionExpired) => {
                                     session.set(CorpusSession::Expired);
                                     upload_state.set(UploadState::Empty);
                                 }
-                                Err(NetworkFailure::Unavailable) => upload_state.set(UploadState::Failed("Échec de l’upload. Réessayez.")),
+                                Err(UploadFailure::Invalid) => upload_state.set(UploadState::Failed { message: "Document invalide : vérifiez le nom, le type et le contenu.", retry: None }),
+                                Err(UploadFailure::TooLarge) => upload_state.set(UploadState::Failed { message: "Document trop volumineux.", retry: None }),
+                                Err(UploadFailure::Capacity) => upload_state.set(UploadState::Failed { message: "Capacité du corpus atteinte.", retry: None }),
+                                Err(UploadFailure::Unavailable) => upload_state.set(UploadState::Failed { message: "Service temporairement indisponible. Réessayez.", retry: Some(request) }),
+                                Err(UploadFailure::Rejected) => upload_state.set(UploadState::Failed { message: "Upload refusé.", retry: None }),
                             }
                         });
                     },
@@ -580,17 +609,17 @@ pub fn Corpus() -> Element {
                             onchange: move |event| {
                                 let files = event.files();
                                 if files.len() != 1 {
-                                    upload_state.set(UploadState::Failed("Sélectionnez exactement un fichier."));
+                                    upload_state.set(UploadState::Failed { message: "Sélectionnez exactement un fichier.", retry: None });
                                     return;
                                 }
                                 let file = files[0].clone();
                                 let name = file.name();
                                 if file.size() > 256 * 1024 || name.len() > 128 {
-                                    upload_state.set(UploadState::Failed("Fichier trop volumineux ou nom trop long."));
+                                    upload_state.set(UploadState::Failed { message: "Fichier trop volumineux ou nom trop long.", retry: None });
                                     return;
                                 }
                                 let Some(mime_type) = mime_for_file(&name, file.content_type()) else {
-                                    upload_state.set(UploadState::Failed("Type de fichier non pris en charge."));
+                                    upload_state.set(UploadState::Failed { message: "Type de fichier non pris en charge.", retry: None });
                                     return;
                                 };
                                 upload_state.set(UploadState::Reading);
@@ -600,7 +629,7 @@ pub fn Corpus() -> Element {
                                         .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
                                     {
                                         Some(content) if !content.trim().is_empty() => upload_state.set(UploadState::Selected(DocumentUploadRequest { filename: name, mime_type, content })),
-                                        _ => upload_state.set(UploadState::Failed("Le fichier doit être un texte UTF-8 non vide.")),
+                                        _ => upload_state.set(UploadState::Failed { message: "Le fichier doit être un texte UTF-8 non vide.", retry: None }),
                                     }
                                 });
                             }
@@ -612,9 +641,9 @@ pub fn Corpus() -> Element {
                                 UploadState::Reading => rsx! { span { "Lecture du fichier…" } },
                                 UploadState::Selected(request) => rsx! { span { "Sélectionné : {request.filename}" } },
                                 UploadState::Uploading => rsx! { span { "Upload en cours…" } },
-                                UploadState::Complete(DocumentApprovalStatus::Pending) => rsx! { strong { "Pending — document stocké mais non éligible à Grounded." } },
+                                UploadState::Complete(DocumentApprovalStatus::Pending) => rsx! { strong { "Pending — métadonnées enregistrées ; corps non conservé et non éligible à Grounded." } },
                                 UploadState::Complete(DocumentApprovalStatus::Approved) => rsx! { strong { "Approved — correspondance exacte avec la fixture pré-approuvée." } },
-                                UploadState::Failed(message) => rsx! { span { class: "owner-error", role: "alert", "{message}" } },
+                                UploadState::Failed { message, .. } => rsx! { span { class: "owner-error", role: "alert", "{message}" } },
                             }
                         }
                         button { class: "presto-button presto-button--primary", r#type: "submit", disabled: !can_submit, "Ajouter le document" }
