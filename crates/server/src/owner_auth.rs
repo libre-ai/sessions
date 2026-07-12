@@ -131,6 +131,7 @@ struct WebSession {
     subject: String,
     user: CurrentUser,
     space: PersonalSpace,
+    max_confidentiality: ConfidentialityLevel,
     biscuit: String,
     expires_at: Instant,
 }
@@ -310,6 +311,7 @@ impl OwnerAuth {
                 subject: identity.sub,
                 user,
                 space,
+                max_confidentiality: ConfidentialityLevel::Internal,
                 biscuit,
                 expires_at: instant + SESSION_TTL,
             },
@@ -379,7 +381,7 @@ impl OwnerAuth {
                     name: session.space.name,
                     role: SpaceRole::Owner,
                     capabilities,
-                    max_confidentiality: ConfidentialityLevel::Internal,
+                    max_confidentiality: session.max_confidentiality,
                 },
             },
         })
@@ -416,6 +418,71 @@ impl OwnerAuth {
             .flat_map(|value| value.split(';'))
             .filter_map(|pair| pair.trim().split_once('='))
             .any(|(name, _)| name == SESSION_COOKIE_NAME)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_session(
+        capability_authority: Arc<Auth>,
+        public_origin: &str,
+        space_id: &str,
+        max_confidentiality: ConfidentialityLevel,
+        capabilities: &[SpaceCapability],
+    ) -> (Self, String) {
+        let subject = "test-owner-subject".to_string();
+        let cap_names: Vec<&str> = capabilities
+            .iter()
+            .map(|capability| match capability {
+                SpaceCapability::Read => "read",
+                SpaceCapability::Contribute => "contribute",
+                SpaceCapability::AddDocument => "add_document",
+                SpaceCapability::Invite => "invite",
+                SpaceCapability::ManageMembers => "manage_members",
+                SpaceCapability::DeleteSpace => "delete_space",
+            })
+            .collect();
+        let biscuit = capability_authority
+            .mint_space_token(
+                space_id,
+                &subject,
+                &cap_names,
+                SESSION_TTL,
+                SystemTime::now(),
+            )
+            .expect("test capability must mint");
+        let session_id = "test_owner_session".to_string();
+        let space = PersonalSpace {
+            id: space_id.to_string(),
+            name: "Test notebook".to_string(),
+        };
+        let user = CurrentUser {
+            actor_id: "actor_test".to_string(),
+            display_name: None,
+            personal_space_id: space_id.to_string(),
+        };
+        let mut sessions = HashMap::new();
+        sessions.insert(
+            digest(&session_id),
+            WebSession {
+                subject,
+                user,
+                space,
+                max_confidentiality,
+                biscuit,
+                expires_at: Instant::now() + SESSION_TTL,
+            },
+        );
+        (
+            Self {
+                provider: None,
+                membership: Arc::new(InMemoryMembershipStore::new()),
+                capability_authority,
+                public_origin: Some(public_origin.to_string()),
+                login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
+                pending_logins: Mutex::new(HashMap::new()),
+                sessions: Mutex::new(sessions),
+            },
+            format!("{SESSION_COOKIE_NAME}={session_id}"),
+        )
     }
 
     #[cfg(test)]

@@ -123,6 +123,7 @@ async fn spawn(quiz: Arc<dyn QuizSource>, auth: Arc<Auth>) -> std::net::SocketAd
         store: Arc::new(InMemorySessionStore::new()),
         fanout: Arc::new(BroadcastFanout::new()),
         owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
+        approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
         auth,
         quiz,
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

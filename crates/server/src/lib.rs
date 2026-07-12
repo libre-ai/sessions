@@ -7,6 +7,7 @@
 //! [`fanout::Fanout`] traits are the seams where the distributed (Redis /
 //! Postgres) implementations plug in for multi-instance operation.
 
+pub mod approved_claims;
 pub mod auth;
 pub mod authz;
 pub mod classification;
@@ -23,6 +24,7 @@ pub mod owner_auth;
 pub mod postgres_jobs;
 pub mod postgres_store;
 pub mod quiz;
+pub mod rag_query;
 pub mod ratelimit;
 pub mod redis_fanout;
 pub mod scoring;
@@ -35,12 +37,13 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
+use approved_claims::ApprovedClaimRegistry;
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
 use owner_auth::OwnerAuth;
@@ -66,6 +69,8 @@ pub struct AppState {
     pub auth: Arc<Auth>,
     /// OIDC login transactions, opaque owner sessions and personal-space authz.
     pub owner_auth: Arc<OwnerAuth>,
+    /// Immutable, server-side authority for publishable notebook claims.
+    pub approved_claims: Arc<ApprovedClaimRegistry>,
     pub quiz: Arc<dyn QuizSource>,
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
@@ -82,6 +87,7 @@ impl AppState {
             store: Arc::new(InMemorySessionStore::new()),
             fanout: Arc::new(BroadcastFanout::new()),
             owner_auth: Arc::new(OwnerAuth::disabled(auth.clone())),
+            approved_claims: Arc::new(ApprovedClaimRegistry::fixture()),
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
@@ -108,6 +114,10 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/logout", post(owner_auth::logout))
         .route("/api/me", get(owner_auth::me))
         .route("/api/spaces/current", get(owner_auth::current_space))
+        .route(
+            "/api/rag/query",
+            post(rag_query::query).layer(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES)),
+        )
         .route("/p0/contract/proof", get(http::p0_contract_proof))
         .route("/p0/stub/run", post(http::p0_stub_run))
         .route("/sessions", post(http::create_session))

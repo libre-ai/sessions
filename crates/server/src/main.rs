@@ -282,6 +282,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         fanout: build_fanout().await?,
         auth,
         owner_auth,
+        approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
         quiz,
         breakout,
         flashcards,

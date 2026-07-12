@@ -34,6 +34,7 @@ async fn instance(db: &str, redis: &str, auth: Arc<Auth>) -> std::net::SocketAdd
         store,
         fanout,
         owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
+        approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
         auth,
         quiz: Arc::new(presto_server::quiz::FixtureQuizSource),
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

@@ -83,13 +83,25 @@ crate serveur.
 | `POST /auth/logout` | #32 | invalide/expire la session web sans exposer le token au client |
 | `GET /api/me` | #32 | projette `CurrentUser`, jamais le token ni des claims bruts |
 | `GET /api/spaces/current` | #32 | projette l'espace personnel et les capacités accordées par le serveur |
-| `POST /api/rag/query` | #33 | reçoit `RagQueryRequest`; vérifie espace/capacité; ne renvoie `Grounded` qu'après le verifier |
+| `POST /api/rag/query` | #33 | reçoit `RagQueryRequest`; vérifie cookie/espace/capability/clearance; ne projette `Grounded` que depuis un `ApprovedAnswer` du registre serveur versionné |
 | `GET /api/corpus/documents` | #34 | liste les résumés de l'espace personnel authentifié, sans contenu brut par défaut |
 | `POST /api/corpus/documents` | #34 | upload texte/Markdown borné; l'espace vient de l'identité autorisée, pas d'un champ client de confiance |
 
 Le `POST /corpus/documents` existant reste une route d'ingestion du runtime live.
 Il n'est pas une preuve de l'API owner authentifiée et ne doit pas être renommé ou
 supprimé implicitement par ce milestone.
+
+## État d’implémentation #33 (2026-07-12)
+
+La verticale est implémentée sur sa branche de revue : registre immutable d’un
+claim public versionné/hashé avec provenance de contrôle, route owner bornée et
+`no-store`, états Dioxus complets et E2E Playwright déterministes. Le corpus
+owner reste un placeholder pour #34. L’acceptation définitive reste soumise à la
+revue de la PR ; ce paragraphe ne déclare ni merge ni disponibilité produit.
+
+La propriété obtenue est l’appartenance à l’univers serveur explicitement
+approuvé et scoped, pas la vérité ou l’entailment arbitraire. Voir
+[`security/approved-notebook-claims.md`](../security/approved-notebook-claims.md).
 
 ## Gate de sécurité RAG — bloquant pour #33
 
@@ -109,15 +121,19 @@ En conséquence, #33 ne peut être accepté « grounded » que si :
 
 1. une autorité indépendante de claims approuvés, construite côté serveur et non
    choisie par le provider ou la source non fiable, autorise chaque claim publié;
-2. le nouveau prompt de réponse notebook réutilise les fences et le matching exact
-   comme défense en profondeur fail-closed, sans les présenter comme cette autorité;
+2. si un futur provider est ajouté au Notebook, son prompt réutilise les fences
+   et le matching exact comme défense en profondeur fail-closed, sans jamais
+   sélectionner/créer un claim ni devenir cette autorité ; le MVP déterministe
+   n’appelle aucun provider ;
 3. les tests déterministes couvrent les deux frontières : rejet d'une réponse
    absente malgré `supported=true`, et acceptation lexicale transparente d'une
    instruction source contenant elle-même la réponse;
 4. une erreur/indécision du verifier ou de l'autorité produit `Rejected` ou une
    erreur bornée, jamais `Grounded`;
 5. les citations sont une projection autorisée : aucun texte confidentiel brut,
-   prompt, verdict interne ou token n'est renvoyé/loggé.
+   prompt, verdict interne ou token n'est renvoyé/loggé ;
+6. le terme `grounded` signifie ici « membre du registre approuvé pour cet espace
+   et cette clearance », pas « vrai » ni « sémantiquement entailé ».
 
 [#33](https://github.com/libre-ai/sessions/issues/33) est le tracker de cette
 condition pour le nouveau vertical; aucun doublon sécurité séparé n'est requis à
