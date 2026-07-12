@@ -125,8 +125,55 @@ pub struct CurrentSpace {
     pub space: SpaceSummary,
 }
 
+/// Server decision for an owner-uploaded document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentApprovalStatus {
+    /// Exact bytes are not present in the independently approved registry.
+    Pending,
+    /// Exact bytes and hash match a pre-approved immutable fixture.
+    Approved,
+}
+
+/// Bounded metadata returned by the owner corpus API. Document content is never
+/// part of list or upload responses. `Pending` bodies/chunks are discarded, so
+/// their `chunk_count` is always zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentSummary {
+    pub id: DocumentId,
+    pub title: String,
+    pub mime_type: String,
+    pub byte_size: u32,
+    pub chunk_count: u16,
+    pub approval_status: DocumentApprovalStatus,
+}
+
+/// JSON upload accepted by `POST /api/corpus/documents`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentUploadRequest {
+    pub filename: String,
+    pub mime_type: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentUploadResult {
+    pub document: DocumentSummary,
+    pub deduplicated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentList {
+    pub documents: Vec<DocumentSummary>,
+}
+
 /// Request body for `POST /api/rag/query`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RagQueryRequest {
     /// Target space. The server validates membership/capabilities; this is not trusted input.
     pub space_id: SpaceId,
@@ -229,5 +276,24 @@ mod tests {
         let space = SpaceSummary::personal("s1", "My notebook");
         assert_eq!(space.role, SpaceRole::Owner);
         assert!(space.capabilities.contains(&SpaceCapability::DeleteSpace));
+    }
+
+    #[test]
+    fn document_contracts_are_closed_and_summaries_have_no_content() {
+        assert!(serde_json::from_str::<DocumentUploadRequest>(
+            r#"{"filename":"a.md","mime_type":"text/markdown","content":"x","space_id":"foreign"}"#
+        )
+        .is_err());
+        let summary = DocumentSummary {
+            id: "doc_1".into(),
+            title: "a.md".into(),
+            mime_type: "text/markdown".into(),
+            byte_size: 1,
+            chunk_count: 0,
+            approval_status: DocumentApprovalStatus::Pending,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(!json.contains("content"));
+        assert!(json.contains("pending"));
     }
 }

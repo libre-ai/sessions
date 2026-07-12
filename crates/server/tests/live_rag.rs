@@ -73,6 +73,7 @@ async fn host_generates_a_question_grounded_in_an_ingested_document() {
     let mut state = AppState::in_memory(auth.clone());
     state.quiz = Arc::new(RagQuizSource::new(corpus.clone(), provider.clone()));
     state.ingestor = Arc::new(RagIngestor::new(corpus, provider));
+    state.legacy_ingest_token = Some(Arc::from("0123456789abcdef0123456789abcdef"));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -90,6 +91,7 @@ async fn host_generates_a_question_grounded_in_an_ingested_document() {
     let resp = reqwest::Client::new()
         .post(format!("http://{addr}/corpus/documents?document_id=solar"))
         .header("content-type", "text/markdown")
+        .bearer_auth("0123456789abcdef0123456789abcdef")
         .body(doc)
         .send()
         .await

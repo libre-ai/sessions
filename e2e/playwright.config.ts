@@ -41,7 +41,7 @@ export default defineConfig({
   webServer: {
     // Tests run from e2e/, so hop to the workspace root before starting Rust.
     // PORT=3000 aligns the server with baseURL/webServer.url in local and CI runs.
-    command: 'cd .. && ./scripts/verify-owner-app.sh && PORT=3000 cargo run --release --bin presto-server',
+    command: 'cd .. && ./scripts/verify-owner-app.sh && INGEST_TOKEN=playwright-only-legacy-token-000000000000 PORT=3000 cargo run --release --bin presto-server',
     url: 'http://localhost:3000',
     // A real-Keycloak proof must always execute the server from this checkout.
     reuseExistingServer: !process.env.CI && process.env.KEYCLOAK_E2E !== '1',

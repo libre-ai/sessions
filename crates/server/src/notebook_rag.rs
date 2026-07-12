@@ -14,6 +14,11 @@ use presto_rag::provider::{AiError, AiProvider};
 use presto_rag::verify::verify_grounding;
 use sha2::{Digest, Sha256};
 
+use crate::approved_claims::{
+    APPROVED_UPLOAD_ANSWER, APPROVED_UPLOAD_BYTES, APPROVED_UPLOAD_SHA256, APPROVED_UPLOAD_TITLE,
+};
+use crate::owner_corpus::{OwnerCorpusStore, scoped_artifact_hash};
+
 const FIXTURE_SOURCE: &str = "La France a pour capitale Paris. Paris est la capitale de la France.";
 const FIXTURE_TITLE: &str = "Référence géographique approuvée";
 const MAX_RETRIEVED_CHUNKS: usize = 1;
@@ -63,8 +68,12 @@ impl StagedNotebookRagEngine {
     }
 
     pub fn fixture() -> Self {
+        Self::fixture_with_owner_corpus(Arc::new(OwnerCorpusStore::new()))
+    }
+
+    pub fn fixture_with_owner_corpus(owner_corpus: Arc<OwnerCorpusStore>) -> Self {
         Self::new(
-            Arc::new(ProvisionedFixtureRetriever),
+            Arc::new(ProvisionedFixtureRetriever { owner_corpus }),
             Arc::new(DeterministicNotebookProvider),
         )
     }
@@ -116,20 +125,36 @@ impl NotebookRagEngine for StagedNotebookRagEngine {
             .source_section_id
             .split_once('#')
             .map(|(document_id, _)| document_id.to_owned());
+        let uploaded = chunk.text.as_bytes() == APPROVED_UPLOAD_BYTES;
         Ok(NotebookRagOutcome::Candidate(NotebookCandidate {
             answer,
             citation: SourceCitation {
                 source_section_id: chunk.source_section_id.clone(),
                 document_id,
-                title: Some(FIXTURE_TITLE.to_owned()),
+                title: Some(if uploaded {
+                    APPROVED_UPLOAD_TITLE.to_owned()
+                } else {
+                    FIXTURE_TITLE.to_owned()
+                }),
                 excerpt: Some(chunk.text.clone()),
             },
-            source_hash: scoped_source_hash(space_id, &chunk.source_section_id, &chunk.text),
+            source_hash: if uploaded {
+                scoped_artifact_hash(
+                    space_id,
+                    &chunk.source_section_id,
+                    APPROVED_UPLOAD_SHA256,
+                    &chunk.text,
+                )
+            } else {
+                scoped_source_hash(space_id, &chunk.source_section_id, &chunk.text)
+            },
         }))
     }
 }
 
-struct ProvisionedFixtureRetriever;
+struct ProvisionedFixtureRetriever {
+    owner_corpus: Arc<OwnerCorpusStore>,
+}
 
 impl ProvisionedFixtureRetriever {
     /// Derives the scoped fixture on demand without retaining per-space state.
@@ -143,13 +168,31 @@ impl Retriever for ProvisionedFixtureRetriever {
     async fn retrieve(
         &self,
         scope: &RetrievalScope,
-        _query: &str,
+        query: &str,
         k: usize,
         _provider: &dyn AiProvider,
     ) -> Result<Vec<Retrieved>, CorpusError> {
         if scope.max_confidentiality < confidentiality_rank(ConfidentialityLevel::Public) || k == 0
         {
             return Ok(Vec::new());
+        }
+        let normalized = query.to_lowercase();
+        if normalized.contains("uploads arbitraires") || normalized.contains("arbitrary uploads") {
+            return self
+                .owner_corpus
+                .approved_artifact(&scope.space_id)
+                .map_err(|_| CorpusError("owner corpus unavailable".into()))
+                .map(|artifact| {
+                    artifact
+                        .into_iter()
+                        .map(|artifact| Retrieved {
+                            source_section_id: artifact.source_section_id,
+                            text: artifact.text,
+                            distance: 0.0,
+                        })
+                        .take(k)
+                        .collect()
+                });
         }
         Ok(Self::fixture_for_scope(&scope.space_id)
             .into_iter()
@@ -167,6 +210,17 @@ impl Retriever for ProvisionedFixtureRetriever {
         scope: &RetrievalScope,
         section_id: &str,
     ) -> Result<Option<Chunk>, CorpusError> {
+        if let Some(artifact) = self
+            .owner_corpus
+            .approved_artifact(&scope.space_id)
+            .map_err(|_| CorpusError("owner corpus unavailable".into()))?
+            .filter(|artifact| artifact.source_section_id == section_id)
+        {
+            return Ok(Some(Chunk {
+                source_section_id: artifact.source_section_id,
+                text: artifact.text,
+            }));
+        }
         Ok(Self::fixture_for_scope(&scope.space_id)
             .filter(|chunk| chunk.source_section_id == section_id))
     }
@@ -185,14 +239,24 @@ impl AiProvider for DeterministicNotebookProvider {
     }
 
     async fn complete_json(&self, system: &str, user: &str) -> Result<String, AiError> {
+        let upload = user.contains(APPROVED_UPLOAD_ANSWER);
         if system.contains("strict grounding checker") {
             let source_section_id = user
                 .lines()
                 .next()
                 .and_then(|line| line.strip_prefix("Expected source section id: "))
                 .ok_or_else(|| AiError("invalid fixture verifier prompt".into()))?;
+            let quote = if upload {
+                APPROVED_UPLOAD_ANSWER
+            } else {
+                "Paris est la capitale de la France."
+            };
             Ok(format!(
-                "{{\"supported\":true,\"reason\":\"exact\",\"evidence\":{{\"source_section_id\":{source_section_id:?},\"exact_quote\":\"Paris est la capitale de la France.\"}}}}"
+                "{{\"supported\":true,\"reason\":\"exact\",\"evidence\":{{\"source_section_id\":{source_section_id:?},\"exact_quote\":{quote:?}}}}}"
+            ))
+        } else if upload {
+            Ok(format!(
+                "{{\"text\":\"Quel est le statut des uploads arbitraires ?\",\"choices\":[{APPROVED_UPLOAD_ANSWER:?},\"Ils sont automatiquement approuvés.\"],\"correct_choices\":[0]}}"
             ))
         } else {
             Ok("{\"text\":\"Quelle est la capitale de la France ?\",\"choices\":[\"Paris est la capitale de la France.\",\"Lyon\",\"Marseille\"],\"correct_choices\":[0]}".to_owned())

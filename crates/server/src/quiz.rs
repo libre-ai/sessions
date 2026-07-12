@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tracing::error;
 
 use presto_core::protocol::{Flashcard, Question};
 use presto_rag::corpus::{CorpusStore, RetrievalScope, Retriever};
@@ -226,12 +225,9 @@ impl DocumentIngestor for RagIngestor {
             // Wedge: ingest into the `default` space at the public level.
             .ingest("default", 0, document_id, &text, self.provider.as_ref())
             .await
-            .map_err(|e| {
-                // Log the detail (ids only, no content); return an opaque rejection (no DB internals to
-                // an untrusted uploader).
-                error!(document_id, error = %e, "ingest backend error");
-                IngestRejection::Backend
-            })
+            // The legacy document id is caller-controlled and backend errors
+            // may carry raw provider/database detail: neither belongs in logs.
+            .map_err(|_| IngestRejection::Backend)
     }
 }
 

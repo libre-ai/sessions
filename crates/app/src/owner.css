@@ -14,7 +14,8 @@ body {
 
 button,
 a,
-textarea {
+textarea,
+input {
   font: inherit;
 }
 
@@ -220,6 +221,51 @@ textarea {
 
 .owner-query .presto-help {
   margin: 0;
+}
+
+.owner-upload,
+.owner-document-list,
+.owner-document {
+  display: grid;
+  gap: var(--presto-space-2);
+}
+
+.owner-upload {
+  padding: var(--presto-space-4);
+  border: var(--border-default) solid var(--presto-color-border);
+  border-radius: var(--presto-radius-lg);
+  background: var(--presto-color-surface);
+}
+
+.owner-upload input[type="file"] {
+  min-height: var(--presto-touch-target);
+  max-width: 100%;
+}
+
+.owner-document-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.owner-document {
+  padding: var(--presto-space-3);
+  border: var(--border-default) solid var(--presto-color-border);
+  border-radius: var(--presto-radius-sm);
+  background: var(--presto-color-surface);
+}
+
+.owner-document span,
+.owner-upload .presto-help {
+  color: var(--presto-color-text-muted);
+}
+
+.owner-approval {
+  font-weight: 700;
+}
+
+.owner-error {
+  font-weight: 700;
 }
 
 .owner-login {

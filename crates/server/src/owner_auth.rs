@@ -143,6 +143,7 @@ pub struct AuthenticatedOwner {
     pub space: CurrentSpace,
     /// Server-computed min(organization ceiling, explicit space grant).
     pub effective_clearance: ConfidentialityLevel,
+    pub(crate) subject: String,
 }
 
 /// Process-local state adapter. Raw state and session identifiers are never map
@@ -393,7 +394,40 @@ impl OwnerAuth {
                 },
             },
             effective_clearance: session.effective_clearance,
+            subject: session.subject,
         })
+    }
+
+    /// Capability verification plus a current membership authority recheck.
+    /// A valid but revoked session is denied fail-closed.
+    pub async fn authenticate_sensitive_headers(
+        &self,
+        headers: &HeaderMap,
+        required_capability: &str,
+    ) -> Result<AuthenticatedOwner, OwnerAuthError> {
+        let owner = self.authenticate_headers(headers, required_capability)?;
+        self.recheck_owner(&owner, required_capability).await?;
+        Ok(owner)
+    }
+
+    /// Revalidates an already authenticated request immediately before a
+    /// security-sensitive side effect or publication.
+    pub(crate) async fn recheck_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        required_capability: &str,
+    ) -> Result<(), OwnerAuthError> {
+        let role = crate::membership::recheck_sensitive(
+            self.membership.as_ref(),
+            &owner.space.space.id,
+            &owner.subject,
+        )
+        .await
+        .map_err(|_| OwnerAuthError::Unauthenticated)?;
+        if required_capability == "add_document" && role < Role::Contributor {
+            return Err(OwnerAuthError::Unauthenticated);
+        }
+        Ok(())
     }
 
     fn logout(&self, headers: &HeaderMap) {
@@ -468,6 +502,8 @@ impl OwnerAuth {
             display_name: None,
             personal_space_id: space_id.to_string(),
         };
+        let membership = Arc::new(InMemoryMembershipStore::new());
+        membership.insert_test_owner(space_id, &subject);
         let mut sessions = HashMap::new();
         sessions.insert(
             digest(&session_id),
@@ -484,7 +520,7 @@ impl OwnerAuth {
         (
             Self {
                 provider: None,
-                membership: Arc::new(InMemoryMembershipStore::new()),
+                membership,
                 capability_authority,
                 public_origin: Some(public_origin.to_string()),
                 login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
@@ -493,6 +529,14 @@ impl OwnerAuth {
             },
             format!("{SESSION_COOKIE_NAME}={session_id}"),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn revoke_test_owner(&self, space_id: &str) {
+        self.membership
+            .revoke_member(space_id, "test-owner-subject")
+            .await
+            .unwrap();
     }
 
     #[cfg(test)]

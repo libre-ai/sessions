@@ -22,6 +22,8 @@ pub mod membership;
 pub mod notebook_rag;
 pub mod oidc;
 pub mod owner_auth;
+pub mod owner_corpus;
+pub mod owner_corpus_http;
 pub mod postgres_jobs;
 pub mod postgres_store;
 pub mod quiz;
@@ -34,6 +36,7 @@ pub mod session_identity;
 pub mod store;
 pub mod ws;
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::Router;
@@ -43,12 +46,14 @@ use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use tower::limit::ConcurrencyLimitLayer;
 
 use approved_claims::ApprovedClaimRegistry;
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
 use notebook_rag::{NotebookRagEngine, StagedNotebookRagEngine};
 use owner_auth::OwnerAuth;
+use owner_corpus::OwnerCorpusStore;
 use quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
     FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource,
@@ -71,6 +76,8 @@ pub struct AppState {
     pub auth: Arc<Auth>,
     /// OIDC login transactions, opaque owner sessions and personal-space authz.
     pub owner_auth: Arc<OwnerAuth>,
+    /// Bounded, process-local owner corpus shared by list/upload and retrieval.
+    pub owner_corpus: Arc<OwnerCorpusStore>,
     /// Immutable, server-side authority for publishable notebook claims.
     pub approved_claims: Arc<ApprovedClaimRegistry>,
     /// Untrusted retrieve/generate/verify stages; never an approval authority.
@@ -79,6 +86,9 @@ pub struct AppState {
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
     pub ingestor: Arc<dyn DocumentIngestor>,
+    /// Strong bearer for the isolated legacy live-RAG ingestion boundary.
+    /// `None` is fail-closed and never means public access.
+    pub legacy_ingest_token: Option<Arc<str>>,
     /// Guards the open `POST /sessions` endpoint against creation spam.
     pub session_rate: Arc<TokenBucket>,
 }
@@ -87,17 +97,24 @@ impl AppState {
     /// Single-instance state: in-memory store + tokio-broadcast fanout +
     /// fixture-backed content (no AI provider or corpus required).
     pub fn in_memory(auth: Arc<Auth>) -> Self {
+        let owner_corpus = Arc::new(OwnerCorpusStore::new());
         Self {
             store: Arc::new(InMemorySessionStore::new()),
             fanout: Arc::new(BroadcastFanout::new()),
             owner_auth: Arc::new(OwnerAuth::disabled(auth.clone())),
-            approved_claims: Arc::new(ApprovedClaimRegistry::fixture()),
-            notebook_rag: Arc::new(StagedNotebookRagEngine::fixture()),
+            approved_claims: Arc::new(ApprovedClaimRegistry::with_owner_corpus(
+                owner_corpus.clone(),
+            )),
+            notebook_rag: Arc::new(StagedNotebookRagEngine::fixture_with_owner_corpus(
+                owner_corpus.clone(),
+            )),
+            owner_corpus,
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
             flashcards: Arc::new(FixtureFlashcardSource),
             ingestor: Arc::new(FixtureIngestor),
+            legacy_ingest_token: None,
             // Generous burst, ~1 new session/sec sustained; tune via env in main.
             session_rate: Arc::new(TokenBucket::new(30.0, 1.0)),
         }
@@ -121,7 +138,35 @@ pub fn app(state: AppState) -> Router {
         .route("/api/spaces/current", get(owner_auth::current_space))
         .route(
             "/api/rag/query",
-            post(rag_query::query).layer(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES)),
+            post(rag_query::query)
+                // Axum layers execute bottom-up: auth is outermost, then the
+                // shared permit around body buffering and the complete pipeline.
+                .layer::<_, Infallible>(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES))
+                .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
+                    rag_query::MAX_CONCURRENT_QUERIES,
+                ))
+                .layer::<_, Infallible>(middleware::from_fn_with_state(
+                    state.clone(),
+                    rag_query::authorize_query,
+                )),
+        )
+        .route(
+            "/api/corpus/documents",
+            get(owner_corpus_http::list).merge(
+                post(owner_corpus_http::upload)
+                    // Axum layers execute bottom-up: auth is outermost, then the
+                    // shared concurrency permit, then body buffering/extraction.
+                    .layer::<_, Infallible>(DefaultBodyLimit::max(
+                        owner_corpus_http::MAX_DOCUMENT_BODY_BYTES,
+                    ))
+                    .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
+                        owner_corpus_http::MAX_CONCURRENT_UPLOADS,
+                    ))
+                    .layer::<_, Infallible>(middleware::from_fn_with_state(
+                        state.clone(),
+                        owner_corpus_http::authorize_upload,
+                    )),
+            ),
         )
         .route("/p0/contract/proof", get(http::p0_contract_proof))
         .route("/p0/stub/run", post(http::p0_stub_run))
@@ -130,7 +175,18 @@ pub fn app(state: AppState) -> Router {
             "/sessions/{session_id}/participants",
             post(http::join_session),
         )
-        .route("/corpus/documents", post(http::ingest_document))
+        .route(
+            "/corpus/documents",
+            post(http::ingest_document)
+                .layer::<_, Infallible>(DefaultBodyLimit::max(http::MAX_LEGACY_INGEST_BODY_BYTES))
+                .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
+                    http::MAX_CONCURRENT_LEGACY_INGESTS,
+                ))
+                .layer::<_, Infallible>(middleware::from_fn_with_state(
+                    state.clone(),
+                    http::authorize_legacy_ingest,
+                )),
+        )
         .route("/ws/{session_id}", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -174,8 +230,12 @@ async fn health() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
+    use std::convert::Infallible;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::body::{Body, Bytes};
     use axum::http::{Request, StatusCode};
+    use futures_util::stream;
     use tower::ServiceExt;
 
     #[test]
@@ -290,14 +350,18 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
+    const TEST_INGEST_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
     async fn ingest(uri: &str, content_type: &str, body: &'static str) -> StatusCode {
-        let state = AppState::in_memory(Arc::new(Auth::generate()));
+        let mut state = AppState::in_memory(Arc::new(Auth::generate()));
+        state.legacy_ingest_token = Some(Arc::from(TEST_INGEST_TOKEN));
         app(state)
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri(uri)
                     .header("content-type", content_type)
+                    .header("authorization", format!("Bearer {TEST_INGEST_TOKEN}"))
                     .body(Body::from(body))
                     .unwrap(),
             )
@@ -361,6 +425,69 @@ mod tests {
                 .any(|step| step["name"] == "export_participant_artifact")
         );
         assert!(steps.iter().all(|step| step["ok"] == true));
+    }
+
+    #[tokio::test]
+    async fn legacy_ingest_fails_closed_before_polling_body() {
+        let state = AppState::in_memory(Arc::new(Auth::generate()));
+        let polls = Arc::new(AtomicUsize::new(0));
+        let observed = polls.clone();
+        let body = Body::from_stream(stream::once(async move {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>(Bytes::from_static(b"secret body"))
+        }));
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/corpus/documents?document_id=doc1")
+                    .header("content-type", "text/plain")
+                    .header("authorization", "Bearer wrong-token")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+
+        let mut configured = AppState::in_memory(Arc::new(Auth::generate()));
+        configured.legacy_ingest_token = Some(Arc::from(TEST_INGEST_TOKEN));
+        let wrong = app(configured)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/corpus/documents?document_id=doc1")
+                    .header("authorization", "Bearer definitely-wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(wrong.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn legacy_ingest_body_is_bounded_after_authentication() {
+        let mut state = AppState::in_memory(Arc::new(Auth::generate()));
+        state.legacy_ingest_token = Some(Arc::from(TEST_INGEST_TOKEN));
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/corpus/documents?document_id=doc1")
+                    .header("content-type", "text/plain")
+                    .header("authorization", format!("Bearer {TEST_INGEST_TOKEN}"))
+                    .body(Body::from(vec![
+                        b'x';
+                        http::MAX_LEGACY_INGEST_BODY_BYTES + 1
+                    ]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]

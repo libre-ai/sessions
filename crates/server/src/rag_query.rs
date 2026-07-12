@@ -1,8 +1,9 @@
 //! Authenticated notebook query HTTP boundary.
 
 use axum::Json;
-use axum::extract::{State, rejection::JsonRejection};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::extract::{Extension, Request, State, rejection::JsonRejection};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use presto_core::api::{ApiEnvelope, RagQueryRequest, RagQueryResponse};
 use serde::Serialize;
@@ -11,10 +12,11 @@ use tokio::time::{Duration, timeout};
 use crate::AppState;
 use crate::approved_claims::{ApprovedClaimsError, normalize_query};
 use crate::notebook_rag::{NotebookRagError, NotebookRagOutcome};
-use crate::owner_auth::OwnerAuthError;
+use crate::owner_auth::{AuthenticatedOwner, OwnerAuthError};
 
 pub(crate) const MAX_QUERY_BYTES: usize = 4096;
 pub(crate) const MAX_RAG_BODY_BYTES: usize = 8192;
+pub(crate) const MAX_CONCURRENT_QUERIES: usize = 4;
 const NO_APPROVED_CLAIM: &str = "no_approved_claim";
 const NOTEBOOK_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -23,15 +25,30 @@ struct ApiError {
     error: &'static str,
 }
 
-pub(crate) async fn query(
+/// Query gate placed outside concurrency and body extraction. Denied requests
+/// therefore cannot consume either a pipeline permit or request-body memory.
+pub(crate) async fn authorize_query(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    payload: Result<Json<RagQueryRequest>, JsonRejection>,
+    mut request: Request,
+    next: Next,
 ) -> Response {
-    let owner = match state.owner_auth.authenticate_headers(&headers, "read") {
+    let owner = match state
+        .owner_auth
+        .authenticate_sensitive_headers(request.headers(), "read")
+        .await
+    {
         Ok(owner) => owner,
         Err(error) => return owner_error(error),
     };
+    request.extensions_mut().insert(owner);
+    next.run(request).await
+}
+
+pub(crate) async fn query(
+    State(state): State<AppState>,
+    Extension(owner): Extension<AuthenticatedOwner>,
+    payload: Result<Json<RagQueryRequest>, JsonRejection>,
+) -> Response {
     let Json(request) = match payload {
         Ok(request) => request,
         Err(rejection) => {
@@ -76,6 +93,13 @@ pub(crate) async fn query(
         }
     };
 
+    // Body buffering, JSON validation and permit selection can race a
+    // membership revocation. Recheck at the last instant before starting an
+    // external/provider pipeline that cannot be retroactively cancelled.
+    if let Err(error) = state.owner_auth.recheck_owner(&owner, "read").await {
+        return owner_error(error);
+    }
+
     let execution = timeout(
         NOTEBOOK_TIMEOUT,
         state.notebook_rag.run(
@@ -87,6 +111,11 @@ pub(crate) async fn query(
     .await;
     match execution {
         Ok(Ok(NotebookRagOutcome::Candidate(candidate))) => {
+            // The pipeline may outlive a membership change. Recheck immediately
+            // before the only branch capable of publishing Grounded.
+            if let Err(error) = state.owner_auth.recheck_owner(&owner, "read").await {
+                return owner_error(error);
+            }
             let data = state
                 .approved_claims
                 .approve(permit, candidate, max_sources)
@@ -136,12 +165,14 @@ fn error(status: StatusCode, code: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use axum::body::{Body, to_bytes};
+    use axum::body::{Body, Bytes, to_bytes};
     use axum::http::{Method, Request};
+    use futures_util::stream;
     use presto_core::api::{ConfidentialityLevel, SpaceCapability};
     use presto_rag::corpus::{Chunk, CorpusError, RetrievalScope, Retrieved, Retriever};
     use presto_rag::provider::{AiError, AiProvider};
@@ -339,6 +370,66 @@ mod tests {
         );
     }
 
+    struct BlockingEngine {
+        inner: StagedNotebookRagEngine,
+        completed_pipeline: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl NotebookRagEngine for BlockingEngine {
+        async fn run(
+            &self,
+            space_id: &str,
+            effective_clearance: ConfidentialityLevel,
+            query: &str,
+        ) -> Result<NotebookRagOutcome, NotebookRagError> {
+            let result = self.inner.run(space_id, effective_clearance, query).await;
+            self.completed_pipeline.notify_one();
+            self.resume.notified().await;
+            result
+        }
+    }
+
+    #[tokio::test]
+    async fn revocation_after_pipeline_prevents_grounded_publication() {
+        let authority = Arc::new(Auth::generate());
+        let (owner_auth, cookie) = OwnerAuth::test_session(
+            authority.clone(),
+            ORIGIN,
+            "space-a",
+            ConfidentialityLevel::Internal,
+            &[SpaceCapability::Read],
+        );
+        let owner_auth = Arc::new(owner_auth);
+        let completed_pipeline = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let mut state = AppState::in_memory(authority);
+        state.owner_auth = owner_auth.clone();
+        state.notebook_rag = Arc::new(BlockingEngine {
+            inner: StagedNotebookRagEngine::fixture(),
+            completed_pipeline: completed_pipeline.clone(),
+            resume: resume.clone(),
+        });
+        let task = tokio::spawn(async move {
+            post_query(
+                app(state),
+                Some(&cookie),
+                json!({"space_id":"space-a","query":"capitale de la france"}),
+            )
+            .await
+        });
+        completed_pipeline.notified().await;
+        owner_auth.revoke_test_owner("space-a").await;
+        resume.notify_one();
+        let response = task.await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            json_body(response).await,
+            json!({"error":"unauthenticated"})
+        );
+    }
+
     struct FailingEngine(NotebookRagError);
 
     #[async_trait]
@@ -419,19 +510,97 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn requires_authentication_and_read_capability() {
+    async fn unauthenticated_and_unreadable_queries_do_not_poll_their_bodies() {
         let (router, cookie) = authenticated_app(
             "space-a",
             ConfidentialityLevel::Internal,
             &[],
             ApprovedClaimRegistry::fixture(),
         );
-        let body = json!({"space_id":"space-a","query":"capitale de la france"});
-        let unauth = post_query(router.clone(), None, body.clone()).await;
-        assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(json_body(unauth).await, json!({"error":"unauthenticated"}));
-        let no_read = post_query(router, Some(&cookie), body).await;
-        assert_eq!(no_read.status(), StatusCode::UNAUTHORIZED);
+        let polls = Arc::new(AtomicUsize::new(0));
+        for presented_cookie in [None, Some(cookie.as_str())] {
+            let observed = polls.clone();
+            let body = Body::from_stream(stream::once(async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, Infallible>(Bytes::from_static(b"{}"))
+            }));
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/rag/query")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ORIGIN, ORIGIN)
+                .header("sec-fetch-site", "same-origin");
+            if let Some(cookie) = presented_cookie {
+                request = request.header(header::COOKIE, cookie);
+            }
+            let response = router
+                .clone()
+                .oneshot(request.body(body).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+    }
+
+    struct CountingEngine(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NotebookRagEngine for CountingEngine {
+        async fn run(
+            &self,
+            _space_id: &str,
+            _effective_clearance: ConfidentialityLevel,
+            _query: &str,
+        ) -> Result<NotebookRagOutcome, NotebookRagError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(NotebookRagOutcome::Rejected)
+        }
+    }
+
+    #[tokio::test]
+    async fn revocation_during_query_body_prevents_pipeline_start() {
+        let authority = Arc::new(Auth::generate());
+        let (owner_auth, cookie) = OwnerAuth::test_session(
+            authority.clone(),
+            ORIGIN,
+            "space-a",
+            ConfidentialityLevel::Internal,
+            &[SpaceCapability::Read],
+        );
+        let owner_auth = Arc::new(owner_auth);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut state = AppState::in_memory(authority);
+        state.owner_auth = owner_auth.clone();
+        state.notebook_rag = Arc::new(CountingEngine(calls.clone()));
+
+        let (polled_tx, polled_rx) = tokio::sync::oneshot::channel();
+        let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+        let payload = json!({"space_id":"space-a","query":"capitale de la france"}).to_string();
+        let body = Body::from_stream(stream::once(async move {
+            let _ = polled_tx.send(());
+            let _ = resume_rx.await;
+            Ok::<_, Infallible>(Bytes::from(payload))
+        }));
+        let task = tokio::spawn(async move {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/rag/query")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie)
+                .header(header::ORIGIN, ORIGIN)
+                .header("sec-fetch-site", "same-origin")
+                .body(body)
+                .unwrap();
+            app(state).oneshot(request).await.unwrap()
+        });
+
+        polled_rx.await.unwrap();
+        owner_auth.revoke_test_owner("space-a").await;
+        resume_tx.send(()).unwrap();
+        let response = task.await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

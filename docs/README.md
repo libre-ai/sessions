@@ -23,6 +23,7 @@ invariants, and an explicit cross-spec ledger.
 | [`security/owner-web-auth.md`](security/owner-web-auth.md)                                                                 | Owner OIDC/session architecture, threat model and durability limits               | Implemented |
 | [`security/rag-exact-evidence-gate.md`](security/rag-exact-evidence-gate.md)                                               | Exact-evidence lexical hardening and explicit anti-injection limits                | Defence in depth |
 | [`security/approved-notebook-claims.md`](security/approved-notebook-claims.md)                                             | Immutable owner-notebook claim authority, HTTP boundary and precise proof limits   | Implemented MVP |
+| [`security/owner-corpus.md`](security/owner-corpus.md)                                                                     | Bounded process-local owner uploads, exact-byte approval and retrieval limits       | Implemented MVP |
 
 SP-A/B/C are written as a coherent family (SP-A is the substrate; SP-B classifies
 over it; SP-C consumes both). The evolution spec critiques the **built** product

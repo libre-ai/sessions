@@ -1,7 +1,7 @@
 //! Emits a depot-conformant ArtifactManifest for a presto-server release binary.
 //!
 //! Usage:
-//!   cargo run --bin emit-artifact-manifest -- <path-to-binary> [--json-out <path>]
+//!   cargo run --bin emit-artifact-manifest -- PATH_TO_BINARY [--json-out PATH]
 //!
 //! The manifest conforms to `gear-depot` schema v0.1:
 //! - artifact_id, manifest_id, manifest_ref: derived from binary hash

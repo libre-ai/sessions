@@ -49,7 +49,7 @@ clever service link-addon pm-redis
 
 ## 3. Environment
 
-Set the six runtime variables. The two add-on URIs come from each add-on's
+Set the runtime variables below. The two add-on URIs come from each add-on's
 dashboard / `clever env` after linking (Clever injects add-on variables under its
 own names; copy the connection URIs into the names the app reads):
 
@@ -61,6 +61,10 @@ clever env set REDIS_URL    "<redis connection uri>"
 # Shared Biscuit key — MUST be identical across instances. Generate one:
 #   cargo run -p presto-server -- keygen
 clever env set BISCUIT_PRIVATE_KEY "<hex from keygen>"
+
+# Mandatory legacy ingestion bearer; generate with `openssl rand -hex 32`.
+# Producers of POST /corpus/documents must send it; never commit/log it.
+clever env set INGEST_TOKEN "<strong random token, at least 32 bytes>"
 
 # Hosted AI is Clever AI only. Values stay unset until the private contract,
 # region, retention and endpoint reference have been approved.

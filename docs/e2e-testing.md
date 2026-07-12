@@ -12,7 +12,7 @@ The `e2e/` directory contains Playwright tests for the current minimal web clien
 - the participant answers;
 - the host reveals the leaderboard.
 
-The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no browser storage or service worker. `owner-notebook.spec.ts` mocks the owner APIs to deterministically prove rendering, rejection, disabled submit, current-space retry, and a bounded first RAG `503` followed by a successful second submit with grounded citation; real cookie authz, cross-space, clearance and CSRF remain blocking Rust router tests. When `KEYCLOAK_E2E=1`, `owner-auth-keycloak.spec.ts` is the no-mock real mobile gate: login → `/api/me` → personal space → `/app/notebook` → real RAG handler answer/citation → refresh → logout against the pinned development Keycloak.
+The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no browser storage or service worker. `owner-notebook.spec.ts` mocks the owner APIs to deterministically prove rendering, rejection, disabled submit, current-space retry, and a bounded first RAG `503` followed by a successful second submit with grounded citation. `owner-corpus.spec.ts` utilise un vrai input fichier puis prouve upload exact → liste → notebook `Grounded` avec citation du même `document_id`; il couvre aussi Pending honnête (`chunk_count=0`), erreurs `400`/`413`/`507`/`503`, retry uniquement sur `503` ou erreur transport, capability absente et session expirée; real cookie authz, cross-space, clearance and CSRF remain blocking Rust router tests. When `KEYCLOAK_E2E=1`, `owner-auth-keycloak.spec.ts` is the no-mock real mobile gate: login → `/api/me` → personal space → `/app/notebook` → real RAG handler answer/citation → refresh → logout against the pinned development Keycloak.
 
 These tests exercise the deployed browser surface. Deeper protocol and scoring cases remain in Rust integration tests.
 
@@ -90,7 +90,7 @@ Playwright will:
 To run against an already-started server:
 
 ```bash
-PORT=3000 cargo run --bin presto-server
+INGEST_TOKEN=$(openssl rand -hex 32) PORT=3000 cargo run --bin presto-server
 cd e2e
 BASE_URL=http://localhost:3000 npm test
 ```
@@ -117,4 +117,4 @@ The `.github/workflows/ci.yml` includes an `e2e` job that:
 
 Tests must pass before merge.
 
-The real Keycloak browser test is a **documented manual pre-merge gate**, not CI-blocking: the default GitHub job has no nested container orchestration and no secret credential input by design. When `KEYCLOAK_E2E=1`, Playwright refuses to reuse a server already listening on port 3000 and always starts the binary from the current checkout. The blocking deterministic protocol integration is `owner_auth::tests::full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out`, `owner_auth::tests::callback_is_bound_to_initiating_browser_and_consumed_on_mismatch`, and the other adversarial owner-auth tests. They start an in-process HTTP OIDC provider and exercise discovery, token POST/PKCE, RS256/JWKS validation and the complete Axum router. CI runs them in `cargo test --workspace --all-features`. A maintainer records the separate manual Keycloak result on the pull request before merge; it must not be described as CI-blocking.
+Le job CI mock est la preuve déterministe complète upload→query. The real Keycloak browser test remains a **documented manual pre-merge gate**, not CI-blocking and never mocked: the default GitHub job has no nested container orchestration and no secret credential input by design. When `KEYCLOAK_E2E=1`, Playwright refuses to reuse a server already listening on port 3000 and always starts the binary from the current checkout. The blocking deterministic protocol integration is `owner_auth::tests::full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out`, `owner_auth::tests::callback_is_bound_to_initiating_browser_and_consumed_on_mismatch`, and the other adversarial owner-auth tests. They start an in-process HTTP OIDC provider and exercise discovery, token POST/PKCE, RS256/JWKS validation and the complete Axum router. CI runs them in `cargo test --workspace --all-features`. A maintainer records the separate manual Keycloak result on the pull request before merge; it must not be described as CI-blocking.

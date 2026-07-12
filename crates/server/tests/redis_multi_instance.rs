@@ -27,6 +27,7 @@ async fn instance(url: &str, auth: Arc<Auth>) -> SocketAddr {
         store: Arc::new(InMemorySessionStore::new()),
         fanout,
         owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
+        owner_corpus: Arc::new(presto_server::owner_corpus::OwnerCorpusStore::new()),
         approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
         notebook_rag: Arc::new(presto_server::notebook_rag::StagedNotebookRagEngine::fixture()),
         auth,
@@ -34,6 +35,7 @@ async fn instance(url: &str, auth: Arc<Auth>) -> SocketAddr {
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),
         flashcards: Arc::new(presto_server::quiz::FixtureFlashcardSource),
         ingestor: Arc::new(presto_server::quiz::FixtureIngestor),
+        legacy_ingest_token: None,
         session_rate: Arc::new(presto_server::ratelimit::TokenBucket::new(1000.0, 1000.0)),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
