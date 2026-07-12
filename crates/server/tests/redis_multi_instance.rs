@@ -26,6 +26,7 @@ async fn instance(url: &str, auth: Arc<Auth>) -> SocketAddr {
     let state = AppState {
         store: Arc::new(InMemorySessionStore::new()),
         fanout,
+        owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
         auth,
         quiz: Arc::new(presto_server::quiz::FixtureQuizSource),
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

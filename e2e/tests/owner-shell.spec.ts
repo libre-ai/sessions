@@ -14,7 +14,7 @@ test.describe('Owner mobile shell', () => {
     await page.goto('/app');
 
     await expect(page.getByRole('heading', { name: 'Travaillez depuis vos propres sources.' })).toBeVisible();
-    await expect(page.getByRole('status')).toContainText('sans session');
+    await expect(page.getByRole('status')).toContainText('cookie HttpOnly');
 
     let nav = page.getByRole('navigation', { name: 'Navigation owner' });
     await expect(nav).toBeVisible();
@@ -37,10 +37,12 @@ test.describe('Owner mobile shell', () => {
     await expect(page).toHaveURL(/\/app\/settings$/);
     await expect(page.getByRole('heading', { name: 'Réglages' })).toBeVisible();
 
-    await page.getByRole('link', { name: 'Voir la couture de connexion' }).click();
+    await expect(page.getByRole('button', { name: 'Se déconnecter' })).toBeVisible();
+
+    await page.goto('/app/login');
     await expect(page).toHaveURL(/\/app\/login$/);
     await expect(page.getByRole('heading', { name: 'Connexion' })).toBeVisible();
-    await expect(page.getByText('Aucune session durable')).toBeVisible();
+    await expect(page.getByText(/Authorization Code \+ PKCE/)).toBeVisible();
 
     const browserState = await page.evaluate(async () => ({
       localStorage: localStorage.length,

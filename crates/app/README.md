@@ -32,6 +32,8 @@ cargo test -p rumble-lm-app --all-features
 cd e2e && npx playwright test tests/owner-shell.spec.ts --project=chromium
 ```
 
-## Limites intentionnelles
+## Authentification et limites
 
-Ce lot ne fournit ni OIDC, ni cookie/session, ni appel RAG, ni API corpus, ni service worker/PWA. `/app/login` est une couture d’interface vers le futur `/auth/login`; aucune session durable ou authentification fictive n’est créée. Le client ne lit ni token ni stockage web et ne dépend pas de `presto-server` comme bibliothèque.
+`/app/login` redirige vers le flux OIDC serveur et `/app/settings` soumet le logout same-origin. Le client ne lit jamais le cookie HttpOnly, ne manipule aucun token, n’utilise aucun stockage web et ne dépend pas de `presto-server` comme bibliothèque. Les projections owner restent les DTO réseau de `presto-core`.
+
+Ce lot ne fournit ni appel RAG, ni API corpus, ni service worker/PWA. Les sessions owner et l’autorité membership restent process-locales : un redémarrage déconnecte et le multi-instance owner n’est pas supporté. Voir `docs/security/owner-web-auth.md`.

@@ -13,6 +13,9 @@ use presto_rag::corpus::{CorpusStore, Retriever};
 use presto_rag::provider::{AiProvider, OpenAiCompatible};
 use presto_server::auth::Auth;
 use presto_server::fanout::{BroadcastFanout, Fanout};
+use presto_server::membership::{InMemoryMembershipStore, MembershipStore};
+use presto_server::oidc::OidcConfig;
+use presto_server::owner_auth::{OwnerAuth, OwnerAuthConfig};
 use presto_server::postgres_store::PostgresSessionStore;
 use presto_server::quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
@@ -177,6 +180,31 @@ async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
     }
 }
 
+/// Enable owner auth only when the complete OIDC tuple is configured. Discovery
+/// is performed at startup and fails closed; no silent local-auth fallback.
+async fn build_owner_auth(auth: Arc<Auth>) -> Result<Arc<OwnerAuth>, Box<dyn Error>> {
+    let issuer = std::env::var("OIDC_ISSUER").ok();
+    let client_id = std::env::var("OIDC_CLIENT_ID").ok();
+    let redirect_uri = std::env::var("OIDC_REDIRECT_URI").ok();
+    match (issuer, client_id, redirect_uri) {
+        (None, None, None) => {
+            println!("owner auth: disabled (OIDC_* variables unset)");
+            Ok(Arc::new(OwnerAuth::disabled(auth)))
+        }
+        (Some(issuer), Some(client_id), Some(redirect_uri)) => {
+            let config = OwnerAuthConfig::new(OidcConfig::new(issuer, client_id, redirect_uri))?;
+            let membership: Arc<dyn MembershipStore> = Arc::new(InMemoryMembershipStore::new());
+            eprintln!(
+                "owner auth: process-local sessions/membership (single instance; restart logs users out)"
+            );
+            Ok(Arc::new(
+                OwnerAuth::discover(config, auth, membership).await?,
+            ))
+        }
+        _ => Err("OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_REDIRECT_URI must be set together".into()),
+    }
+}
+
 /// The `POST /sessions` rate limiter: burst + steady refill, tunable via
 /// `SESSION_RATE_BURST` and `SESSION_RATE_PER_SEC` (defaults 30 burst, 1/sec).
 fn build_session_rate() -> Arc<TokenBucket> {
@@ -201,10 +229,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let store = build_store().await?;
     let (quiz, breakout, flashcards, ingestor) = build_content(&store).await;
+    let auth = build_auth()?;
+    let owner_auth = build_owner_auth(auth.clone()).await?;
     let state = AppState {
         store,
         fanout: build_fanout().await?,
-        auth: build_auth()?,
+        auth,
+        owner_auth,
         quiz,
         breakout,
         flashcards,

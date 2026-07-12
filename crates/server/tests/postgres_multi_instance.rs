@@ -33,6 +33,7 @@ async fn instance(db: &str, redis: &str, auth: Arc<Auth>) -> std::net::SocketAdd
     let state = AppState {
         store,
         fanout,
+        owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
         auth,
         quiz: Arc::new(presto_server::quiz::FixtureQuizSource),
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

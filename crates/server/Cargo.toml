@@ -32,6 +32,9 @@ jsonwebtoken = { version = "10", default-features = false, features = ["rust_cry
 # Keyed content-integrity tags (HMAC-SHA256) for the SP-B grounding moat.
 hmac = "0.13"
 sha2 = "0.11"
+base64 = "0.22"
+getrandom = "0.4"
+reqwest.workspace = true
 async-trait.workspace = true
 redis = { version = "1.2.4", features = ["tokio-comp", "aio"] }
 futures-util = "0.3.32"
@@ -49,5 +52,5 @@ time.workspace = true
 futures-util = "0.3.32"
 tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["util"] }
-reqwest.workspace = true
+rsa = "0.9"
 tempfile = "3"

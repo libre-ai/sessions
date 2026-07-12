@@ -19,6 +19,7 @@ pub mod integrity;
 pub mod jobs;
 pub mod membership;
 pub mod oidc;
+pub mod owner_auth;
 pub mod postgres_jobs;
 pub mod postgres_store;
 pub mod quiz;
@@ -33,10 +34,16 @@ pub mod ws;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::{Method, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
+use owner_auth::OwnerAuth;
 use quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
     FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource,
@@ -57,6 +64,8 @@ pub struct AppState {
     pub store: Arc<dyn SessionStore>,
     pub fanout: Arc<dyn Fanout>,
     pub auth: Arc<Auth>,
+    /// OIDC login transactions, opaque owner sessions and personal-space authz.
+    pub owner_auth: Arc<OwnerAuth>,
     pub quiz: Arc<dyn QuizSource>,
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
@@ -72,6 +81,7 @@ impl AppState {
         Self {
             store: Arc::new(InMemorySessionStore::new()),
             fanout: Arc::new(BroadcastFanout::new()),
+            owner_auth: Arc::new(OwnerAuth::disabled(auth.clone())),
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
@@ -93,6 +103,11 @@ pub fn app(state: AppState) -> Router {
         .route("/app/assets/{asset}", get(http::owner_app_asset))
         .route("/app/{*path}", get(http::owner_app_index))
         .route("/health", get(health))
+        .route("/auth/login", get(owner_auth::login))
+        .route("/auth/callback", get(owner_auth::callback))
+        .route("/auth/logout", post(owner_auth::logout))
+        .route("/api/me", get(owner_auth::me))
+        .route("/api/spaces/current", get(owner_auth::current_space))
         .route("/p0/contract/proof", get(http::p0_contract_proof))
         .route("/p0/stub/run", post(http::p0_stub_run))
         .route("/sessions", post(http::create_session))
@@ -102,7 +117,39 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/corpus/documents", post(http::ingest_document))
         .route("/ws/{session_id}", get(ws::ws_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            enforce_cookie_same_origin,
+        ))
         .with_state(state)
+}
+
+/// Any unsafe request carrying the owner cookie must provide two independent
+/// same-origin signals. This applies globally, including future unsafe `/api`
+/// routes, rather than relying on each handler to remember the CSRF check.
+async fn enforce_cookie_same_origin(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let safe = matches!(
+        *request.method(),
+        Method::GET | Method::HEAD | Method::OPTIONS
+    );
+    if !safe
+        && state.owner_auth.has_auth_cookie(request.headers())
+        && !state
+            .owner_auth
+            .same_origin_cookie_request(request.headers())
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CACHE_CONTROL, "no-store")],
+            "forbidden",
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 async fn health() -> &'static str {

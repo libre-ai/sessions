@@ -1,0 +1,46 @@
+{
+  "realm": "rumble-lm-dev",
+  "enabled": true,
+  "displayName": "Rumble LM development",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": false,
+  "clients": [
+    {
+      "clientId": "rumble-lm-owner",
+      "name": "Rumble LM owner web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:3000/auth/callback"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/app"
+      },
+      "defaultClientScopes": ["web-origins", "acr", "roles", "profile"]
+    }
+  ],
+  "users": [
+    {
+      "username": "owner",
+      "firstName": "Development",
+      "lastName": "Owner",
+      "email": "owner@rumble-lm.invalid",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_TEST_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

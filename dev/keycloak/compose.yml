@@ -1,0 +1,13 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5.2@sha256:fb31a59deb46f746f2aaa25adc5da39ceccac4fd22d36a519562b0bf02e8df20
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?generated dev environment required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?generated dev environment required}
+      KC_HEALTH_ENABLED: "true"
+      KEYCLOAK_TEST_PASSWORD: ${KEYCLOAK_TEST_PASSWORD:?generated dev environment required}
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - ./realm-rumble-lm.json:/opt/keycloak/data/import/realm-rumble-lm.json:ro
