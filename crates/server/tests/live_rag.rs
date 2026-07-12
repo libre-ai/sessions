@@ -150,8 +150,5 @@ async fn host_generates_a_question_grounded_in_an_ingested_document() {
         q.get("correct_choices").is_none(),
         "the answer stays private"
     );
-    eprintln!(
-        "grounded question from the ingested corpus: '{}' (id {id})",
-        q["text"]
-    );
+    eprintln!("real retrieve-generate-evidence gate completed successfully");
 }

@@ -21,6 +21,7 @@ invariants, and an explicit cross-spec ledger.
 | [`plans/2026-06-27-p3-tracer-bullet.md`](plans/2026-06-27-p3-tracer-bullet.md)                                             | The live-session tracer-bullet plan (P3)                                          | Reference |
 | [`deploy/clever-cloud.md`](deploy/clever-cloud.md)                                                                         | Sovereign deployment runbook (Clever Cloud)                                       | Reference |
 | [`security/owner-web-auth.md`](security/owner-web-auth.md)                                                                 | Owner OIDC/session architecture, threat model and durability limits               | Implemented |
+| [`security/rag-exact-evidence-gate.md`](security/rag-exact-evidence-gate.md)                                               | Deterministic anti-injection evidence boundary and explicit limits                | Implemented prerequisite |
 
 SP-A/B/C are written as a coherent family (SP-A is the substrate; SP-B classifies
 over it; SP-C consumes both). The evolution spec critiques the **built** product

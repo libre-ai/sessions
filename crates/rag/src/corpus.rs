@@ -5,13 +5,13 @@
 //! cosine distance. Embeddings are passed as `[...]::vector` literals, so no
 //! extra binding crate is required.
 //!
-//! # Security: the corpus is trusted
+//! # Security: the corpus is untrusted
 //!
-//! Ingested text flows verbatim into the generation and grounding-verifier
-//! prompts ([`crate::generate`], [`crate::verify`]); [`CorpusStore::ingest`] does
-//! NOT sanitize it for prompt injection. The corpus is therefore assumed to come
-//! from a trusted (admin) source. When user-supplied ingestion is added, that
-//! text must be treated as untrusted and isolated from prompt construction.
+//! [`CorpusStore::ingest`] stores source text without trying to sanitize its
+//! meaning. Grounded-verdict prompt sites isolate it with `fenced_source`,
+//! but prompt delimiters are only defence in depth. Any path publishing a grounded verdict
+//! must also use [`crate::verify`] to bind accepted content to exact structured
+//! evidence from the scoped, authorized chunk.
 
 use async_trait::async_trait;
 use sqlx::Row;
