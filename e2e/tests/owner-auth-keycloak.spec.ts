@@ -48,7 +48,7 @@ test.describe('Owner auth against development Keycloak', () => {
     }
   });
 
-  test('login → me → personal space → refresh → logout', async ({ page }) => {
+  test('login → personal space → real notebook answer → refresh → logout', async ({ page }) => {
     expect(username, 'KEYCLOAK_TEST_USERNAME is required').toBeTruthy();
     expect(password, 'KEYCLOAK_TEST_PASSWORD is required').toBeTruthy();
 
@@ -95,6 +95,19 @@ test.describe('Owner auth against development Keycloak', () => {
     await page.reload();
     const refreshed = await page.evaluate(async () => (await fetch('/api/me')).status);
     expect(refreshed).toBe(200);
+
+    // No API route is mocked in this spec: this traverses the real cookie auth,
+    // current-space handler and retrieve → generate → verify → permit gate.
+    await page.goto('/app/notebook');
+    await expect(page.getByRole('heading', { name: 'Prêt à interroger les claims approuvés' })).toBeVisible();
+    await page.getByLabel('Question au corpus').fill('Quelle est la capitale de la France ?');
+    await page.getByRole('button', { name: 'Envoyer' }).click();
+    await expect(page.getByRole('heading', { name: 'Réponse', exact: true })).toBeVisible();
+    await expect(page.getByText('Paris est la capitale de la France.')).toBeVisible();
+    const citations = page.getByRole('region', { name: 'Citations approuvées' });
+    await expect(citations).toBeVisible();
+    await expect(citations.locator('.presto-source-card')).toHaveCount(1);
+    await expect(citations.locator('.presto-source-card')).toContainText('Référence géographique approuvée');
 
     await page.goto('/app/settings');
     await page.getByRole('button', { name: 'Se déconnecter' }).click();

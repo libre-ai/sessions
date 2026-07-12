@@ -34,6 +34,6 @@ cd e2e && npx playwright test tests/owner-shell.spec.ts --project=chromium
 
 ## Authentification et limites
 
-`/app/login` redirige vers le flux OIDC serveur et `/app/settings` soumet le logout same-origin. Le client ne lit jamais le cookie HttpOnly, ne manipule aucun token, n’utilise aucun stockage web et ne dépend pas de `presto-server` comme bibliothèque. Les projections owner restent les DTO réseau de `presto-core`.
+`/app/login` redirige vers le flux OIDC serveur, `/app/notebook` charge l’espace courant puis soumet `POST /api/rag/query` en same-origin, et `/app/settings` soumet le logout. Le client ne lit jamais le cookie HttpOnly, ne manipule aucun token, n’utilise aucun stockage web et ne dépend pas de `presto-server` comme bibliothèque. Les réponses/citations sont échappées par Dioxus, sans `innerHTML` ni `eval`, et les projections owner restent les DTO réseau de `presto-core`.
 
-Ce lot ne fournit ni appel RAG, ni API corpus, ni service worker/PWA. Les sessions owner et l’autorité membership restent process-locales : un redémarrage déconnecte et le multi-instance owner n’est pas supporté. Voir `docs/security/owner-web-auth.md`.
+Le Notebook rend les états idle/loading/grounded/rejected/failure/session expirée, permet de retenter le chargement de l’espace et désactive l’envoi si la question est vide ou en cours. Le Corpus reste un placeholder pour #34 ; les uploads sont pending et non éligibles aux claims approuvés, et ce lot ne fournit ni upload owner, ni service worker/PWA. Les sessions owner et l’autorité membership restent process-locales : un redémarrage déconnecte et le multi-instance owner n’est pas supporté. Voir `docs/security/owner-web-auth.md`.

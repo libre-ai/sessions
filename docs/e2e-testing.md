@@ -12,7 +12,7 @@ The `e2e/` directory contains Playwright tests for the current minimal web clien
 - the participant answers;
 - the host reveals the leaderboard.
 
-The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no browser storage or service worker. `owner-auth-keycloak.spec.ts` is the real mobile OIDC gate: login → `/api/me` → personal space → refresh → logout against the pinned development Keycloak.
+The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no browser storage or service worker. `owner-notebook.spec.ts` mocks the owner APIs to deterministically prove rendering, rejection, disabled submit, current-space retry, and a bounded first RAG `503` followed by a successful second submit with grounded citation; real cookie authz, cross-space, clearance and CSRF remain blocking Rust router tests. When `KEYCLOAK_E2E=1`, `owner-auth-keycloak.spec.ts` is the no-mock real mobile gate: login → `/api/me` → personal space → `/app/notebook` → real RAG handler answer/citation → refresh → logout against the pinned development Keycloak.
 
 These tests exercise the deployed browser surface. Deeper protocol and scoring cases remain in Rust integration tests.
 
@@ -42,8 +42,11 @@ npx playwright install
 cd e2e
 npm test
 
-# Owner shell smoke only
-npx playwright test tests/owner-shell.spec.ts --project=chromium
+# Owner shell and mocked deterministic UI states
+npx playwright test tests/owner-shell.spec.ts tests/owner-notebook.spec.ts --project=chromium
+
+# Real Keycloak + real notebook API path (after the setup below)
+npx playwright test tests/owner-auth-keycloak.spec.ts --project=chromium
 ```
 
 ## Real Keycloak mobile gate

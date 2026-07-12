@@ -7,6 +7,7 @@
 //! [`fanout::Fanout`] traits are the seams where the distributed (Redis /
 //! Postgres) implementations plug in for multi-instance operation.
 
+pub mod approved_claims;
 pub mod auth;
 pub mod authz;
 pub mod classification;
@@ -18,11 +19,13 @@ pub mod ingestion;
 pub mod integrity;
 pub mod jobs;
 pub mod membership;
+pub mod notebook_rag;
 pub mod oidc;
 pub mod owner_auth;
 pub mod postgres_jobs;
 pub mod postgres_store;
 pub mod quiz;
+pub mod rag_query;
 pub mod ratelimit;
 pub mod redis_fanout;
 pub mod scoring;
@@ -35,14 +38,16 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
+use approved_claims::ApprovedClaimRegistry;
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
+use notebook_rag::{NotebookRagEngine, StagedNotebookRagEngine};
 use owner_auth::OwnerAuth;
 use quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
@@ -66,6 +71,10 @@ pub struct AppState {
     pub auth: Arc<Auth>,
     /// OIDC login transactions, opaque owner sessions and personal-space authz.
     pub owner_auth: Arc<OwnerAuth>,
+    /// Immutable, server-side authority for publishable notebook claims.
+    pub approved_claims: Arc<ApprovedClaimRegistry>,
+    /// Untrusted retrieve/generate/verify stages; never an approval authority.
+    pub notebook_rag: Arc<dyn NotebookRagEngine>,
     pub quiz: Arc<dyn QuizSource>,
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
@@ -82,6 +91,8 @@ impl AppState {
             store: Arc::new(InMemorySessionStore::new()),
             fanout: Arc::new(BroadcastFanout::new()),
             owner_auth: Arc::new(OwnerAuth::disabled(auth.clone())),
+            approved_claims: Arc::new(ApprovedClaimRegistry::fixture()),
+            notebook_rag: Arc::new(StagedNotebookRagEngine::fixture()),
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
@@ -108,6 +119,10 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/logout", post(owner_auth::logout))
         .route("/api/me", get(owner_auth::me))
         .route("/api/spaces/current", get(owner_auth::current_space))
+        .route(
+            "/api/rag/query",
+            post(rag_query::query).layer(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES)),
+        )
         .route("/p0/contract/proof", get(http::p0_contract_proof))
         .route("/p0/stub/run", post(http::p0_stub_run))
         .route("/sessions", post(http::create_session))
@@ -162,6 +177,39 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[test]
+    fn grounded_projection_is_confined_to_the_authority_module() {
+        fn visit(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, files);
+                } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let authority = source_root.join("approved_claims.rs");
+        let direct_variant = ["RagQueryResponse", "::Grounded"].concat();
+        let convenience_constructor = ["RagQueryResponse", "::grounded("].concat();
+        let mut files = Vec::new();
+        visit(&source_root, &mut files);
+        let violations: Vec<_> = files
+            .into_iter()
+            .filter(|path| path != &authority)
+            .filter(|path| {
+                let source = std::fs::read_to_string(path).unwrap();
+                source.contains(&direct_variant) || source.contains(&convenience_constructor)
+            })
+            .collect();
+        assert!(
+            violations.is_empty(),
+            "Grounded may only be constructed by approved_claims.rs: {violations:?}"
+        );
+    }
 
     #[tokio::test]
     async fn health_returns_ok() {

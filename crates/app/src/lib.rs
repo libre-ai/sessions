@@ -1,13 +1,17 @@
 //! Minimal Dioxus owner shell for Rumble LM.
 //!
-//! The server-owned OIDC redirect and logout are wired without exposing the
-//! HttpOnly session to WASM. Corpus operations and grounded RAG remain later
-//! server-owned increments.
+//! The server-owned OIDC redirect, notebook API and logout are wired without
+//! exposing the HttpOnly session to WASM. Corpus operations remain a later
+//! server-owned increment.
 
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use rumble_lm_ui::{AppSurface, BottomNav, Card, NavItem, ThemeStyles};
+#[cfg(target_arch = "wasm32")]
+use presto_core::api::ApiEnvelope;
+use presto_core::api::{CurrentSpace, RagQueryRequest, RagQueryResponse};
+use presto_core::client::RagQueryState;
+use rumble_lm_ui::{AppSurface, BottomNav, Card, NavItem, SourceCard, ThemeStyles};
 
 pub const OWNER_STYLES: &str = include_str!("owner.css");
 
@@ -145,33 +149,233 @@ pub fn Login() -> Element {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum NotebookSession {
+    Loading,
+    Ready(CurrentSpace),
+    Expired,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetworkFailure {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    SessionExpired,
+    Unavailable,
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn load_current_space() -> Result<CurrentSpace, NetworkFailure> {
+    use gloo_net::http::Request;
+
+    let response = Request::get("/api/spaces/current")
+        .send()
+        .await
+        .map_err(|_| NetworkFailure::Unavailable)?;
+    if response.status() == 401 {
+        return Err(NetworkFailure::SessionExpired);
+    }
+    if !response.ok() {
+        return Err(NetworkFailure::Unavailable);
+    }
+    response
+        .json::<ApiEnvelope<CurrentSpace>>()
+        .await
+        .map(|envelope| envelope.data)
+        .map_err(|_| NetworkFailure::Unavailable)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn load_current_space() -> Result<CurrentSpace, NetworkFailure> {
+    Err(NetworkFailure::Unavailable)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn submit_rag_query(request: &RagQueryRequest) -> Result<RagQueryResponse, NetworkFailure> {
+    use gloo_net::http::Request;
+
+    let request = Request::post("/api/rag/query")
+        .json(request)
+        .map_err(|_| NetworkFailure::Unavailable)?;
+    let response = request
+        .send()
+        .await
+        .map_err(|_| NetworkFailure::Unavailable)?;
+    if response.status() == 401 {
+        return Err(NetworkFailure::SessionExpired);
+    }
+    if !response.ok() {
+        return Err(NetworkFailure::Unavailable);
+    }
+    response
+        .json::<ApiEnvelope<RagQueryResponse>>()
+        .await
+        .map(|envelope| envelope.data)
+        .map_err(|_| NetworkFailure::Unavailable)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn submit_rag_query(_request: &RagQueryRequest) -> Result<RagQueryResponse, NetworkFailure> {
+    Err(NetworkFailure::Unavailable)
+}
+
 #[component]
 pub fn Notebook() -> Element {
+    let mut session = use_signal(|| NotebookSession::Loading);
+    let mut query = use_signal(String::new);
+    let mut rag_state = use_signal(|| RagQueryState::Idle);
+    let mut reload_space = use_signal(|| 0_u32);
+
+    use_effect(move || {
+        let _reload_generation = *reload_space.read();
+        spawn(async move {
+            session.set(match load_current_space().await {
+                Ok(space) => NotebookSession::Ready(space),
+                Err(NetworkFailure::SessionExpired) => NotebookSession::Expired,
+                Err(NetworkFailure::Unavailable) => NotebookSession::Failed,
+            });
+        });
+    });
+
+    let current_session = session.read().clone();
+    let current_rag_state = rag_state.read().clone();
+    let can_edit =
+        matches!(current_session, NotebookSession::Ready(_)) && !current_rag_state.is_loading();
+    let can_submit = can_edit && !query.read().trim().is_empty();
+
     rsx! {
         OwnerFrame { current: Screen::Notebook,
             section { class: "owner-page owner-page--chat", aria_labelledby: "notebook-title",
                 div {
                     p { class: "owner-kicker", "Chat RAG" }
                     h1 { id: "notebook-title", "Interroger votre corpus" }
-                    p { class: "owner-lede", "Aucune réponse de démonstration n’est injectée : le verifier et les citations seront branchés dans un lot ultérieur." }
+                    p { class: "owner-lede", "Les réponses publiées proviennent uniquement du registre serveur de claims approuvés pour votre espace et votre clearance." }
                 }
-                div { class: "owner-empty", role: "status",
-                    h2 { "Conversation indisponible sans session" }
-                    p { "Connectez-vous lorsque l’authentification sera disponible pour charger un espace autorisé." }
+                div { class: "owner-conversation", aria_live: "polite",
+                    match current_session {
+                        NotebookSession::Loading => rsx! {
+                            div { class: "owner-empty", role: "status", h2 { "Chargement de votre espace…" } }
+                        },
+                        NotebookSession::Expired => rsx! {
+                            div { class: "owner-empty owner-result--failure", role: "alert",
+                                h2 { "Session expirée" }
+                                p { "Reconnectez-vous pour interroger votre espace personnel." }
+                                a { class: "owner-text-link", href: "/app/login", "Se reconnecter" }
+                            }
+                        },
+                        NotebookSession::Failed => rsx! {
+                            div { class: "owner-empty owner-result--failure", role: "alert",
+                                h2 { "Espace indisponible" }
+                                p { "Le service est temporairement indisponible." }
+                                button {
+                                    class: "presto-button presto-button--secondary",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        session.set(NotebookSession::Loading);
+                                        reload_space += 1;
+                                    },
+                                    "Réessayer le chargement"
+                                }
+                            }
+                        },
+                        NotebookSession::Ready(_) => match current_rag_state {
+                            RagQueryState::Idle | RagQueryState::Draft { .. } => rsx! {
+                                div { class: "owner-empty", role: "status",
+                                    h2 { "Prêt à interroger les claims approuvés" }
+                                    p { "Essayez : « Quelle est la capitale de la France ? »" }
+                                }
+                            },
+                            RagQueryState::Loading { .. } => rsx! {
+                                div { class: "owner-empty", role: "status", h2 { "Recherche en cours…" } }
+                            },
+                            RagQueryState::Grounded { answer, citations, .. } => rsx! {
+                                article { class: "owner-result owner-result--grounded",
+                                    p { class: "owner-kicker", "Claim approuvé" }
+                                    h2 { "Réponse" }
+                                    p { class: "owner-answer", "{answer}" }
+                                    section { class: "owner-citations", aria_label: "Citations approuvées",
+                                        h3 { "Sources" }
+                                        for citation in citations {
+                                            SourceCard { citation }
+                                        }
+                                    }
+                                }
+                            },
+                            RagQueryState::Rejected { .. } => rsx! {
+                                div { class: "owner-empty owner-result--rejected", role: "status",
+                                    h2 { "Réponse rejetée" }
+                                    p { "Aucun claim approuvé ne correspond exactement à cette question dans votre espace." }
+                                }
+                            },
+                            RagQueryState::Failed { .. } => rsx! {
+                                div { class: "owner-empty owner-result--failure", role: "alert",
+                                    h2 { "Requête impossible" }
+                                    p { "Le service est temporairement indisponible. Réessayez plus tard." }
+                                }
+                            },
+                        },
+                    }
                 }
-                form { class: "owner-query", onsubmit: move |event| event.prevent_default(),
+                form {
+                    class: "owner-query",
+                    onsubmit: move |event| {
+                        event.prevent_default();
+                        let NotebookSession::Ready(current) = session.read().clone() else {
+                            return;
+                        };
+                        let Ok(loading) = RagQueryState::submit(query.read().as_str()) else {
+                            rag_state.set(RagQueryState::Failed {
+                                query: String::new(),
+                                message: "invalid_query".to_string(),
+                            });
+                            return;
+                        };
+                        let submitted_query = loading.query().unwrap_or_default().to_string();
+                        rag_state.set(loading);
+                        spawn(async move {
+                            let request = RagQueryRequest {
+                                space_id: current.space.id,
+                                query: submitted_query,
+                                max_sources: Some(3),
+                            };
+                            match submit_rag_query(&request).await {
+                                Ok(response) => {
+                                    let state = rag_state.read().clone().apply_response(response);
+                                    rag_state.set(state);
+                                }
+                                Err(NetworkFailure::SessionExpired) => {
+                                    session.set(NotebookSession::Expired);
+                                    rag_state.set(RagQueryState::Idle);
+                                }
+                                Err(NetworkFailure::Unavailable) => {
+                                    let state = rag_state
+                                        .read()
+                                        .clone()
+                                        .fail("service_unavailable");
+                                    rag_state.set(state);
+                                }
+                            }
+                        });
+                    },
                     label { class: "presto-label", r#for: "owner-query", "Question au corpus" }
                     textarea {
                         class: "presto-input owner-query__input",
                         id: "owner-query",
                         name: "query",
                         rows: "2",
-                        disabled: true,
+                        maxlength: "4096",
+                        disabled: !can_edit,
                         aria_describedby: "owner-query-help",
-                        placeholder: "Connexion requise pour interroger vos sources",
+                        placeholder: "Quelle est la capitale de la France ?",
+                        value: "{query}",
+                        oninput: move |event| {
+                            let value = event.value();
+                            query.set(value.clone());
+                            rag_state.set(RagQueryState::edit(value));
+                        },
                     }
-                    p { class: "presto-help", id: "owner-query-help", "Aucune requête réseau n’est envoyée par ce shell." }
-                    button { class: "presto-button presto-button--primary", r#type: "submit", disabled: true, "Envoyer" }
+                    p { class: "presto-help", id: "owner-query-help", "4 096 caractères maximum. L’espace et la clearance sont imposés par le serveur." }
+                    button { class: "presto-button presto-button--primary", r#type: "submit", disabled: !can_submit, "Envoyer" }
                 }
             }
         }
@@ -242,11 +446,12 @@ mod tests {
 
         assert!(home.contains("cookie HttpOnly"));
         assert!(login.contains("Authorization Code + PKCE"));
-        assert!(notebook.contains("Aucune requête réseau"));
+        assert!(notebook.contains("Chargement de votre espace"));
+        assert!(notebook.contains("4 096 caractères maximum"));
         assert!(corpus.contains("non chargé sans authentification"));
         assert!(settings.contains("Aucun réglage n’est persisté"));
         assert!(settings.contains("action=\"/auth/logout\""));
-        assert!(!notebook.contains("grounded source"));
+        assert!(!notebook.contains("Paris est la capitale"));
     }
 
     #[test]
@@ -263,6 +468,7 @@ mod tests {
         let html = render(rsx! { Notebook {} });
         assert!(html.contains("for=\"owner-query\""));
         assert!(html.contains("aria-describedby=\"owner-query-help\""));
+        assert!(html.contains("maxlength=\"4096\""));
         assert!(html.contains(" disabled"));
         assert!(OWNER_STYLES.contains("position: sticky"));
     }

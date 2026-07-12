@@ -167,6 +167,40 @@ textarea {
   min-height: 100%;
 }
 
+.owner-conversation,
+.owner-result,
+.owner-citations {
+  display: grid;
+  gap: var(--presto-space-3);
+}
+
+.owner-result {
+  align-content: start;
+  border: var(--border-default) solid var(--presto-color-border);
+  border-radius: var(--presto-radius-lg);
+  padding: var(--presto-space-4);
+  background: var(--presto-color-surface);
+}
+
+.owner-result h2,
+.owner-result h3,
+.owner-answer {
+  margin: 0;
+}
+
+.owner-answer {
+  font-size: var(--presto-font-size-lg);
+}
+
+.owner-result--grounded {
+  border-left: var(--border-strong) solid var(--presto-color-success);
+}
+
+.owner-result--rejected,
+.owner-result--failure {
+  border-left: var(--border-strong) solid var(--presto-color-text);
+}
+
 .owner-query {
   position: sticky;
   bottom: calc(var(--presto-touch-target) + var(--presto-space-6) + var(--presto-safe-bottom));

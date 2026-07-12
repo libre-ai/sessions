@@ -131,6 +131,8 @@ struct WebSession {
     subject: String,
     user: CurrentUser,
     space: PersonalSpace,
+    space_max_confidentiality: ConfidentialityLevel,
+    effective_clearance: ConfidentialityLevel,
     biscuit: String,
     expires_at: Instant,
 }
@@ -139,6 +141,8 @@ struct WebSession {
 pub struct AuthenticatedOwner {
     pub user: CurrentUser,
     pub space: CurrentSpace,
+    /// Server-computed min(organization ceiling, explicit space grant).
+    pub effective_clearance: ConfidentialityLevel,
 }
 
 /// Process-local state adapter. Raw state and session identifiers are never map
@@ -304,12 +308,18 @@ impl OwnerAuth {
         if sessions.len() >= MAX_WEB_SESSIONS {
             return Err(OwnerAuthError::Capacity);
         }
+        // Solo-space provisioning currently grants at most Internal. The IdP
+        // ceiling can only reduce that grant; a missing claim was parsed as Public.
+        let space_grant = ConfidentialityLevel::Internal;
+        let effective_clearance = std::cmp::min(identity.clearance_org, space_grant);
         sessions.insert(
             digest(&session_id),
             WebSession {
                 subject: identity.sub,
                 user,
                 space,
+                space_max_confidentiality: space_grant,
+                effective_clearance,
                 biscuit,
                 expires_at: instant + SESSION_TTL,
             },
@@ -379,9 +389,10 @@ impl OwnerAuth {
                     name: session.space.name,
                     role: SpaceRole::Owner,
                     capabilities,
-                    max_confidentiality: ConfidentialityLevel::Internal,
+                    max_confidentiality: session.space_max_confidentiality,
                 },
             },
+            effective_clearance: session.effective_clearance,
         })
     }
 
@@ -416,6 +427,72 @@ impl OwnerAuth {
             .flat_map(|value| value.split(';'))
             .filter_map(|pair| pair.trim().split_once('='))
             .any(|(name, _)| name == SESSION_COOKIE_NAME)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_session(
+        capability_authority: Arc<Auth>,
+        public_origin: &str,
+        space_id: &str,
+        effective_clearance: ConfidentialityLevel,
+        capabilities: &[SpaceCapability],
+    ) -> (Self, String) {
+        let subject = "test-owner-subject".to_string();
+        let cap_names: Vec<&str> = capabilities
+            .iter()
+            .map(|capability| match capability {
+                SpaceCapability::Read => "read",
+                SpaceCapability::Contribute => "contribute",
+                SpaceCapability::AddDocument => "add_document",
+                SpaceCapability::Invite => "invite",
+                SpaceCapability::ManageMembers => "manage_members",
+                SpaceCapability::DeleteSpace => "delete_space",
+            })
+            .collect();
+        let biscuit = capability_authority
+            .mint_space_token(
+                space_id,
+                &subject,
+                &cap_names,
+                SESSION_TTL,
+                SystemTime::now(),
+            )
+            .expect("test capability must mint");
+        let session_id = "test_owner_session".to_string();
+        let space = PersonalSpace {
+            id: space_id.to_string(),
+            name: "Test notebook".to_string(),
+        };
+        let user = CurrentUser {
+            actor_id: "actor_test".to_string(),
+            display_name: None,
+            personal_space_id: space_id.to_string(),
+        };
+        let mut sessions = HashMap::new();
+        sessions.insert(
+            digest(&session_id),
+            WebSession {
+                subject,
+                user,
+                space,
+                space_max_confidentiality: ConfidentialityLevel::Internal,
+                effective_clearance,
+                biscuit,
+                expires_at: Instant::now() + SESSION_TTL,
+            },
+        );
+        (
+            Self {
+                provider: None,
+                membership: Arc::new(InMemoryMembershipStore::new()),
+                capability_authority,
+                public_origin: Some(public_origin.to_string()),
+                login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
+                pending_logins: Mutex::new(HashMap::new()),
+                sessions: Mutex::new(sessions),
+            },
+            format!("{SESSION_COOKIE_NAME}={session_id}"),
+        )
     }
 
     #[cfg(test)]
@@ -970,7 +1047,7 @@ mod tests {
 
     #[tokio::test]
     async fn full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out() {
-        let (router, _owner_auth, membership, idp) = configured_app().await;
+        let (router, owner_auth, membership, idp) = configured_app().await;
         assert_eq!(idp.jwks_requests.load(Ordering::SeqCst), 1);
         let login = begin_login(&router, &idp).await;
         assert_eq!(
@@ -988,6 +1065,16 @@ mod tests {
         assert!(set_cookie.contains("; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900"));
         assert!(!set_cookie.to_ascii_lowercase().contains("domain="));
         let cookie = set_cookie.split(';').next().unwrap().to_string();
+        let mut auth_headers = HeaderMap::new();
+        auth_headers.insert(header::COOKIE, HeaderValue::from_str(&cookie).unwrap());
+        assert_eq!(
+            owner_auth
+                .authenticate_headers(&auth_headers, "read")
+                .unwrap()
+                .effective_clearance,
+            ConfidentialityLevel::Public,
+            "missing clearance_org must cap the explicit Internal space grant at Public"
+        );
         assert!(
             callback
                 .headers()
