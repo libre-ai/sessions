@@ -27,6 +27,7 @@ async fn instance(url: &str, auth: Arc<Auth>) -> SocketAddr {
         store: Arc::new(InMemorySessionStore::new()),
         fanout,
         owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
+        owner_corpus: Arc::new(presto_server::owner_corpus::OwnerCorpusStore::new()),
         approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
         notebook_rag: Arc::new(presto_server::notebook_rag::StagedNotebookRagEngine::fixture()),
         auth,

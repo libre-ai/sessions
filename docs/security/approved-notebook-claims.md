@@ -2,7 +2,8 @@
 
 - **Statut :** fixture verticale déterministe de l’issue #33
 - **Portée :** `POST /api/rag/query`, orchestration RAG locale et autorité finale immutable
-- **Non-portée :** uploads owner (#34), provider distant général, persistance et multi-instance
+- **Extension #34 :** une fixture upload Markdown à octets/hash exacts, toujours soumise au gate final
+- **Non-portée :** uploads arbitraires grounded, provider distant général, persistance et multi-instance
 
 ## Propriété et limite de vérité
 
@@ -77,13 +78,17 @@ Aucun prompt, source brute d’erreur, verdict provider, token ou PII n’est lo
 ou renvoyé. Dioxus échappe réponses/citations ; aucun HTML brut, `eval`, stockage
 web ou service worker n’est utilisé.
 
-## Limites opérationnelles et #34
+## Extension upload exacte et limites opérationnelles #34
 
-La source approuvée est une fixture compilée et process-local, pas un corpus
-owner général. Les uploads, leur listage et leur ingestion sont **pending #34**
-et restent non éligibles aux permits tant qu’une procédure d’approbation
-indépendante n’existe pas. Ce lot n’ajoute ni DB, ni upload, ni #36, ni
-release/deploy. Aucun moteur distant n’est configuré dans cette fixture ; si un
-moteur est configuré ultérieurement, ses erreurs devront rester fail-closed sans
-fallback silencieux vers la fixture. `OWNER_AUTH_SINGLE_INSTANCE=1` et ses
-limites restent inchangés.
+Une unique fixture Markdown est pré-approuvée par ses octets et son SHA-256. Sa
+présence exacte dans le store owner scoped permet au registre de produire un
+permit document/chunk/révision/hash; le titre de citation est canonique. Toute
+variation et tout autre upload restent `Pending`, absents du retriever et
+inéligibles à `Grounded`. Cette propriété de hash ne prouve toujours pas la
+vérité. Voir [`owner-corpus.md`](owner-corpus.md).
+
+Le corpus reste process-local et single-instance. Ce lot n’ajoute ni DB, ni
+suppression, ni PDF/OCR, ni #36, ni release/deploy. Aucun moteur distant n’est
+configuré dans cette fixture ; s’il l’est ultérieurement, ses erreurs devront
+rester fail-closed sans fallback silencieux. `OWNER_AUTH_SINGLE_INSTANCE=1` et
+ses limites restent inchangés.

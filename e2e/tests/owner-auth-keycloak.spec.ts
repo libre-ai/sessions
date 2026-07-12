@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
+import path from 'node:path';
 
+const uploadFixture = path.resolve(__dirname, '../../crates/server/assets/approved-owner-upload.md');
 const enabled = process.env.KEYCLOAK_E2E === '1';
 const username = process.env.KEYCLOAK_TEST_USERNAME;
 const password = process.env.KEYCLOAK_TEST_PASSWORD;
@@ -108,6 +110,26 @@ test.describe('Owner auth against development Keycloak', () => {
     await expect(citations).toBeVisible();
     await expect(citations.locator('.presto-source-card')).toHaveCount(1);
     await expect(citations.locator('.presto-source-card')).toContainText('Référence géographique approuvée');
+
+    // Real browser FileData → JSON upload → process-local store → approved permit.
+    await page.goto('/app/corpus');
+    await page.getByLabel('Choisir exactement un document').setInputFiles(uploadFixture);
+    await expect(page.getByText('Sélectionné : approved-owner-upload.md')).toBeVisible();
+    await page.getByRole('button', { name: 'Ajouter le document' }).click();
+    await expect(page.getByText(/Approved — correspondance exacte/)).toBeVisible();
+
+    await page.goto('/app/notebook');
+    await page.getByLabel('Question au corpus').fill('Quel est le statut des uploads arbitraires ?');
+    await page.getByRole('button', { name: 'Envoyer' }).click();
+    await expect(page.getByText('Les uploads arbitraires restent Pending et ne sont jamais utilisés pour une réponse Grounded.')).toBeVisible();
+    const uploadCitation = page.getByRole('region', { name: 'Citations approuvées' });
+    await expect(uploadCitation).toContainText('Politique approuvée des uploads owner');
+    await expect(uploadCitation).not.toContainText('approved-owner-upload.md');
+
+    await page.goto('/app/corpus');
+    await page.reload();
+    await expect(page.getByRole('list', { name: 'Documents du corpus' })).toContainText('approved-owner-upload.md');
+    await expect(page.getByRole('list', { name: 'Documents du corpus' })).toContainText('Approved');
 
     await page.goto('/app/settings');
     await page.getByRole('button', { name: 'Se déconnecter' }).click();

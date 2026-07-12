@@ -22,6 +22,8 @@ pub mod membership;
 pub mod notebook_rag;
 pub mod oidc;
 pub mod owner_auth;
+pub mod owner_corpus;
+pub mod owner_corpus_http;
 pub mod postgres_jobs;
 pub mod postgres_store;
 pub mod quiz;
@@ -49,6 +51,7 @@ use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
 use notebook_rag::{NotebookRagEngine, StagedNotebookRagEngine};
 use owner_auth::OwnerAuth;
+use owner_corpus::OwnerCorpusStore;
 use quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
     FixtureIngestor, FixtureQuizSource, FlashcardSource, QuizSource,
@@ -71,6 +74,8 @@ pub struct AppState {
     pub auth: Arc<Auth>,
     /// OIDC login transactions, opaque owner sessions and personal-space authz.
     pub owner_auth: Arc<OwnerAuth>,
+    /// Bounded, process-local owner corpus shared by list/upload and retrieval.
+    pub owner_corpus: Arc<OwnerCorpusStore>,
     /// Immutable, server-side authority for publishable notebook claims.
     pub approved_claims: Arc<ApprovedClaimRegistry>,
     /// Untrusted retrieve/generate/verify stages; never an approval authority.
@@ -87,12 +92,18 @@ impl AppState {
     /// Single-instance state: in-memory store + tokio-broadcast fanout +
     /// fixture-backed content (no AI provider or corpus required).
     pub fn in_memory(auth: Arc<Auth>) -> Self {
+        let owner_corpus = Arc::new(OwnerCorpusStore::new());
         Self {
             store: Arc::new(InMemorySessionStore::new()),
             fanout: Arc::new(BroadcastFanout::new()),
             owner_auth: Arc::new(OwnerAuth::disabled(auth.clone())),
-            approved_claims: Arc::new(ApprovedClaimRegistry::fixture()),
-            notebook_rag: Arc::new(StagedNotebookRagEngine::fixture()),
+            approved_claims: Arc::new(ApprovedClaimRegistry::with_owner_corpus(
+                owner_corpus.clone(),
+            )),
+            notebook_rag: Arc::new(StagedNotebookRagEngine::fixture_with_owner_corpus(
+                owner_corpus.clone(),
+            )),
+            owner_corpus,
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
@@ -122,6 +133,12 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/rag/query",
             post(rag_query::query).layer(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES)),
+        )
+        .route(
+            "/api/corpus/documents",
+            get(owner_corpus_http::list).merge(post(owner_corpus_http::upload).layer(
+                DefaultBodyLimit::max(owner_corpus_http::MAX_DOCUMENT_BODY_BYTES),
+            )),
         )
         .route("/p0/contract/proof", get(http::p0_contract_proof))
         .route("/p0/stub/run", post(http::p0_stub_run))

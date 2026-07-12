@@ -81,6 +81,14 @@ impl InMemoryMembershipStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    #[cfg(test)]
+    pub(crate) fn insert_test_owner(&self, space: &str, sub: &str) {
+        self.state.lock().members.insert(
+            (space.to_owned(), sub.to_owned()),
+            Membership { role: Role::Owner },
+        );
+    }
 }
 
 #[async_trait]

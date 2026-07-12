@@ -277,13 +277,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (quiz, breakout, flashcards, ingestor) = build_content(&store).await;
     let auth = build_auth()?;
     let owner_auth = build_owner_auth(auth.clone(), owner_auth_environment).await?;
+    let owner_corpus = Arc::new(presto_server::owner_corpus::OwnerCorpusStore::new());
     let state = AppState {
         store,
         fanout: build_fanout().await?,
         auth,
         owner_auth,
-        approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
-        notebook_rag: Arc::new(presto_server::notebook_rag::StagedNotebookRagEngine::fixture()),
+        owner_corpus: owner_corpus.clone(),
+        approved_claims: Arc::new(
+            presto_server::approved_claims::ApprovedClaimRegistry::with_owner_corpus(
+                owner_corpus.clone(),
+            ),
+        ),
+        notebook_rag: Arc::new(
+            presto_server::notebook_rag::StagedNotebookRagEngine::fixture_with_owner_corpus(
+                owner_corpus,
+            ),
+        ),
         quiz,
         breakout,
         flashcards,

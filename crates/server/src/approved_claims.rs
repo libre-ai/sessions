@@ -8,11 +8,23 @@
 
 use presto_core::api::{ConfidentialityLevel, RagQueryResponse, SourceCitation};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::notebook_rag::{
     NotebookCandidate, fixture_document_id, fixture_source_section_id, fixture_source_text,
     fixture_title, scoped_source_hash,
 };
+use crate::owner_corpus::{OwnerCorpusStore, scoped_artifact_hash};
+
+/// The sole owner-upload artifact independently pre-approved by exact bytes and
+/// SHA-256. Any byte variation remains Pending in the corpus store.
+pub(crate) const APPROVED_UPLOAD_BYTES: &[u8] =
+    include_bytes!("../assets/approved-owner-upload.md");
+pub(crate) const APPROVED_UPLOAD_SHA256: &str =
+    "9234f721c34ab13975ca4bce38466883a4c7095509c866c038df5d2aa51d4875";
+pub(crate) const APPROVED_UPLOAD_TITLE: &str = "Politique approuvée des uploads owner";
+pub(crate) const APPROVED_UPLOAD_ANSWER: &str =
+    "Les uploads arbitraires restent Pending et ne sont jamais utilisés pour une réponse Grounded.";
 
 const SUPPORTED_REVISION: u32 = 1;
 const TEMPLATE_CONTROL_HASH: &str =
@@ -25,18 +37,29 @@ pub enum ApprovedClaimsError {
     Unavailable,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
 pub struct ApprovedClaimRegistry {
     unavailable: bool,
+    owner_corpus: Arc<OwnerCorpusStore>,
 }
 
 impl ApprovedClaimRegistry {
-    pub const fn fixture() -> Self {
-        Self { unavailable: false }
+    pub fn fixture() -> Self {
+        Self::with_owner_corpus(Arc::new(OwnerCorpusStore::new()))
     }
 
-    pub const fn unavailable() -> Self {
-        Self { unavailable: true }
+    pub fn with_owner_corpus(owner_corpus: Arc<OwnerCorpusStore>) -> Self {
+        Self {
+            unavailable: false,
+            owner_corpus,
+        }
+    }
+
+    pub fn unavailable() -> Self {
+        Self {
+            unavailable: true,
+            owner_corpus: Arc::new(OwnerCorpusStore::new()),
+        }
     }
 
     /// Select an approved alias before any untrusted RAG stage executes.
@@ -48,6 +71,35 @@ impl ApprovedClaimRegistry {
     ) -> Result<Option<ApprovedPermit>, ApprovedClaimsError> {
         if self.unavailable {
             return Err(ApprovedClaimsError::Unavailable);
+        }
+        if UPLOAD_ALIASES.contains(&query) {
+            let artifact = self
+                .owner_corpus
+                .approved_artifact(space_id)
+                .map_err(|_| ApprovedClaimsError::Unavailable)?;
+            return Ok(artifact.map(|artifact| {
+                let citation = SourceCitation {
+                    source_section_id: artifact.source_section_id.clone(),
+                    document_id: Some(artifact.document_id),
+                    title: Some(artifact.title.to_owned()),
+                    excerpt: Some(artifact.text.clone()),
+                };
+                let source_hash = scoped_artifact_hash(
+                    space_id,
+                    &artifact.source_section_id,
+                    &artifact.content_hash,
+                    &artifact.text,
+                );
+                ApprovedPermit::new(
+                    space_id,
+                    effective_clearance,
+                    "approved-owner-upload-v1",
+                    source_hash,
+                    APPROVED_UPLOAD_SHA256,
+                    APPROVED_UPLOAD_ANSWER,
+                    citation,
+                )
+            }));
         }
         Ok(FIXTURE_CLAIMS
             .iter()
@@ -79,11 +131,36 @@ pub(crate) struct ApprovedPermit {
     revision: u32,
     control_hash: String,
     source_hash: String,
+    document_hash: &'static str,
     answer: &'static str,
     citation: SourceCitation,
 }
 
 impl ApprovedPermit {
+    fn new(
+        space_id: &str,
+        effective_clearance: ConfidentialityLevel,
+        claim_id: &'static str,
+        source_hash: String,
+        document_hash: &'static str,
+        answer: &'static str,
+        citation: SourceCitation,
+    ) -> Self {
+        let mut permit = Self {
+            space_id: space_id.to_owned(),
+            effective_clearance,
+            claim_id,
+            revision: SUPPORTED_REVISION,
+            control_hash: String::new(),
+            source_hash,
+            document_hash,
+            answer,
+            citation,
+        };
+        permit.control_hash = permit.computed_control_hash();
+        permit
+    }
+
     fn matches(&self, candidate: &NotebookCandidate) -> bool {
         self.revision == SUPPORTED_REVISION
             && self
@@ -103,6 +180,7 @@ impl ApprovedPermit {
             &self.revision.to_string(),
             classification_name(self.effective_clearance),
             &self.source_hash,
+            self.document_hash,
             self.answer,
             &self.citation.source_section_id,
             self.citation.document_id.as_deref().unwrap_or_default(),
@@ -181,18 +259,15 @@ impl ClaimTemplate {
             title: Some(fixture_title().to_owned()),
             excerpt: Some(fixture_source_text().to_owned()),
         };
-        let mut permit = ApprovedPermit {
-            space_id: space_id.to_owned(),
+        Some(ApprovedPermit::new(
+            space_id,
             effective_clearance,
-            claim_id: self.claim_id,
-            revision: self.revision,
-            control_hash: String::new(),
+            self.claim_id,
             source_hash,
-            answer: self.answer,
+            "compiled-fixture-v1",
+            self.answer,
             citation,
-        };
-        permit.control_hash = permit.computed_control_hash();
-        Some(permit)
+        ))
     }
 
     fn computed_template_hash(&self) -> String {
@@ -212,6 +287,13 @@ impl ClaimTemplate {
         hash_fields(&fields)
     }
 }
+
+const UPLOAD_ALIASES: &[&str] = &[
+    "quel est le statut des uploads arbitraires ?",
+    "quel est le statut des uploads arbitraires?",
+    "statut des uploads arbitraires",
+    "what is the status of arbitrary uploads?",
+];
 
 const FIXTURE_ALIASES: &[&str] = &[
     "quelle est la capitale de la france ?",
