@@ -37,8 +37,22 @@ if unsafe_names or unsupported or unversioned:
 wasm = [path for path in assets if path.suffix == ".wasm"]
 javascript = [path for path in assets if path.suffix == ".js"]
 styles = [path for path in assets if path.suffix == ".css"]
-if len(wasm) != 1 or len(javascript) < 2 or len(styles) != 1:
-    raise SystemExit(f"unexpected owner asset shape: wasm={len(wasm)}, js={len(javascript)}, css={len(styles)}")
+runtimes = [path for path in javascript if re.fullmatch(r"owner-runtime-[0-9a-f]{16}\.js", path.name)]
+runtime_wasm = [path for path in wasm if re.fullmatch(r"owner-runtime-[0-9a-f]{16}\.wasm", path.name)]
+registrations = [path for path in javascript if re.fullmatch(r"owner-sw-register-[0-9a-f]{16}\.js", path.name)]
+shell_styles = [path for path in styles if re.fullmatch(r"owner-shell-[0-9a-f]{16}\.css", path.name)]
+if len(wasm) != 1 or len(runtime_wasm) != 1 or len(javascript) != 2 or len(styles) != 1 or len(runtimes) != 1 or len(registrations) != 1 or len(shell_styles) != 1:
+    raise SystemExit(
+        "unexpected owner asset topology: "
+        f"wasm={[p.name for p in wasm]}, js={[p.name for p in javascript]}, css={[p.name for p in styles]}"
+    )
+for generated in [runtimes[0], runtime_wasm[0], registrations[0], shell_styles[0]]:
+    filename_digest = generated.stem.rsplit("-", 1)[-1]
+    final_digest = hashlib.sha256(generated.read_bytes()).hexdigest()
+    if filename_digest != final_digest[:16]:
+        raise SystemExit(
+            f"generated asset filename does not address its final bytes: {generated.name} != {final_digest[:16]}"
+        )
 
 html = index.read_text(encoding="utf-8")
 if re.search(r"(?:src|href)=[\"'](?:https?:)?//", html, re.IGNORECASE):

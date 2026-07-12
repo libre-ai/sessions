@@ -44,4 +44,5 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/libre-ai/context-kit", # ADR-0045: extracted Context Kit crates
+    "https://github.com/DioxusLabs/components", # Dioxus Primitives (headless ARIA components, I1 UI lab migration); not published on crates.io
 ]

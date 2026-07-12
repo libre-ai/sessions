@@ -24,10 +24,12 @@ Pour une cible HTTPS de test déjà fournie, Playwright ne démarre pas de serve
 
 ```bash
 cd e2e
-TEST_BASE_URL=https://cible-de-test.example npx playwright test
+TEST_BASE_URL=https://cible-de-test.example npx playwright test tests/pwa-smoke.spec.ts \
+  --project=chromium --project=firefox-smoke --project=webkit-smoke \
+  --project=mobile-chromium-smoke
 ```
 
-N’utiliser qu’une cible isolée autorisée. Les mocks Playwright prouvent le comportement client, pas la disponibilité réelle de ses API. La garde Keycloak réelle reste la procédure manuelle distincte de [`e2e-testing.md`](e2e-testing.md).
+Cette commande distante reste volontairement ciblée sur `pwa-smoke.spec.ts`; elle ne lance pas la suite Chromium complète, dont certains scénarios sont mutateurs. Le contrôle local complet reste `npm test`. N’utiliser qu’une cible isolée autorisée. Les mocks Playwright prouvent le comportement client, pas la disponibilité réelle de ses API. La garde Keycloak réelle reste la procédure manuelle distincte de [`e2e-testing.md`](e2e-testing.md).
 
 ## Android Chrome
 

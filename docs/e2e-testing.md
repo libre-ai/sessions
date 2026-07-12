@@ -95,7 +95,9 @@ To run against an already-started server:
 ```bash
 INGEST_TOKEN=$(openssl rand -hex 32) PORT=3000 cargo run --bin presto-server
 cd e2e
-TEST_BASE_URL=http://localhost:3000 npm test
+TEST_BASE_URL=http://localhost:3000 npx playwright test tests/pwa-smoke.spec.ts \
+  --project=chromium --project=firefox-smoke --project=webkit-smoke \
+  --project=mobile-chromium-smoke
 ```
 
 ## Debugging

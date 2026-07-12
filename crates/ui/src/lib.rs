@@ -8,11 +8,12 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
+use dioxus_primitives::label::Label;
 use presto_core::api::SourceCitation;
 
-// Native controls are preferred where HTML already supplies the required
-// semantics. This keeps the owner shell free of generic runtime HTML injection
-// branches and machine-local JavaScript asset paths.
+// Dioxus Primitives: headless ARIA-compliant components, imported by module.
+// TextInput preserves the Label migration from UI increment #74. Theme styles
+// remain externalized by the owner host so its CSP needs no inline styles.
 
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
@@ -90,7 +91,7 @@ pub fn TextInput(
     let described_by = help.as_ref().map(|_| format!("{id}-help"));
     rsx! {
         div { class: "presto-field",
-            label { class: "presto-label", r#for: "{id}", "{label}" }
+            Label { class: "presto-label", html_for: "{id}", "{label}" }
             input {
                 class: "presto-input",
                 id: "{id}",
@@ -368,12 +369,12 @@ mod tests {
     }
 
     #[test]
-    fn text_input_native_label_links_to_input() {
+    fn text_input_label_links_to_input_via_primitive() {
         let html = render(rsx! { TextInput {
             id: "email".to_string(),
             label: "Email".to_string(),
         } });
-        // Native label semantics link the control without a JavaScript primitive.
+        // The Primitives Label renders a real <label for=…> linked to the input.
         assert!(html.contains("<label"));
         assert!(html.contains("for=\"email\""));
         assert!(html.contains("id=\"email\""));

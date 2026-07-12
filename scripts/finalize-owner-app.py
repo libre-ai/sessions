@@ -66,18 +66,87 @@ def main(bundle: Path) -> None:
     if not index_path.is_file() or not assets.is_dir():
         raise SystemExit("dx owner output is incomplete")
 
-    # Dioxus' generic interpreter ships an unused dangerous_inner_html branch.
-    # Remove that capability from the delivered runtime rather than permitting it.
-    for javascript in sorted(assets.glob("*.js")):
-        source = javascript.read_bytes()
-        source = source.replace(b'.innerHTML=e', b'.replaceChildren(document.createTextNode(e))')
-        source = source.replace(b'.innerHTML=""', b'.replaceChildren()')
-        source = re.sub(
-            rb"return new Function\(g\(t,e\),g\(n,r\)\)",
-            b'throw new Error("dynamic code disabled")',
-            source,
+    # Expected dx topology with the pinned Label primitive:
+    # HTML -> one interpreter JS -> one WASM. Dioxus Primitives also emits one
+    # focus-trap asset globally although Label cannot call it. Any other graph
+    # fails closed instead of attempting recursive filename rewrites.
+    generated_javascript = sorted(assets.glob("*.js"))
+    runtimes = [path for path in generated_javascript if re.fullmatch(r"rumble-lm-app-(?:dxh)?[0-9a-f]+\.js", path.name)]
+    focus_traps = [path for path in generated_javascript if re.fullmatch(r"focus-trap-(?:dxh)?[0-9a-f]+\.js", path.name)]
+    wasm_files = sorted(assets.glob("*.wasm"))
+    if len(runtimes) != 1 or len(focus_traps) != 1 or len(wasm_files) != 1 or len(generated_javascript) != 2:
+        raise SystemExit(
+            "unexpected dx asset topology; expected runtime JS + unused Label focus-trap JS + WASM, "
+            f"found js={[path.name for path in generated_javascript]}, wasm={[path.name for path in wasm_files]}"
         )
-        javascript.write_bytes(source)
+    runtime = runtimes[0]
+    focus_trap = focus_traps[0]
+    wasm = wasm_files[0]
+    old_runtime_name = runtime.name
+    old_wasm_name = wasm.name
+
+    source = runtime.read_bytes()
+    if focus_trap.name.encode() in source or focus_trap.name in index_path.read_text(encoding="utf-8"):
+        raise SystemExit("Label-only topology unexpectedly executes the generic focus-trap asset")
+
+    # Remove the unreachable auxiliary asset and normalize its Manganis metadata
+    # in-place (same byte lengths preserve the WASM data-section layout). The
+    # resulting WASM is then named from its final SHA-256, never its old dx URL.
+    wasm_bytes = wasm.read_bytes()
+    source_paths = re.findall(
+        rb"/(?:Users|home)/[A-Za-z0-9._/@+-]+(?:/[A-Za-z0-9._@+-]+)*/primitives/src/js/focus-trap\.js",
+        wasm_bytes,
+    )
+    if not source_paths:
+        raise SystemExit("expected pinned primitive focus-trap metadata in WASM")
+    for source_path in sorted(set(source_paths)):
+        replacement = b"/source/dioxus-primitives/focus-trap.js".ljust(len(source_path), b"_")
+        if len(replacement) != len(source_path):
+            raise SystemExit("primitive source path is shorter than deterministic replacement")
+        wasm_bytes = wasm_bytes.replace(source_path, replacement)
+    disabled_asset = b"disabled-focus-trap.js".ljust(len(focus_trap.name.encode()), b"_")
+    if len(disabled_asset) != len(focus_trap.name.encode()):
+        raise SystemExit("focus-trap output name is shorter than disabled marker")
+    wasm_bytes = wasm_bytes.replace(focus_trap.name.encode(), disabled_asset)
+    focus_trap.unlink()
+    wasm_name = f"owner-runtime-{digest(wasm_bytes)[:16]}.wasm"
+    (assets / wasm_name).write_bytes(wasm_bytes)
+    wasm.unlink()
+
+    wasm_references = source.count(old_wasm_name.encode())
+    if wasm_references < 1:
+        raise SystemExit(f"dx runtime does not reference its WASM: {old_wasm_name}")
+    source = source.replace(old_wasm_name.encode(), wasm_name.encode())
+    source = source.replace(b'.innerHTML=e', b'.replaceChildren(document.createTextNode(e))')
+    source = source.replace(b'.innerHTML=""', b'.replaceChildren()')
+    source = re.sub(
+        rb"return new Function\(g\(t,e\),g\(n,r\)\)",
+        b'throw new Error("dynamic code disabled")',
+        source,
+    )
+    if old_runtime_name.encode() in source:
+        raise SystemExit("dx runtime self-reference would require recursive content addressing")
+    runtime_name = f"owner-runtime-{digest(source)[:16]}.js"
+    runtime_path = assets / runtime_name
+    if runtime_path.exists():
+        raise SystemExit(f"refusing to overwrite generated runtime: {runtime_name}")
+    runtime_path.write_bytes(source)
+    runtime.unlink()
+
+    # Rewrite every textual reference only after the final runtime bytes and
+    # filename are known. The old immutable URL must disappear entirely.
+    old_runtime_url = f"/app/assets/{old_runtime_name}"
+    runtime_url = f"/app/assets/{runtime_name}"
+    reference_files = [index_path, *sorted(assets.glob("*.css")), *sorted(assets.glob("*.json"))]
+    replacement_count = 0
+    for path in reference_files:
+        data = path.read_bytes()
+        replacement_count += data.count(old_runtime_name.encode())
+        data = data.replace(old_runtime_url.encode(), runtime_url.encode())
+        data = data.replace(old_runtime_name.encode(), runtime_name.encode())
+        path.write_bytes(data)
+    if replacement_count < 1:
+        raise SystemExit(f"dx HTML does not reference its runtime: {old_runtime_name}")
 
     css_sources = [
         ROOT / "crates/ui/src/tokens.css",
@@ -202,7 +271,18 @@ self.addEventListener("fetch", (event) => {{
 '''.encode()
     (bundle / "sw.js").write_bytes(sw)
 
-    forbidden = [str(ROOT).encode(), str(Path.home()).encode(), b"unsafe-inline", b"'unsafe-eval'", b"innerHTML", b"new Function", b"eval("]
+    forbidden = [
+        str(ROOT).encode(),
+        str(Path.home()).encode(),
+        old_runtime_name.encode(),
+        old_wasm_name.encode(),
+        focus_trap.name.encode(),
+        b"unsafe-inline",
+        b"'unsafe-eval'",
+        b"innerHTML",
+        b"new Function",
+        b"eval(",
+    ]
     for path in sorted(p for p in bundle.rglob("*") if p.is_file()):
         data = path.read_bytes()
         hits = [value for value in forbidden if value and value in data]

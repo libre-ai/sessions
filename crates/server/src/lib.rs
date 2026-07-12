@@ -338,7 +338,8 @@ mod tests {
                 .unwrap();
             let html = String::from_utf8(body.to_vec()).unwrap();
             assert!(html.contains("<title>Rumble LM — espace owner</title>"));
-            assert!(html.contains("/app/assets/rumble-lm-app-"));
+            assert!(html.contains("/app/assets/owner-runtime-"));
+            assert!(!html.contains("/app/assets/rumble-lm-app-"));
             assert!(html.contains("<div id=\"main\"></div>"));
         }
     }

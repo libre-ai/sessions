@@ -22,7 +22,7 @@ async function waitForControl(page: import('@playwright/test').Page) {
 }
 
 test('manifest, PNG icons and Chromium installability metadata are coherent', async ({ page, browserName }) => {
-  await page.goto('/app');
+  await waitForControl(page);
   const manifest = await page.evaluate(async () => (await fetch('/app/manifest.webmanifest')).json());
   expect(manifest).toMatchObject({ id: '/app/', scope: '/app/', start_url: '/app/', display: 'standalone', lang: 'fr' });
   expect(manifest.icons).toHaveLength(4);
@@ -44,6 +44,8 @@ test('manifest, PNG icons and Chromium installability metadata are coherent', as
     expect(result.url).toContain('/app/manifest.webmanifest');
     expect(result.errors).toEqual([]);
     expect(result.data).toContain('"display":"standalone"');
+    const installability = await session.send('Page.getInstallabilityErrors');
+    expect(installability.installabilityErrors).toEqual([]);
   }
 });
 
@@ -77,9 +79,53 @@ test('Cache Storage is an exact shell allowlist and APIs stay network-only offli
   });
   expect(afterSensitiveRequests).toEqual(expected);
 
+  await page.route('**/api/spaces/current', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      data: {
+        space: {
+          id: 'space-offline-proof',
+          name: 'Offline proof',
+          role: 'owner',
+          capabilities: ['read'],
+          max_confidentiality: 'internal',
+        },
+      },
+    }),
+  }));
+  await page.route('**/api/rag/query', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      data: {
+        status: 'grounded',
+        answer: 'ANCIENNE_DONNEE_INTERDITE_HORS_LIGNE',
+        citations: [{
+          source_section_id: 'stale#citation',
+          document_id: 'stale',
+          title: 'Citation périmée',
+          excerpt: 'Ne doit jamais survivre hors ligne.',
+        }],
+      },
+    }),
+  }));
+  await page.goto('/app/notebook');
+  await page.getByLabel('Question au corpus').fill('Créer une ancienne donnée');
+  await page.getByRole('button', { name: 'Envoyer' }).click();
+  await expect(page.getByText('ANCIENNE_DONNEE_INTERDITE_HORS_LIGNE')).toBeVisible();
+  await page.unroute('**/api/spaces/current');
+  await page.unroute('**/api/rag/query');
+
   await context.setOffline(true);
   await page.goto('/app/notebook');
-  await expect(page.getByRole('heading', { name: 'Interroger votre corpus' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Espace indisponible' })).toBeVisible();
+  await expect(page.getByLabel('Question au corpus')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Envoyer' })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Réponse', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Citations approuvées' })).toHaveCount(0);
+  await expect(page.getByText('ANCIENNE_DONNEE_INTERDITE_HORS_LIGNE')).toHaveCount(0);
+  await expect(page.getByText('Citation périmée')).toHaveCount(0);
   const apiFailed = await page.evaluate(async () => {
     try {
       await fetch('/api/cache-probe');
