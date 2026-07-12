@@ -70,7 +70,7 @@ impl ApprovedClaimRegistry {
 }
 
 /// Opaque authorization selected only from an approved alias and bound to one
-/// provisioned personal-space artifact.
+/// deterministically derived personal-space artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApprovedPermit {
     space_id: String,
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn provisioned_spaces_have_distinct_source_ids_hashes_and_controls() {
+    fn derived_spaces_have_distinct_source_ids_hashes_and_controls() {
         let registry = ApprovedClaimRegistry::fixture();
         let permit_a = registry
             .permit("space-a", ConfidentialityLevel::Public, FIXTURE_ALIASES[2])

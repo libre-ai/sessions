@@ -75,6 +75,69 @@ test.describe('Owner notebook approved claims', () => {
     await expect(citations.getByText('approved-geography#france')).toBeVisible();
   });
 
+  test('retries the RAG backend after a bounded first-submit failure', async ({ page }) => {
+    await mockAuthenticatedSpace(page);
+    let attempts = 0;
+    await page.route('**/api/rag/query', async (route) => {
+      attempts += 1;
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().postDataJSON()).toEqual({
+        space_id: 'space-e2e-owner',
+        query: 'Quelle est la capitale de la France ?',
+        max_sources: 3,
+      });
+      if (attempts === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          headers: { 'cache-control': 'no-store' },
+          body: '{"error":"unavailable"}',
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'cache-control': 'no-store' },
+        body: JSON.stringify({
+          data: {
+            status: 'grounded',
+            answer: 'Paris est la capitale de la France.',
+            citations: [{
+              source_section_id: 'approved-geography#france',
+              document_id: 'approved-geography',
+              title: 'Référence géographique approuvée',
+              excerpt: 'La France a pour capitale Paris.',
+            }],
+          },
+        }),
+      });
+    });
+
+    await page.goto('/app/notebook');
+    await page.getByLabel('Question au corpus').fill('Quelle est la capitale de la France ?');
+    const submit = page.getByRole('button', { name: 'Envoyer' });
+    const firstResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/rag/query') && response.status() === 503,
+    );
+    await submit.click();
+    await firstResponse;
+    await expect(page.getByRole('heading', { name: 'Requête impossible' })).toBeVisible();
+    await expect(submit).toBeEnabled();
+
+    const retryResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/rag/query') && response.status() === 200,
+    );
+    await submit.click();
+    await retryResponse;
+    await expect(page.getByRole('heading', { name: 'Réponse', exact: true })).toBeVisible();
+    await expect(page.getByText('Paris est la capitale de la France.')).toBeVisible();
+    const citations = page.getByRole('region', { name: 'Citations approuvées' });
+    await expect(citations.getByText('Référence géographique approuvée')).toBeVisible();
+    await expect(citations.getByText('approved-geography#france')).toBeVisible();
+    expect(attempts).toBe(2);
+  });
+
   test('retries a failed current-space load', async ({ page }) => {
     let attempts = 0;
     await page.route('**/api/spaces/current', async (route) => {

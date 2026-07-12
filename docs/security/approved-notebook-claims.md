@@ -38,14 +38,14 @@ clients/tests de contrat. Un gate architectural du crate serveur parcourt
 `crates/server/src/**/*.rs` et interdit toute construction directe de
 `Grounded` hors de `approved_claims.rs`.
 
-## Provisioning fixture et isolation
+## Fixture déterministe et isolation
 
-La fixture source est réellement seedée par un `Retriever` local déterministe.
-Le provisioning est lazy et explicite pour chaque espace personnel authentifié :
-la source est enregistrée dans une map process-local scindée par `space_id`.
+Le `Retriever` local est stateless : il dérive la fixture à la demande depuis le
+`space_id` du scope authentifié et ne conserve aucun état par espace.
 `source_section_id`, `document_id`, hash de source et hash de contrôle sont
-dérivés avec le scope. Les espaces A et B ont donc des artefacts distincts ; un
-candidat ou permit A ne valide jamais B.
+dérivés avec ce scope. Les espaces A et B ont donc des artefacts logiquement
+distincts ; un candidat ou permit A ne valide jamais B, sans croissance mémoire
+cumulative liée au nombre d’espaces interrogés.
 
 Le template de contrôle couvre politique de provisioning, identifiant, révision,
 provenance, révocation, classification, réponse, source, titre et aliases. Le

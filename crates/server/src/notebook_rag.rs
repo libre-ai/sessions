@@ -4,11 +4,9 @@
 //! chunk, and the fail-closed lexical verifier. Its output is only a candidate:
 //! it has no API capable of creating or selecting an approved permit.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use parking_lot::Mutex;
 use presto_core::api::{ConfidentialityLevel, SourceCitation};
 use presto_rag::corpus::{Chunk, CorpusError, RetrievalScope, Retrieved, Retriever};
 use presto_rag::generate::generate_from_chunk;
@@ -66,7 +64,7 @@ impl StagedNotebookRagEngine {
 
     pub fn fixture() -> Self {
         Self::new(
-            Arc::new(ProvisionedFixtureRetriever::default()),
+            Arc::new(ProvisionedFixtureRetriever),
             Arc::new(DeterministicNotebookProvider),
         )
     }
@@ -131,25 +129,12 @@ impl NotebookRagEngine for StagedNotebookRagEngine {
     }
 }
 
-#[derive(Default)]
-struct ProvisionedFixtureRetriever {
-    // Lazy provisioning is explicit and per authenticated personal space. The
-    // map is the seeded fixture corpus; no entry or source artifact is shared.
-    sources: Mutex<HashMap<String, Chunk>>,
-}
+struct ProvisionedFixtureRetriever;
 
 impl ProvisionedFixtureRetriever {
-    fn provision(&self, space_id: &str) -> Option<Chunk> {
-        if space_id.is_empty() {
-            return None;
-        }
-        let mut sources = self.sources.lock();
-        Some(
-            sources
-                .entry(space_id.to_owned())
-                .or_insert_with(|| fixture_chunk(space_id))
-                .clone(),
-        )
+    /// Derives the scoped fixture on demand without retaining per-space state.
+    fn fixture_for_scope(space_id: &str) -> Option<Chunk> {
+        (!space_id.is_empty()).then(|| fixture_chunk(space_id))
     }
 }
 
@@ -166,8 +151,7 @@ impl Retriever for ProvisionedFixtureRetriever {
         {
             return Ok(Vec::new());
         }
-        Ok(self
-            .provision(&scope.space_id)
+        Ok(Self::fixture_for_scope(&scope.space_id)
             .into_iter()
             .map(|chunk| Retrieved {
                 source_section_id: chunk.source_section_id,
@@ -183,8 +167,7 @@ impl Retriever for ProvisionedFixtureRetriever {
         scope: &RetrievalScope,
         section_id: &str,
     ) -> Result<Option<Chunk>, CorpusError> {
-        Ok(self
-            .provision(&scope.space_id)
+        Ok(Self::fixture_for_scope(&scope.space_id)
             .filter(|chunk| chunk.source_section_id == section_id))
     }
 }
@@ -432,9 +415,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fixture_provisions_distinct_scoped_source_artifacts() {
+    async fn fixture_is_derived_deterministically_without_cross_space_artifacts() {
         let engine = StagedNotebookRagEngine::fixture();
         let a = engine
+            .run("space-a", ConfidentialityLevel::Public, "capital?")
+            .await
+            .unwrap();
+        let a_again = engine
             .run("space-a", ConfidentialityLevel::Public, "capital?")
             .await
             .unwrap();
@@ -442,9 +429,15 @@ mod tests {
             .run("space-b", ConfidentialityLevel::Public, "capital?")
             .await
             .unwrap();
-        let (NotebookRagOutcome::Candidate(a), NotebookRagOutcome::Candidate(b)) = (a, b) else {
-            panic!("both spaces must have provisioned candidates")
+        let (
+            NotebookRagOutcome::Candidate(a),
+            NotebookRagOutcome::Candidate(a_again),
+            NotebookRagOutcome::Candidate(b),
+        ) = (a, a_again, b)
+        else {
+            panic!("all non-empty scopes must produce candidates")
         };
+        assert_eq!(a, a_again);
         assert_ne!(a.citation.source_section_id, b.citation.source_section_id);
         assert_ne!(a.source_hash, b.source_hash);
     }
