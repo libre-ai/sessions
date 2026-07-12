@@ -59,6 +59,7 @@ set +a
 export OIDC_ISSUER=http://localhost:8081/realms/rumble-lm-dev
 export OIDC_CLIENT_ID=rumble-lm-owner
 export OIDC_REDIRECT_URI=http://localhost:3000/auth/callback
+export OWNER_AUTH_SINGLE_INSTANCE=1
 export KEYCLOAK_E2E=1
 
 ./scripts/build-owner-app.sh
@@ -68,7 +69,7 @@ npx playwright install chromium
 npx playwright test tests/owner-auth-keycloak.spec.ts --project=chromium
 ```
 
-The test uses a 390×844 touch profile, asserts the exact cookie properties through the browser context, proves the cookie is absent from `document.cookie` and web storage, reloads the page, then submits the real same-origin logout form. Tracing is explicitly disabled for this file so credentials and the short-lived protocol callback cannot enter a Playwright trace. Stop or fully rotate the local environment with:
+The test first proves that an OIDC callback initiated by browser A is rejected when presented by isolated browser B. It then uses a 390×844 touch profile, asserts the exact cookie properties through the browser context, proves the cookie is absent from `document.cookie` and web storage, reloads the page, then submits the real same-origin logout form. Tracing is explicitly disabled for this file so credentials and the short-lived protocol callback cannot enter a Playwright trace. Stop or fully rotate the local environment with:
 
 ```bash
 ./scripts/keycloak-dev.sh down
@@ -113,4 +114,4 @@ The `.github/workflows/ci.yml` includes an `e2e` job that:
 
 Tests must pass before merge.
 
-The real Keycloak browser test is a **documented manual pre-merge gate**, not currently CI-blocking: the default GitHub job has no nested container orchestration and no secret credential input by design. It is not replaced by a fake login. The blocking deterministic protocol integration is `owner_auth::tests::full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out` plus the adversarial owner-auth tests: they start an in-process HTTP OIDC provider, exercise real discovery, token POST/PKCE, RS256/JWKS validation and the complete Axum router. CI runs them in `cargo test --workspace --all-features`. A maintainer records the manual Keycloak command/result on the pull request for issue #32 before merge.
+The real Keycloak browser test is a **documented manual pre-merge gate**, not CI-blocking: the default GitHub job has no nested container orchestration and no secret credential input by design. When `KEYCLOAK_E2E=1`, Playwright refuses to reuse a server already listening on port 3000 and always starts the binary from the current checkout. The blocking deterministic protocol integration is `owner_auth::tests::full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out`, `owner_auth::tests::callback_is_bound_to_initiating_browser_and_consumed_on_mismatch`, and the other adversarial owner-auth tests. They start an in-process HTTP OIDC provider and exercise discovery, token POST/PKCE, RS256/JWKS validation and the complete Axum router. CI runs them in `cargo test --workspace --all-features`. A maintainer records the separate manual Keycloak result on the pull request before merge; it must not be described as CI-blocking.

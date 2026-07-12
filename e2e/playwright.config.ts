@@ -43,7 +43,8 @@ export default defineConfig({
     // PORT=3000 aligns the server with baseURL/webServer.url in local and CI runs.
     command: 'cd .. && ./scripts/verify-owner-app.sh && PORT=3000 cargo run --release --bin presto-server',
     url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    // A real-Keycloak proof must always execute the server from this checkout.
+    reuseExistingServer: !process.env.CI && process.env.KEYCLOAK_E2E !== '1',
     timeout: 120000,
   },
 });

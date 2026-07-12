@@ -23,16 +23,24 @@ use presto_core::api::{
 use reqwest::Url;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::AppState;
 use crate::auth::Auth;
 use crate::membership::{InMemoryMembershipStore, MembershipStore, PersonalSpace, Role};
 use crate::oidc::{OidcClient, OidcConfig, pkce_challenge};
+use crate::ratelimit::TokenBucket;
 
 pub const SESSION_COOKIE_NAME: &str = "__Host-rumble_session";
+pub const LOGIN_COOKIE_NAME: &str = "__Host-rumble_login";
 const LOGIN_TTL: Duration = Duration::from_secs(5 * 60);
 const SESSION_TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_PENDING_LOGINS: usize = 1024;
+// A full bucket followed by five minutes of sustained refill admits at most
+// 332 abandoned attempts, well below MAX_PENDING_LOGINS. This global bound is
+// independent of untrusted forwarding headers and runs before random allocation.
+const LOGIN_RATE_BURST: f64 = 32.0;
+const LOGIN_RATE_PER_SEC: f64 = 1.0;
 const MAX_WEB_SESSIONS: usize = 10_000;
 const OWNER_CAPS: &[&str] = &[
     "read",
@@ -109,7 +117,13 @@ impl std::error::Error for OwnerAuthError {}
 struct LoginAttempt {
     nonce: String,
     pkce_verifier: String,
+    login_cookie_digest: [u8; 32],
     expires_at: Instant,
+}
+
+struct LoginStart {
+    authorization_url: Url,
+    login_cookie: String,
 }
 
 #[derive(Clone)]
@@ -135,6 +149,7 @@ pub struct OwnerAuth {
     membership: Arc<dyn MembershipStore>,
     capability_authority: Arc<Auth>,
     public_origin: Option<String>,
+    login_admission: TokenBucket,
     pending_logins: Mutex<HashMap<[u8; 32], LoginAttempt>>,
     sessions: Mutex<HashMap<[u8; 32], WebSession>>,
 }
@@ -146,6 +161,7 @@ impl OwnerAuth {
             membership: Arc::new(InMemoryMembershipStore::new()),
             capability_authority,
             public_origin: None,
+            login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
             pending_logins: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
         }
@@ -164,6 +180,7 @@ impl OwnerAuth {
             membership,
             capability_authority,
             public_origin: Some(config.public_origin),
+            login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
             pending_logins: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
         })
@@ -173,14 +190,35 @@ impl OwnerAuth {
         self.provider.is_some()
     }
 
-    fn begin_login(&self) -> Result<Url, OwnerAuthError> {
+    fn begin_login(&self, headers: &HeaderMap, now: Instant) -> Result<LoginStart, OwnerAuthError> {
         let provider = self.provider.as_ref().ok_or(OwnerAuthError::Unavailable)?;
+
+        // Global admission is deliberately independent of client IP. In
+        // particular, X-Forwarded-For is ignored because no trusted-proxy
+        // boundary is configured here. Check this before allocating secrets.
+        if !self.login_admission.allow_at(now) {
+            return Err(OwnerAuthError::Capacity);
+        }
+
+        let existing_login_cookie = login_cookie_value(headers);
+        let previous_cookie_digest = existing_login_cookie.as_deref().map(digest);
         let state = random_value::<32>()?;
         let nonce = random_value::<32>()?;
         let pkce_verifier = random_value::<32>()?;
-        let now = Instant::now();
+        // Reuse a valid browser cookie so repeated login starts replace, rather
+        // than accumulate beside, that browser's pending transaction.
+        let login_cookie = match existing_login_cookie {
+            Some(value) => value,
+            None => random_value::<32>()?,
+        };
+        let login_cookie_digest = digest(&login_cookie);
         let mut attempts = self.pending_logins.lock();
         attempts.retain(|_, attempt| attempt.expires_at > now);
+        if let Some(previous_cookie_digest) = previous_cookie_digest {
+            attempts.retain(|_, attempt| {
+                !bool::from(attempt.login_cookie_digest.ct_eq(&previous_cookie_digest))
+            });
+        }
         if attempts.len() >= MAX_PENDING_LOGINS {
             return Err(OwnerAuthError::Capacity);
         }
@@ -189,24 +227,44 @@ impl OwnerAuth {
             LoginAttempt {
                 nonce: nonce.clone(),
                 pkce_verifier: pkce_verifier.clone(),
+                login_cookie_digest,
                 expires_at: now + LOGIN_TTL,
             },
         );
-        Ok(provider.authorization_url(&state, &nonce, &pkce_challenge(&pkce_verifier)))
+        Ok(LoginStart {
+            authorization_url: provider.authorization_url(
+                &state,
+                &nonce,
+                &pkce_challenge(&pkce_verifier),
+            ),
+            login_cookie,
+        })
     }
 
-    async fn finish_login(&self, state: &str, code: &str) -> Result<String, OwnerAuthError> {
+    fn consume_login(&self, state: &str) -> Option<LoginAttempt> {
         if state.is_empty() || state.len() > 512 {
-            return Err(OwnerAuthError::Unauthenticated);
+            return None;
         }
-        // Consume before any network request. Provider failure therefore cannot
-        // turn one callback into a replayable login transaction.
+        self.pending_logins.lock().remove(&digest(state))
+    }
+
+    async fn finish_login(
+        &self,
+        headers: &HeaderMap,
+        state: &str,
+        code: &str,
+    ) -> Result<String, OwnerAuthError> {
+        // Consume before cookie validation and before any network request. A
+        // substituted or failed callback can therefore never be replayed.
         let attempt = self
-            .pending_logins
-            .lock()
-            .remove(&digest(state))
+            .consume_login(state)
             .ok_or(OwnerAuthError::Unauthenticated)?;
         if attempt.expires_at <= Instant::now() {
+            return Err(OwnerAuthError::Unauthenticated);
+        }
+        let presented_cookie =
+            login_cookie_value(headers).ok_or(OwnerAuthError::Unauthenticated)?;
+        if !bool::from(digest(&presented_cookie).ct_eq(&attempt.login_cookie_digest)) {
             return Err(OwnerAuthError::Unauthenticated);
         }
         let provider = self.provider.as_ref().ok_or(OwnerAuthError::Unavailable)?;
@@ -378,38 +436,57 @@ pub(crate) struct CallbackQuery {
     error: Option<String>,
 }
 
-pub(crate) async fn login(State(state): State<AppState>) -> Response {
-    match state.owner_auth.begin_login() {
-        Ok(url) => no_store_redirect(url.as_str()),
-        Err(error) => error_response(error),
-    }
-}
-
-pub(crate) async fn callback(
-    State(state): State<AppState>,
-    query: Result<Query<CallbackQuery>, QueryRejection>,
-) -> Response {
-    let Ok(Query(query)) = query else {
-        return error_response(OwnerAuthError::InvalidRequest);
-    };
-    if query.error.is_some() {
-        return error_response(OwnerAuthError::Unauthenticated);
-    }
-    let (Some(code), Some(callback_state)) = (query.code, query.state) else {
-        return error_response(OwnerAuthError::InvalidRequest);
-    };
-    match state.owner_auth.finish_login(&callback_state, &code).await {
-        Ok(session_id) => {
-            let mut response = no_store_redirect("/app");
+pub(crate) async fn login(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    match state.owner_auth.begin_login(&headers, Instant::now()) {
+        Ok(start) => {
+            let mut response = no_store_redirect(start.authorization_url.as_str());
             response.headers_mut().insert(
                 header::SET_COOKIE,
-                HeaderValue::from_str(&session_cookie(&session_id))
+                HeaderValue::from_str(&login_cookie(&start.login_cookie))
                     .expect("base64url cookie value is a valid header"),
             );
             response
         }
         Err(error) => error_response(error),
     }
+}
+
+pub(crate) async fn callback(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Result<Query<CallbackQuery>, QueryRejection>,
+) -> Response {
+    let response = match query {
+        Err(_) => error_response(OwnerAuthError::InvalidRequest),
+        Ok(Query(query)) if query.error.is_some() => {
+            if let Some(callback_state) = query.state.as_deref() {
+                state.owner_auth.consume_login(callback_state);
+            }
+            error_response(OwnerAuthError::Unauthenticated)
+        }
+        Ok(Query(query)) => {
+            let (Some(code), Some(callback_state)) = (query.code, query.state) else {
+                return expire_login_cookie(error_response(OwnerAuthError::InvalidRequest));
+            };
+            match state
+                .owner_auth
+                .finish_login(&headers, &callback_state, &code)
+                .await
+            {
+                Ok(session_id) => {
+                    let mut response = no_store_redirect("/app");
+                    response.headers_mut().append(
+                        header::SET_COOKIE,
+                        HeaderValue::from_str(&session_cookie(&session_id))
+                            .expect("base64url cookie value is a valid header"),
+                    );
+                    response
+                }
+                Err(error) => error_response(error),
+            }
+        }
+    };
+    expire_login_cookie(response)
 }
 
 pub(crate) async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -510,7 +587,32 @@ fn session_cookie(value: &str) -> String {
     )
 }
 
+fn login_cookie(value: &str) -> String {
+    format!(
+        "{LOGIN_COOKIE_NAME}={value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={}",
+        LOGIN_TTL.as_secs()
+    )
+}
+
+fn expire_login_cookie(mut response: Response) -> Response {
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_static(
+            "__Host-rumble_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
+        ),
+    );
+    response
+}
+
 fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
+    cookie_value(headers, SESSION_COOKIE_NAME)
+}
+
+fn login_cookie_value(headers: &HeaderMap) -> Option<String> {
+    cookie_value(headers, LOGIN_COOKIE_NAME)
+}
+
+fn cookie_value(headers: &HeaderMap, expected_name: &str) -> Option<String> {
     let mut found = None;
     for header_value in headers.get_all(header::COOKIE) {
         let value = header_value.to_str().ok()?;
@@ -518,7 +620,7 @@ fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
             let Some((name, value)) = pair.trim().split_once('=') else {
                 continue;
             };
-            if name == SESSION_COOKIE_NAME {
+            if name == expected_name {
                 if found.is_some()
                     || value.is_empty()
                     || value.len() > 512
@@ -715,31 +817,57 @@ mod tests {
         (app(state), owner_auth, membership, idp)
     }
 
-    async fn begin_login(router: &axum::Router, idp: &FakeIdp) -> String {
+    struct BrowserLogin {
+        state: String,
+        cookie: String,
+    }
+
+    async fn begin_login(router: &axum::Router, idp: &FakeIdp) -> BrowserLogin {
+        begin_login_with_cookie(router, idp, None).await
+    }
+
+    async fn begin_login_with_cookie(
+        router: &axum::Router,
+        idp: &FakeIdp,
+        cookie: Option<&str>,
+    ) -> BrowserLogin {
+        let mut request = axum::http::Request::builder().uri("/auth/login");
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
         let response = router
             .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri("/auth/login")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(request.body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        idp.configure_login(response.headers()[header::LOCATION].to_str().unwrap())
+        let set_cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(set_cookie.starts_with("__Host-rumble_login="));
+        assert!(set_cookie.contains("; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=300"));
+        BrowserLogin {
+            state: idp.configure_login(response.headers()[header::LOCATION].to_str().unwrap()),
+            cookie: set_cookie.split(';').next().unwrap().to_string(),
+        }
     }
 
-    async fn callback_response(router: &axum::Router, state: &str) -> Response {
+    async fn callback_response(router: &axum::Router, login: &BrowserLogin) -> Response {
+        callback_response_with_cookie(router, &login.state, Some(&login.cookie)).await
+    }
+
+    async fn callback_response_with_cookie(
+        router: &axum::Router,
+        state: &str,
+        cookie: Option<&str>,
+    ) -> Response {
+        let mut request = axum::http::Request::builder()
+            .uri(format!("/auth/callback?code=one-time-code&state={state}"));
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
         router
             .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/auth/callback?code=one-time-code&state={state}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(request.body(Body::empty()).unwrap())
             .await
             .unwrap()
     }
@@ -773,13 +901,19 @@ mod tests {
     }
 
     #[test]
-    fn cookie_has_exact_host_prefix_security_attributes_and_no_domain() {
-        let cookie = session_cookie("opaque_value");
+    fn cookies_have_exact_host_prefix_security_attributes_and_no_domain() {
+        let session = session_cookie("opaque_value");
         assert_eq!(
-            cookie,
+            session,
             "__Host-rumble_session=opaque_value; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900"
         );
-        assert!(!cookie.to_ascii_lowercase().contains("domain="));
+        let login = login_cookie("opaque_value");
+        assert_eq!(
+            login,
+            "__Host-rumble_login=opaque_value; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=300"
+        );
+        assert!(!session.to_ascii_lowercase().contains("domain="));
+        assert!(!login.to_ascii_lowercase().contains("domain="));
     }
 
     #[test]
@@ -812,6 +946,7 @@ mod tests {
             membership: Arc::new(InMemoryMembershipStore::new()),
             capability_authority: Arc::new(Auth::generate()),
             public_origin: Some("https://app.example".into()),
+            login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
             pending_logins: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
         };
@@ -837,13 +972,15 @@ mod tests {
     async fn full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out() {
         let (router, _owner_auth, membership, idp) = configured_app().await;
         assert_eq!(idp.jwks_requests.load(Ordering::SeqCst), 1);
-        let state = begin_login(&router, &idp).await;
+        let login = begin_login(&router, &idp).await;
         assert_eq!(
-            callback_response(&router, "attacker-state").await.status(),
+            callback_response_with_cookie(&router, "attacker-state", Some(&login.cookie))
+                .await
+                .status(),
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(idp.token_requests.load(Ordering::SeqCst), 0);
-        let callback = callback_response(&router, &state).await;
+        let callback = callback_response(&router, &login).await;
         assert_eq!(callback.status(), StatusCode::SEE_OTHER);
         assert_eq!(callback.headers()[header::LOCATION], "/app");
         let set_cookie = callback.headers()[header::SET_COOKIE].to_str().unwrap();
@@ -851,8 +988,16 @@ mod tests {
         assert!(set_cookie.contains("; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900"));
         assert!(!set_cookie.to_ascii_lowercase().contains("domain="));
         let cookie = set_cookie.split(';').next().unwrap().to_string();
+        assert!(
+            callback
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .any(|value| value
+                    == "__Host-rumble_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0")
+        );
 
-        let replay = callback_response(&router, &state).await;
+        let replay = callback_response(&router, &login).await;
         assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(idp.token_requests.load(Ordering::SeqCst), 1);
 
@@ -910,9 +1055,9 @@ mod tests {
         );
 
         // A second complete login is idempotent at the membership authority.
-        let state2 = begin_login(&router, &idp).await;
+        let login2 = begin_login(&router, &idp).await;
         assert_eq!(
-            callback_response(&router, &state2).await.status(),
+            callback_response(&router, &login2).await.status(),
             StatusCode::SEE_OTHER
         );
         assert_eq!(membership.list_members(&space_id).await.unwrap().len(), 1);
@@ -984,12 +1129,120 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn callback_is_bound_to_initiating_browser_and_consumed_on_mismatch() {
+        let (router, _owner_auth, _membership, idp) = configured_app().await;
+        let browser_a = begin_login(&router, &idp).await;
+        let browser_b = begin_login(&router, &idp).await;
+
+        let swapped =
+            callback_response_with_cookie(&router, &browser_a.state, Some(&browser_b.cookie)).await;
+        assert_eq!(swapped.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            swapped
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .any(|value| value
+                    == "__Host-rumble_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0")
+        );
+        assert_eq!(idp.token_requests.load(Ordering::SeqCst), 0);
+
+        // The mismatched callback consumed A's transaction; neither browser can
+        // replay it through the server-side PKCE oracle.
+        assert_eq!(
+            callback_response(&router, &browser_a).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(idp.token_requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn callback_error_consumes_transaction_and_expires_login_cookie() {
+        let (router, _owner_auth, _membership, idp) = configured_app().await;
+        let login = begin_login(&router, &idp).await;
+        let error = router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!(
+                        "/auth/callback?error=access_denied&state={}",
+                        login.state
+                    ))
+                    .header(header::COOKIE, &login.cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(error.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            error
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .any(|value| value
+                    == "__Host-rumble_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0")
+        );
+        assert_eq!(
+            callback_response(&router, &login).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(idp.token_requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn one_pending_login_per_browser_cookie_replaces_the_previous_attempt() {
+        let (router, owner_auth, _membership, idp) = configured_app().await;
+        let first = begin_login(&router, &idp).await;
+        let second = begin_login_with_cookie(&router, &idp, Some(&first.cookie)).await;
+        assert_eq!(second.cookie, first.cookie);
+        assert_eq!(owner_auth.pending_logins.lock().len(), 1);
+        assert_eq!(
+            callback_response(&router, &first).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            callback_response(&router, &second).await.status(),
+            StatusCode::SEE_OTHER
+        );
+    }
+
+    #[tokio::test]
+    async fn global_login_admission_is_bounded_before_1024_pending_allocations() {
+        let (_router, owner_auth, _membership, _idp) = configured_app().await;
+        let now = Instant::now();
+        let headers = HeaderMap::new();
+        for _ in 0..LOGIN_RATE_BURST as usize {
+            owner_auth.begin_login(&headers, now).unwrap();
+        }
+        assert_eq!(
+            owner_auth.begin_login(&headers, now).err(),
+            Some(OwnerAuthError::Capacity)
+        );
+        assert_eq!(owner_auth.pending_logins.lock().len(), 32);
+
+        // The sustained rate is one attempt/second and cannot fill the map
+        // during the five-minute transaction TTL.
+        assert!(
+            owner_auth
+                .begin_login(&headers, now + Duration::from_secs(1))
+                .is_ok()
+        );
+        assert_eq!(
+            owner_auth
+                .begin_login(&headers, now + Duration::from_secs(1))
+                .err(),
+            Some(OwnerAuthError::Capacity)
+        );
+    }
+
+    #[tokio::test]
     async fn state_ttl_and_all_production_claim_failures_are_rejected() {
         let (router, owner_auth, _membership, idp) = configured_app().await;
-        let expired_state = begin_login(&router, &idp).await;
-        owner_auth.expire_login(&expired_state);
+        let expired_login = begin_login(&router, &idp).await;
+        owner_auth.expire_login(&expired_login.state);
         assert_eq!(
-            callback_response(&router, &expired_state).await.status(),
+            callback_response(&router, &expired_login).await.status(),
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(idp.token_requests.load(Ordering::SeqCst), 0);
@@ -1002,9 +1255,9 @@ mod tests {
             TokenMode::BadSignature,
         ] {
             *idp.mode.lock() = mode;
-            let state = begin_login(&router, &idp).await;
+            let login = begin_login(&router, &idp).await;
             assert_eq!(
-                callback_response(&router, &state).await.status(),
+                callback_response(&router, &login).await.status(),
                 StatusCode::UNAUTHORIZED
             );
         }

@@ -23,6 +23,9 @@ use tokio::sync::Mutex as AsyncMutex;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PROVIDER_BODY: usize = 1024 * 1024;
+const MAX_JWKS_KEYS: usize = 64;
+const MAX_JWK_KID: usize = 256;
+const MAX_JWK_COMPONENT: usize = 16 * 1024;
 const UNKNOWN_KID_REFRESH_COOLDOWN: Duration = Duration::from_secs(5);
 const ID_TOKEN_MAX_AGE: u64 = 10 * 60;
 const CLOCK_SKEW: u64 = 30;
@@ -126,16 +129,22 @@ pub fn validate_id_token(
         return Err(OidcError::Invalid);
     }
 
-    if let Audience::Many(values) = &data.claims.aud
-        && (values.len() > 1 || !values.iter().any(|value| value == aud))
-        && data.claims.azp.as_deref() != Some(aud)
-    {
+    // OIDC Core: whenever azp is present it identifies this client, even for a
+    // scalar or single-element audience. Multiple audiences additionally make
+    // a matching azp mandatory.
+    if data.claims.azp.as_deref().is_some_and(|azp| azp != aud) {
         return Err(OidcError::Invalid);
     }
-    if let Audience::One(value) = &data.claims.aud
-        && value != aud
-    {
-        return Err(OidcError::Invalid);
+    match &data.claims.aud {
+        Audience::One(value) if value != aud => return Err(OidcError::Invalid),
+        Audience::Many(values)
+            if values.is_empty()
+                || !values.iter().any(|value| value == aud)
+                || (values.len() > 1 && data.claims.azp.as_deref() != Some(aud)) =>
+        {
+            return Err(OidcError::Invalid);
+        }
+        Audience::One(_) | Audience::Many(_) => {}
     }
 
     if data.claims.nonce.as_deref() != Some(nonce) {
@@ -303,14 +312,7 @@ impl OidcClient {
             .send()
             .await
             .map_err(|_| OidcProtocolError::Provider)?;
-        let status = response.status();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| OidcProtocolError::Provider)?;
-        if !status.is_success() || bytes.len() > MAX_PROVIDER_BODY {
-            return Err(OidcProtocolError::Provider);
-        }
+        let bytes = bounded_response_body(response, OidcProtocolError::Provider).await?;
         let tokens: TokenResponse =
             serde_json::from_slice(&bytes).map_err(|_| OidcProtocolError::Provider)?;
         if tokens.id_token.len() > 64 * 1024 {
@@ -375,30 +377,55 @@ impl OidcClient {
             OidcProtocolError::Provider,
         )
         .await?;
-        let mut refreshed = HashMap::new();
-        for jwk in document.keys {
-            if jwk.kty != "RSA"
-                || jwk.alg.as_deref().is_some_and(|alg| alg != "RS256")
-                || jwk.r#use.as_deref().is_some_and(|usage| usage != "sig")
-            {
-                continue;
-            }
-            let (Some(kid), Some(n), Some(e)) = (jwk.kid, jwk.n, jwk.e) else {
-                continue;
-            };
-            if kid.is_empty() || kid.len() > 256 || refreshed.contains_key(&kid) {
-                return Err(OidcProtocolError::Provider);
-            }
-            let key = DecodingKey::from_rsa_components(&n, &e)
-                .map_err(|_| OidcProtocolError::Provider)?;
-            refreshed.insert(kid, key);
-        }
-        if refreshed.is_empty() {
-            return Err(OidcProtocolError::Provider);
-        }
-        *self.keys.write() = refreshed;
+        *self.keys.write() = decode_jwks(document)?;
         Ok(())
     }
+}
+
+fn decode_jwks(document: JwksDocument) -> Result<HashMap<String, DecodingKey>, OidcProtocolError> {
+    if document.keys.len() > MAX_JWKS_KEYS {
+        return Err(OidcProtocolError::Provider);
+    }
+    let mut refreshed = HashMap::new();
+    for jwk in document.keys {
+        if jwk.kty.len() > 16
+            || jwk.alg.as_deref().is_some_and(|value| value.len() > 16)
+            || jwk.r#use.as_deref().is_some_and(|value| value.len() > 16)
+            || jwk
+                .kid
+                .as_deref()
+                .is_some_and(|value| value.len() > MAX_JWK_KID)
+            || jwk
+                .n
+                .as_deref()
+                .is_some_and(|value| value.len() > MAX_JWK_COMPONENT)
+            || jwk
+                .e
+                .as_deref()
+                .is_some_and(|value| value.len() > MAX_JWK_COMPONENT)
+        {
+            return Err(OidcProtocolError::Provider);
+        }
+        if jwk.kty != "RSA"
+            || jwk.alg.as_deref().is_some_and(|alg| alg != "RS256")
+            || jwk.r#use.as_deref().is_some_and(|usage| usage != "sig")
+        {
+            continue;
+        }
+        let (Some(kid), Some(n), Some(e)) = (jwk.kid, jwk.n, jwk.e) else {
+            continue;
+        };
+        if kid.is_empty() || refreshed.contains_key(&kid) {
+            return Err(OidcProtocolError::Provider);
+        }
+        let key =
+            DecodingKey::from_rsa_components(&n, &e).map_err(|_| OidcProtocolError::Provider)?;
+        refreshed.insert(kid, key);
+    }
+    if refreshed.is_empty() {
+        return Err(OidcProtocolError::Provider);
+    }
+    Ok(refreshed)
 }
 
 fn validate_endpoint(raw: &str) -> Result<Url, OidcProtocolError> {
@@ -434,12 +461,36 @@ async fn fetch_json<T: for<'de> Deserialize<'de>>(
     failure: OidcProtocolError,
 ) -> Result<T, OidcProtocolError> {
     let response = http.get(url).send().await.map_err(|_| failure)?;
-    let status = response.status();
-    let bytes = response.bytes().await.map_err(|_| failure)?;
-    if !status.is_success() || bytes.len() > MAX_PROVIDER_BODY {
+    let bytes = bounded_response_body(response, failure).await?;
+    serde_json::from_slice(&bytes).map_err(|_| failure)
+}
+
+async fn bounded_response_body(
+    mut response: reqwest::Response,
+    failure: OidcProtocolError,
+) -> Result<Vec<u8>, OidcProtocolError> {
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length > MAX_PROVIDER_BODY as u64)
+    {
         return Err(failure);
     }
-    serde_json::from_slice(&bytes).map_err(|_| failure)
+
+    let initial_capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
+        .min(MAX_PROVIDER_BODY);
+    let mut body = Vec::with_capacity(initial_capacity);
+    while let Some(chunk) = response.chunk().await.map_err(|_| failure)? {
+        let next_len = body.len().checked_add(chunk.len()).ok_or(failure)?;
+        if next_len > MAX_PROVIDER_BODY {
+            return Err(failure);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// RFC 7636 S256 challenge for a high-entropy verifier.
@@ -449,9 +500,19 @@ pub fn pkce_challenge(verifier: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::convert::Infallible;
+    use std::sync::Arc;
+
+    use axum::Router;
+    use axum::body::{Body, Bytes};
+    use axum::http::{HeaderValue, header};
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::get;
+    use futures_util::stream;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use serde_json::{Value, json};
+
+    use super::*;
 
     const ISS: &str = "https://idp.example/realms/presto";
     const AUD: &str = "presto-client";
@@ -540,12 +601,97 @@ mod tests {
     }
 
     #[test]
-    fn multiple_audiences_require_matching_authorized_party() {
-        let mut claims = valid_claims();
-        claims["aud"] = json!([AUD, "other"]);
-        assert_eq!(validate(&sign(SECRET, &claims)), Err(OidcError::Invalid));
-        claims["azp"] = json!(AUD);
-        assert!(validate(&sign(SECRET, &claims)).is_ok());
+    fn authorized_party_is_consistent_for_string_and_array_audiences() {
+        let mut scalar = valid_claims();
+        scalar["azp"] = json!("contradictory-client");
+        assert_eq!(validate(&sign(SECRET, &scalar)), Err(OidcError::Invalid));
+
+        let mut unique = valid_claims();
+        unique["aud"] = json!([AUD]);
+        assert!(validate(&sign(SECRET, &unique)).is_ok());
+        unique["azp"] = json!("contradictory-client");
+        assert_eq!(validate(&sign(SECRET, &unique)), Err(OidcError::Invalid));
+
+        let mut multiple = valid_claims();
+        multiple["aud"] = json!([AUD, "other"]);
+        assert_eq!(validate(&sign(SECRET, &multiple)), Err(OidcError::Invalid));
+        multiple["azp"] = json!("contradictory-client");
+        assert_eq!(validate(&sign(SECRET, &multiple)), Err(OidcError::Invalid));
+        multiple["azp"] = json!(AUD);
+        assert!(validate(&sign(SECRET, &multiple)).is_ok());
+    }
+
+    async fn spawn_provider_route(response: Response) -> Url {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/body", listener.local_addr().unwrap())).unwrap();
+        let response = Arc::new(Mutex::new(Some(response)));
+        let app = Router::new().route(
+            "/body",
+            get(move || {
+                let response = response.clone();
+                async move { response.lock().unwrap().take().unwrap() }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    #[tokio::test]
+    async fn provider_body_rejects_oversized_content_length_before_reading() {
+        let mut response = Body::from(vec![b'x'; MAX_PROVIDER_BODY + 1]).into_response();
+        response.headers_mut().insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&(MAX_PROVIDER_BODY + 1).to_string()).unwrap(),
+        );
+        let url = spawn_provider_route(response).await;
+        let response = Client::new().get(url).send().await.unwrap();
+        assert_eq!(
+            bounded_response_body(response, OidcProtocolError::Discovery).await,
+            Err(OidcProtocolError::Discovery)
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_body_interrupts_oversized_chunked_response() {
+        let chunks = stream::iter([
+            Ok::<_, Infallible>(Bytes::from(vec![b'a'; MAX_PROVIDER_BODY / 2])),
+            Ok(Bytes::from(vec![b'b'; MAX_PROVIDER_BODY / 2])),
+            Ok(Bytes::from_static(b"x")),
+        ]);
+        let url = spawn_provider_route(Body::from_stream(chunks).into_response()).await;
+        let response = Client::new().get(url).send().await.unwrap();
+        assert_eq!(
+            bounded_response_body(response, OidcProtocolError::Provider).await,
+            Err(OidcProtocolError::Provider)
+        );
+    }
+
+    #[test]
+    fn jwks_rejects_excessive_key_count_and_component_size() {
+        let keys = (0..=MAX_JWKS_KEYS)
+            .map(|index| json!({ "kid": index.to_string(), "kty": "ignored" }))
+            .collect::<Vec<_>>();
+        let too_many: JwksDocument = serde_json::from_value(json!({ "keys": keys })).unwrap();
+        assert!(matches!(
+            decode_jwks(too_many),
+            Err(OidcProtocolError::Provider)
+        ));
+
+        let oversized: JwksDocument = serde_json::from_value(json!({
+            "keys": [{
+                "kid": "k",
+                "kty": "RSA",
+                "alg": "RS256",
+                "use": "sig",
+                "n": "n".repeat(MAX_JWK_COMPONENT + 1),
+                "e": "AQAB"
+            }]
+        }))
+        .unwrap();
+        assert!(matches!(
+            decode_jwks(oversized),
+            Err(OidcProtocolError::Provider)
+        ));
     }
 
     #[test]

@@ -13,7 +13,40 @@ test.use({
 });
 
 test.describe('Owner auth against development Keycloak', () => {
+  test.describe.configure({ mode: 'serial' });
   test.skip(!enabled, 'manual Keycloak gate; see docs/e2e-testing.md');
+
+  test('callback from browser A is rejected in browser B', async ({ browser, baseURL }) => {
+    expect(username, 'KEYCLOAK_TEST_USERNAME is required').toBeTruthy();
+    expect(password, 'KEYCLOAK_TEST_PASSWORD is required').toBeTruthy();
+    expect(baseURL).toBeTruthy();
+
+    const browserA = await browser.newContext();
+    const browserB = await browser.newContext();
+    const pageA = await browserA.newPage();
+    const pageB = await browserB.newPage();
+    try {
+      await pageA.route('**/auth/callback?**', (route) => route.abort());
+      await pageA.goto(`${baseURL}/app/login`);
+      await pageA.getByRole('link', { name: 'Continuer vers la connexion' }).click();
+      await pageA.locator('#username').fill(username!);
+      await pageA.locator('#password').fill(password!);
+      const callbackRequest = pageA.waitForRequest((request) =>
+        request.url().startsWith(`${baseURL}/auth/callback?`),
+      );
+      await pageA.locator('#kc-login').click();
+      const callbackUrl = (await callbackRequest).url();
+
+      const swapped = await pageB.goto(callbackUrl);
+      expect(swapped?.status()).toBe(401);
+      expect((await browserB.cookies()).some(
+        (cookie) => cookie.name === '__Host-rumble_session',
+      )).toBeFalsy();
+    } finally {
+      await browserA.close();
+      await browserB.close();
+    }
+  });
 
   test('login → me → personal space → refresh → logout', async ({ page }) => {
     expect(username, 'KEYCLOAK_TEST_USERNAME is required').toBeTruthy();
