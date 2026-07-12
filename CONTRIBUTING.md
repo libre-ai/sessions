@@ -46,9 +46,11 @@ Contributions should preserve these principles:
 
 ## Development
 
-Run the standard Rust checks before opening a pull request:
+Run the standard Rust checks before opening a pull request. On a clean checkout, generate the ignored owner bundle before compiling the server:
 
 ```bash
+cargo install dioxus-cli --version 0.7.9 --locked
+./scripts/build-owner-app.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features

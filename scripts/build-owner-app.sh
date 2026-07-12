@@ -27,5 +27,6 @@ destination="$root/crates/server/static/owner-app"
 rm -rf "$destination"
 mkdir -p "$destination"
 cp -R "$source_dir"/. "$destination"/
+"$root/scripts/verify-owner-app.sh" "$destination"
 
 echo "owner bundle copied to crates/server/static/owner-app"

@@ -20,7 +20,8 @@ These tests exercise the deployed browser surface. Deeper protocol and scoring c
 
 - Node.js 18+;
 - Rust toolchain;
-- browser dependencies installed by Playwright.
+- browser dependencies installed by Playwright;
+- un bundle owner généré et vérifié avec `./scripts/build-owner-app.sh` (Dioxus CLI 0.7.9).
 
 Postgres and Redis are optional for the current e2e flow: when `DATABASE_URL` / `REDIS_URL` are absent, the server uses in-memory state and fixture content. CI still provides Postgres + Redis because other integration jobs use them.
 
@@ -35,6 +36,7 @@ npx playwright install
 ## Run tests
 
 ```bash
+./scripts/build-owner-app.sh
 cd e2e
 npm test
 
@@ -44,7 +46,7 @@ npx playwright test tests/owner-shell.spec.ts --project=chromium
 
 Playwright will:
 
-1. start the Rust server from the workspace root with `PORT=3000`;
+1. vérifier le bundle owner présent, puis démarrer le serveur Rust depuis la racine avec `PORT=3000`;
 2. wait for `http://localhost:3000`;
 3. run `tests/*.spec.ts`;
 4. generate an HTML report in `e2e/playwright-report/`.
@@ -70,10 +72,11 @@ npx playwright show-report
 
 The `.github/workflows/ci.yml` includes an `e2e` job that:
 
-1. starts Postgres 16+pgvector + Redis 7;
-2. builds `presto-server`;
-3. installs Playwright dependencies with `npm ci`;
-4. runs `cd e2e && npm test`;
-5. uploads the HTML report as a CI artifact.
+1. télécharge le paquet owner construit une seule fois depuis le checkout courant et vérifie sa liste de fichiers et tous ses SHA-256;
+2. starts Postgres 16+pgvector + Redis 7;
+3. builds `presto-server`, qui embarque donc exactement ce paquet vérifié;
+4. installs Playwright dependencies with `npm ci`;
+5. runs `cd e2e && npm test`;
+6. uploads the HTML report as a CI artifact.
 
 Tests must pass before merge.
