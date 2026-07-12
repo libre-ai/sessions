@@ -66,53 +66,35 @@ def main(bundle: Path) -> None:
     if not index_path.is_file() or not assets.is_dir():
         raise SystemExit("dx owner output is incomplete")
 
-    # Expected dx topology with the pinned Label primitive:
-    # HTML -> one interpreter JS -> one WASM. Dioxus Primitives also emits one
-    # focus-trap asset globally although Label cannot call it. Any other graph
-    # fails closed instead of attempting recursive filename rewrites.
+    # The dependency-free UI must produce exactly one dx runtime and one WASM.
+    # Fail closed on any extra JavaScript rather than pruning generated output.
     generated_javascript = sorted(assets.glob("*.js"))
     runtimes = [path for path in generated_javascript if re.fullmatch(r"rumble-lm-app-(?:dxh)?[0-9a-f]+\.js", path.name)]
-    focus_traps = [path for path in generated_javascript if re.fullmatch(r"focus-trap-(?:dxh)?[0-9a-f]+\.js", path.name)]
     wasm_files = sorted(assets.glob("*.wasm"))
-    if len(runtimes) != 1 or len(focus_traps) != 1 or len(wasm_files) != 1 or len(generated_javascript) != 2:
+    if len(runtimes) != 1 or len(wasm_files) != 1 or len(generated_javascript) != 1:
         raise SystemExit(
-            "unexpected dx asset topology; expected runtime JS + unused Label focus-trap JS + WASM, "
+            "unexpected dx asset topology; expected one runtime JS + one WASM, "
             f"found js={[path.name for path in generated_javascript]}, wasm={[path.name for path in wasm_files]}"
         )
     runtime = runtimes[0]
-    focus_trap = focus_traps[0]
     wasm = wasm_files[0]
     old_runtime_name = runtime.name
     old_wasm_name = wasm.name
 
+    # The WASM is opaque: derive its final name from the exact dx bytes and only
+    # rename it. No section, metadata, path or payload parsing/mutation is done.
+    wasm_digest = digest(wasm.read_bytes())
+    wasm_name = f"owner-runtime-{wasm_digest[:16]}.wasm"
+    wasm_path = assets / wasm_name
+    if wasm_path.exists():
+        raise SystemExit(f"refusing to overwrite generated WASM: {wasm_name}")
+    wasm.rename(wasm_path)
+    if digest(wasm_path.read_bytes()) != wasm_digest:
+        raise SystemExit("WASM bytes changed while content-addressing")
+
+    # Patch the JavaScript first, including its reference to the renamed opaque
+    # WASM, then derive the JavaScript name from those final bytes.
     source = runtime.read_bytes()
-    if focus_trap.name.encode() in source or focus_trap.name in index_path.read_text(encoding="utf-8"):
-        raise SystemExit("Label-only topology unexpectedly executes the generic focus-trap asset")
-
-    # Remove the unreachable auxiliary asset and normalize its Manganis metadata
-    # in-place (same byte lengths preserve the WASM data-section layout). The
-    # resulting WASM is then named from its final SHA-256, never its old dx URL.
-    wasm_bytes = wasm.read_bytes()
-    source_paths = re.findall(
-        rb"/(?:Users|home)/[A-Za-z0-9._/@+-]+(?:/[A-Za-z0-9._@+-]+)*/primitives/src/js/focus-trap\.js",
-        wasm_bytes,
-    )
-    if not source_paths:
-        raise SystemExit("expected pinned primitive focus-trap metadata in WASM")
-    for source_path in sorted(set(source_paths)):
-        replacement = b"/source/dioxus-primitives/focus-trap.js".ljust(len(source_path), b"_")
-        if len(replacement) != len(source_path):
-            raise SystemExit("primitive source path is shorter than deterministic replacement")
-        wasm_bytes = wasm_bytes.replace(source_path, replacement)
-    disabled_asset = b"disabled-focus-trap.js".ljust(len(focus_trap.name.encode()), b"_")
-    if len(disabled_asset) != len(focus_trap.name.encode()):
-        raise SystemExit("focus-trap output name is shorter than disabled marker")
-    wasm_bytes = wasm_bytes.replace(focus_trap.name.encode(), disabled_asset)
-    focus_trap.unlink()
-    wasm_name = f"owner-runtime-{digest(wasm_bytes)[:16]}.wasm"
-    (assets / wasm_name).write_bytes(wasm_bytes)
-    wasm.unlink()
-
     wasm_references = source.count(old_wasm_name.encode())
     if wasm_references < 1:
         raise SystemExit(f"dx runtime does not reference its WASM: {old_wasm_name}")
@@ -260,12 +242,17 @@ self.addEventListener("fetch", (event) => {{
   const navigation = request.mode === "navigate" &&
     (url.pathname === "/app" || url.pathname.startsWith("/app/"));
   if (navigation) {{
-    event.respondWith(fetch(request).catch(() => caches.match(SHELL_URL)));
+    event.respondWith(fetch(request).catch(() =>
+      caches.open(CACHE_NAME).then((cache) => cache.match(SHELL_URL))
+    ));
     return;
   }}
   const cacheKey = url.pathname + url.search;
   if (PRECACHE.has(cacheKey)) {{
-    event.respondWith(caches.match(cacheKey).then((cached) => cached || fetch(request)));
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) => cache.match(cacheKey))
+        .then((cached) => cached || fetch(request))
+    );
   }}
 }});
 '''.encode()
@@ -276,7 +263,6 @@ self.addEventListener("fetch", (event) => {{
         str(Path.home()).encode(),
         old_runtime_name.encode(),
         old_wasm_name.encode(),
-        focus_trap.name.encode(),
         b"unsafe-inline",
         b"'unsafe-eval'",
         b"innerHTML",
@@ -284,6 +270,8 @@ self.addEventListener("fetch", (event) => {{
         b"eval(",
     ]
     for path in sorted(p for p in bundle.rglob("*") if p.is_file()):
+        if path.suffix == ".wasm":
+            continue  # Opaque by ADR-0005; integrity is established by its SHA-256 name.
         data = path.read_bytes()
         hits = [value for value in forbidden if value and value in data]
         if hits:

@@ -49,6 +49,28 @@ test('manifest, PNG icons and Chromium installability metadata are coherent', as
   }
 });
 
+test('a foreign cache containing a fake /app shell is never served', async ({ page, context }) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const foreign = await caches.open('foreign-application-cache');
+    await foreign.put('/app', new Response(
+      '<!doctype html><title>FOREIGN_CACHE_POISON</title><h1>FOREIGN_CACHE_POISON</h1>',
+      { headers: { 'content-type': 'text/html' } },
+    ));
+  });
+
+  await waitForControl(page);
+  const cacheNames = await page.evaluate(() => caches.keys());
+  expect(cacheNames[0]).toBe('foreign-application-cache');
+  expect(cacheNames.some(name => name.startsWith('rumble-owner-shell-v1-'))).toBe(true);
+
+  await context.setOffline(true);
+  await page.goto('/app/notebook');
+  await expect(page.getByRole('heading', { name: 'Interroger votre corpus' })).toBeVisible();
+  await expect(page.getByText('FOREIGN_CACHE_POISON')).toHaveCount(0);
+  await context.setOffline(false);
+});
+
 test('Cache Storage is an exact shell allowlist and APIs stay network-only offline', async ({ page, context }) => {
   await waitForControl(page);
   const internal = await page.evaluate(async () => (await fetch('/app/owner-shell-manifest.json')).json());

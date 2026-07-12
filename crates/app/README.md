@@ -11,7 +11,7 @@ cargo install dioxus-cli --version 0.7.9 --locked
 ./scripts/build-owner-app.sh
 ```
 
-Le script exécute un build web release avec `base_path = "app"`, remappe les chemins de compilation, externalise et adresse par contenu le CSS, génère déterministement manifest/icônes/service worker, puis vérifie références, digests, absence de CDN et chemins machine. Le bundle final dans `crates/server/static/owner-app/` est ignoré par Git mais reproductible; `owner-shell-manifest.json` fixe sa liste de précache triée et son `bundle_id`, et `SHA256SUMS` atteste ensuite tous les fichiers du paquet.
+Le script exécute un build web release avec `base_path = "app"`, remappe les chemins de compilation, externalise et adresse par contenu le CSS, génère manifest/icônes/service worker, puis vérifie références, digests, absence de CDN et chemins machine. Le WASM généré reste opaque et ses octets ne sont jamais modifiés par le finalizer. Deux builds dans un même environnement producteur épinglé doivent être identiques : c’est une preuve de répétabilité locale/CI, pas une garantie universelle entre versions de zlib, toolchains ou builders. Le bundle final dans `crates/server/static/owner-app/` est ignoré par Git; `owner-shell-manifest.json` fixe sa liste de précache triée et son `bundle_id`, puis `SHA256SUMS` atteste tous les octets du paquet livré.
 
 Le serveur embarque les octets présents dans ce répertoire. Sur un checkout propre, construire le bundle **avant** toute commande qui compile `presto-server` :
 
@@ -20,7 +20,7 @@ Le serveur embarque les octets présents dans ce répertoire. Sur un checkout pr
 cargo build --bin presto-server --release --locked
 ```
 
-En CI, un job unique construit le bundle depuis le même checkout, le place dans un paquet avec `SHA256SUMS`, puis tous les jobs Rust, release et E2E vérifient et installent ce paquet avant de compiler le serveur.
+En CI, le job producteur `owner-bundle`, épinglé à Rust 1.97.0 et Dioxus CLI 0.7.9, construit deux fois le bundle dans le même environnement pour en contrôler la répétabilité. Il place ensuite le résultat dans un paquet attesté par `SHA256SUMS`; tous les jobs Rust, release et E2E vérifient et installent ce paquet exact avant de compiler le serveur. Les autres gates conservent leur stratégie de toolchain actuelle.
 
 ## Vérifier
 

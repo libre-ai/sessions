@@ -8,12 +8,11 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use dioxus_primitives::label::Label;
 use presto_core::api::SourceCitation;
 
-// Dioxus Primitives: headless ARIA-compliant components, imported by module.
-// TextInput preserves the Label migration from UI increment #74. Theme styles
-// remain externalized by the owner host so its CSP needs no inline styles.
+// Native HTML elements preserve browser semantics without a component runtime.
+// Theme styles remain externalized by the owner host so its CSP needs no inline
+// styles.
 
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
@@ -91,7 +90,7 @@ pub fn TextInput(
     let described_by = help.as_ref().map(|_| format!("{id}-help"));
     rsx! {
         div { class: "presto-field",
-            Label { class: "presto-label", html_for: "{id}", "{label}" }
+            label { class: "presto-label", r#for: "{id}", "{label}" }
             input {
                 class: "presto-input",
                 id: "{id}",
@@ -163,11 +162,9 @@ impl ToastTone {
 }
 
 /// Toast (alert) component for live region announcements.
-/// Deliberately NOT migrated to `dioxus_primitives::toast` (2026-07-10):
-/// that module is a client-side toast *system* (provider + stack + imperative
-/// push API), while this component is a static SSR live region
-/// (`role="status"`, `aria-live`). Adopting the provider would add client
-/// state for zero accessibility gain here.
+/// This is intentionally a static SSR live region (`role="status"`,
+/// `aria-live`) rather than a client-side provider/stack: adding client state
+/// would provide no accessibility gain for this component.
 #[component]
 pub fn Toast(message: String, #[props(default)] tone: ToastTone) -> Element {
     rsx! {
@@ -369,12 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn text_input_label_links_to_input_via_primitive() {
+    fn text_input_native_label_links_to_input() {
         let html = render(rsx! { TextInput {
             id: "email".to_string(),
             label: "Email".to_string(),
         } });
-        // The Primitives Label renders a real <label for=…> linked to the input.
+        // Native label semantics link the accessible name to the input.
         assert!(html.contains("<label"));
         assert!(html.contains("for=\"email\""));
         assert!(html.contains("id=\"email\""));

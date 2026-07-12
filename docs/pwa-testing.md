@@ -11,14 +11,18 @@ Une mise à jour du worker ne force pas `skipWaiting`: elle s’active simplemen
 ## Preuve automatisée locale
 
 ```bash
-./scripts/build-owner-app.sh
+./scripts/test-owner-app-reproducible.sh
+./scripts/verify-owner-app.sh
+./scripts/test-owner-app-package.sh
 cd e2e
 npm ci
 npx playwright install chromium firefox webkit
 npm test
 ```
 
-Chromium exécute la suite fonctionnelle complète et les assertions installabilité/Cache Storage. Firefox, WebKit et un profil mobile Chromium exécutent seulement `pwa-smoke.spec.ts` afin de vérifier WASM, navigation profonde, CSP, console et worker sans multiplier la suite.
+Le script au nom historique `test-owner-app-reproducible.sh` compare deux builds produits dans le même environnement. Il prouve leur répétabilité locale (et dans le producteur CI épinglé à Rust 1.97.0 + Dioxus CLI 0.7.9), sans promettre des octets identiques entre zlib, toolchains ou builders différents. Le paquet finalement livré reste attesté fichier par fichier dans `SHA256SUMS`.
+
+Chromium exécute la suite fonctionnelle complète et les assertions installabilité/Cache Storage, dont un cache étranger préchargé avec un faux `/app` qui ne doit jamais être servi. Firefox, WebKit et un profil mobile Chromium exécutent seulement `pwa-smoke.spec.ts` afin de vérifier WASM, navigation profonde, CSP, console et worker sans multiplier la suite.
 
 Pour une cible HTTPS de test déjà fournie, Playwright ne démarre pas de serveur local:
 

@@ -65,6 +65,8 @@ Demandeurs: target-version 1.0.0 (flagship_slice = rumble-lm), the cos rebuild c
 
 **Status (2026-07-10, delivered — verified scoping):** `dioxus-primitives` is consumed for real by `TextInput` (its label renders through `dioxus_primitives::label::Label`, `for`/`id` link SSR-tested). The rest of the increment's original component list is scoped out for verified reasons, each documented on the component:
 
+**Superseding decision (2026-07-13):** ADR-0005 replaces that specific `Label` implementation with native `<label for>` while preserving the same SSR accessibility contract. Artifact review showed that the crate’s sole use globally emitted unrelated focus-trap/Manganis output and machine-path metadata; retaining it would have required fragile WASM rewriting. The historical delivery record below remains accurate for 2026-07-10, but is no longer the current dependency choice. `dioxus-primitives` and its `allow-git` exemption are now removed; reconsideration requires modular upstream features and unchanged WASM output.
+
 - Pre-requisites: none (parallel to the runtime plan).
 - Delivered:
   - `crates/ui/Cargo.toml`: `dioxus-primitives` git dep pinned by full rev (`bf007c15d0cf4d04d3181cc46cf12325aa773955`, same rev as wrench-dioxus-lab); `deny.toml` allow-git exemption.

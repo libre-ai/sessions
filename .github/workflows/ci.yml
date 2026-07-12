@@ -18,8 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
+          toolchain: 1.97.0
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Gate generated assets out of Git
@@ -30,7 +31,7 @@ jobs:
           fi
       - name: Install pinned Dioxus CLI
         run: cargo install dioxus-cli --version 0.7.9 --locked
-      - name: Build, reproduce and verify owner bundle from this checkout
+      - name: Build twice and verify owner bundle repeatability in the pinned producer
         run: |
           ./scripts/test-owner-app-reproducible.sh
           ./scripts/verify-owner-app.sh

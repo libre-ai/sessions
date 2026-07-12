@@ -33,4 +33,4 @@ fi
 
 "$root/scripts/install-owner-app.sh" "$tmp/package" "$tmp/installed" >/dev/null
 diff -qr "$source_dir" "$tmp/installed"
-echo "owner bundle package gate verified: reproducible sums, tampering/extra files rejected, exact bundle installed"
+echo "owner bundle package gate verified: stable sums, tampering/extra files rejected, exact bundle installed"

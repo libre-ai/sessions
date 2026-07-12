@@ -126,13 +126,21 @@ for required in [
     'request.method === "GET"',
     'request.headers.has("Authorization")',
     '["/auth/","/api/","/corpus/","/sessions/","/ws/"]',
-    'fetch(request).catch(() => caches.match(SHELL_URL))',
+    'caches.open(CACHE_NAME).then((cache) => cache.match(SHELL_URL))',
+    'caches.open(CACHE_NAME).then((cache) => cache.match(cacheKey))',
 ]:
     if required not in sw:
         raise SystemExit(f"service worker invariant missing: {required}")
-for forbidden in ["skipWaiting", "cache.put", "unsafe-inline", "'unsafe-eval'", "innerHTML", "new Function", "eval("]:
+for forbidden in ["skipWaiting", "cache.put", "caches.match", "unsafe-inline", "'unsafe-eval'", "innerHTML", "new Function", "eval("]:
     if forbidden in sw or forbidden in html:
         raise SystemExit(f"forbidden owner shell construct: {forbidden}")
+if sw.count("caches.open(CACHE_NAME)") != 3:
+    raise SystemExit("service worker must use the named cache for install and both fallbacks")
+for text in [html, *texts, sw]:
+    if re.search(r"rumble-lm-app-(?:dxh)?[0-9a-f]+\.(?:js|wasm)", text):
+        raise SystemExit("old dx asset reference remains in final bundle")
+    if "/app/assets/owner-shell.css" in text or "/app/assets/owner-sw-register.js" in text:
+        raise SystemExit("unresolved owner asset placeholder remains")
 if json.dumps([item["url"] for item in entries], separators=(",", ":")) not in sw:
     raise SystemExit("service worker precache list diverges from internal manifest")
 
