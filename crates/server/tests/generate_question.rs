@@ -118,6 +118,7 @@ async fn spawn(quiz: Arc<dyn QuizSource>, auth: Arc<Auth>) -> std::net::SocketAd
     let state = AppState {
         store: Arc::new(InMemorySessionStore::new()),
         fanout: Arc::new(BroadcastFanout::new()),
+        owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
         auth,
         quiz,
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

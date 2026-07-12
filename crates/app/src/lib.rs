@@ -1,12 +1,12 @@
 //! Minimal Dioxus owner shell for Rumble LM.
 //!
-//! This crate renders navigation and honest unavailable states only. Authentication,
-//! corpus operations, and grounded RAG remain server-owned follow-up increments.
+//! The server-owned OIDC redirect and logout are wired without exposing the
+//! HttpOnly session to WASM. Corpus operations and grounded RAG remain later
+//! server-owned increments.
 
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use presto_core::client::AuthSessionState;
 use rumble_lm_ui::{AppSurface, BottomNav, Card, NavItem, ThemeStyles};
 
 pub const OWNER_STYLES: &str = include_str!("owner.css");
@@ -49,16 +49,8 @@ pub fn App() -> Element {
     rsx! { Router::<Route> {} }
 }
 
-fn anonymous_notice() -> &'static str {
-    let auth = AuthSessionState::Anonymous;
-    match auth {
-        AuthSessionState::Anonymous => {
-            "Vous consultez un shell sans session. Aucune donnée owner n’est chargée."
-        }
-        AuthSessionState::Unknown
-        | AuthSessionState::Authenticated { .. }
-        | AuthSessionState::Expired { .. } => unreachable!("the #31 shell starts anonymous"),
-    }
+fn session_notice() -> &'static str {
+    "La session owner reste dans un cookie HttpOnly et les droits sont vérifiés par le serveur."
 }
 
 fn navigation(current: Screen) -> Vec<NavItem> {
@@ -112,10 +104,10 @@ pub fn Home() -> Element {
                 div { class: "owner-hero",
                     p { class: "owner-kicker", "Notebook personnel" }
                     h1 { id: "home-title", "Travaillez depuis vos propres sources." }
-                    p { class: "owner-lede", "Ce shell prépare le parcours mobile owner sans simuler de compte, de document ou de réponse grounded." }
+                    p { class: "owner-lede", "Connectez-vous avec l’IdP souverain pour retrouver l’espace personnel créé par le serveur." }
                 }
                 aside { class: "owner-session-note", role: "status", aria_live: "polite",
-                    "{anonymous_notice()}"
+                    "{session_notice()}"
                 }
                 div { class: "owner-grid",
                     Card {
@@ -144,10 +136,10 @@ pub fn Login() -> Element {
             section { class: "owner-login", aria_labelledby: "login-title",
                 p { class: "owner-eyebrow", "Rumble LM · espace owner" }
                 h1 { id: "login-title", "Connexion" }
-                p { class: "owner-lede", "Aucune session durable n’est créée par ce shell. Le flux OIDC et son cookie HttpOnly seront livrés séparément." }
+                p { class: "owner-lede", "La connexion utilise OIDC Authorization Code + PKCE. Aucun jeton ni secret n’est lisible par cette application." }
                 a { class: "presto-button presto-button--primary", href: "/auth/login", "Continuer vers la connexion" }
-                p { class: "presto-help", "Le point d’entrée /auth/login est une couture non fonctionnelle réservée au lot d’authentification." }
-                a { class: "owner-text-link", href: "/app", "Revenir au shell sans session" }
+                p { class: "presto-help", "Après validation, le serveur revient ici avec une session HttpOnly révocable." }
+                a { class: "owner-text-link", href: "/app", "Revenir à l’espace owner" }
             }
         }
     }
@@ -218,8 +210,10 @@ pub fn Settings() -> Element {
                 }
                 Card {
                     title: "Session".to_string(),
-                    body: "Déconnecté · aucun token exposé au client Rust/WASM.".to_string(),
-                    a { class: "owner-card-link", href: "/app/login", "Voir la couture de connexion" }
+                    body: "La session est gérée côté serveur ; aucun token n’est exposé au client Rust/WASM.".to_string(),
+                    form { method: "post", action: "/auth/logout",
+                        button { class: "owner-card-link", r#type: "submit", "Se déconnecter" }
+                    }
                 }
                 Card {
                     title: "Stockage local".to_string(),
@@ -246,11 +240,12 @@ mod tests {
         let corpus = render(rsx! { Corpus {} });
         let settings = render(rsx! { Settings {} });
 
-        assert!(home.contains("sans session"));
-        assert!(login.contains("Aucune session durable"));
+        assert!(home.contains("cookie HttpOnly"));
+        assert!(login.contains("Authorization Code + PKCE"));
         assert!(notebook.contains("Aucune requête réseau"));
         assert!(corpus.contains("non chargé sans authentification"));
         assert!(settings.contains("Aucun réglage n’est persisté"));
+        assert!(settings.contains("action=\"/auth/logout\""));
         assert!(!notebook.contains("grounded source"));
     }
 

@@ -13,6 +13,9 @@ use presto_rag::corpus::{CorpusStore, Retriever};
 use presto_rag::provider::{AiProvider, OpenAiCompatible};
 use presto_server::auth::Auth;
 use presto_server::fanout::{BroadcastFanout, Fanout};
+use presto_server::membership::{InMemoryMembershipStore, MembershipStore};
+use presto_server::oidc::OidcConfig;
+use presto_server::owner_auth::{OwnerAuth, OwnerAuthConfig};
 use presto_server::postgres_store::PostgresSessionStore;
 use presto_server::quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
@@ -177,6 +180,69 @@ async fn build_content(_store: &Arc<dyn SessionStore>) -> Content {
     }
 }
 
+enum OwnerAuthEnvironment {
+    Disabled,
+    Enabled(OidcConfig),
+}
+
+fn owner_auth_environment() -> Result<OwnerAuthEnvironment, Box<dyn Error>> {
+    let issuer = std::env::var("OIDC_ISSUER").ok();
+    let client_id = std::env::var("OIDC_CLIENT_ID").ok();
+    let redirect_uri = std::env::var("OIDC_REDIRECT_URI").ok();
+    match (issuer, client_id, redirect_uri) {
+        (None, None, None) => Ok(OwnerAuthEnvironment::Disabled),
+        (Some(issuer), Some(client_id), Some(redirect_uri)) => Ok(OwnerAuthEnvironment::Enabled(
+            OidcConfig::new(issuer, client_id, redirect_uri),
+        )),
+        _ => Err("OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_REDIRECT_URI must be set together".into()),
+    }
+}
+
+fn validate_owner_auth_topology(
+    enabled: bool,
+    explicit_single_instance: Option<&str>,
+    database_configured: bool,
+    redis_configured: bool,
+) -> Result<(), &'static str> {
+    if !enabled {
+        return Ok(());
+    }
+    if explicit_single_instance != Some("1") {
+        return Err("owner auth requires OWNER_AUTH_SINGLE_INSTANCE=1");
+    }
+    if database_configured || redis_configured {
+        return Err(
+            "owner auth is process-local and cannot start with DATABASE_URL or REDIS_URL configured",
+        );
+    }
+    Ok(())
+}
+
+/// Enable owner auth only when the complete OIDC tuple and the explicit
+/// single-instance topology gate are configured. Discovery is performed at
+/// startup and fails closed; no silent local-auth fallback.
+async fn build_owner_auth(
+    auth: Arc<Auth>,
+    environment: OwnerAuthEnvironment,
+) -> Result<Arc<OwnerAuth>, Box<dyn Error>> {
+    match environment {
+        OwnerAuthEnvironment::Disabled => {
+            println!("owner auth: disabled (OIDC_* variables unset)");
+            Ok(Arc::new(OwnerAuth::disabled(auth)))
+        }
+        OwnerAuthEnvironment::Enabled(oidc) => {
+            let config = OwnerAuthConfig::new(oidc)?;
+            let membership: Arc<dyn MembershipStore> = Arc::new(InMemoryMembershipStore::new());
+            eprintln!(
+                "owner auth: explicitly single-instance, with process-local sessions/membership; restart logs users out"
+            );
+            Ok(Arc::new(
+                OwnerAuth::discover(config, auth, membership).await?,
+            ))
+        }
+    }
+}
+
 /// The `POST /sessions` rate limiter: burst + steady refill, tunable via
 /// `SESSION_RATE_BURST` and `SESSION_RATE_PER_SEC` (defaults 30 burst, 1/sec).
 fn build_session_rate() -> Arc<TokenBucket> {
@@ -199,12 +265,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    let owner_auth_environment = owner_auth_environment()?;
+    validate_owner_auth_topology(
+        matches!(&owner_auth_environment, OwnerAuthEnvironment::Enabled(_)),
+        std::env::var("OWNER_AUTH_SINGLE_INSTANCE").ok().as_deref(),
+        std::env::var_os("DATABASE_URL").is_some(),
+        std::env::var_os("REDIS_URL").is_some(),
+    )?;
+
     let store = build_store().await?;
     let (quiz, breakout, flashcards, ingestor) = build_content(&store).await;
+    let auth = build_auth()?;
+    let owner_auth = build_owner_auth(auth.clone(), owner_auth_environment).await?;
     let state = AppState {
         store,
         fanout: build_fanout().await?,
-        auth: build_auth()?,
+        auth,
+        owner_auth,
         quiz,
         breakout,
         flashcards,
@@ -222,4 +299,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("presto-server listening on {addr}");
     axum::serve(listener, app(state)).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_auth_requires_explicit_single_instance_mode() {
+        assert_eq!(
+            validate_owner_auth_topology(true, None, false, false),
+            Err("owner auth requires OWNER_AUTH_SINGLE_INSTANCE=1")
+        );
+        assert_eq!(
+            validate_owner_auth_topology(true, Some("true"), false, false),
+            Err("owner auth requires OWNER_AUTH_SINGLE_INSTANCE=1")
+        );
+        assert!(validate_owner_auth_topology(true, Some("1"), false, false).is_ok());
+    }
+
+    #[test]
+    fn owner_auth_refuses_known_distributed_configurations() {
+        for (database, redis) in [(true, false), (false, true), (true, true)] {
+            assert_eq!(
+                validate_owner_auth_topology(true, Some("1"), database, redis),
+                Err(
+                    "owner auth is process-local and cannot start with DATABASE_URL or REDIS_URL configured"
+                )
+            );
+        }
+        // Live anonymous routes retain their existing distributed adapters when
+        // owner auth is disabled.
+        assert!(validate_owner_auth_topology(false, None, true, true).is_ok());
+    }
 }
