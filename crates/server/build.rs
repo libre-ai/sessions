@@ -1,52 +1,125 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(directory).expect("owner bundle directory") {
+        let path = entry.expect("owner bundle entry").path();
+        assert!(
+            !fs::symlink_metadata(&path)
+                .expect("owner bundle metadata")
+                .file_type()
+                .is_symlink(),
+            "owner bundle must not contain symlinks"
+        );
+        if path.is_dir() {
+            collect_files(&path, files);
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+}
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let owner_dir = manifest_dir.join("static/owner-app");
+    println!("cargo:rerun-if-changed={}", owner_dir.display());
     let index = owner_dir.join("index.html");
-    let assets_dir = owner_dir.join("assets");
-    println!("cargo:rerun-if-changed={}", index.display());
-    println!("cargo:rerun-if-changed={}", assets_dir.display());
-    if !index.is_file() {
+    let internal_path = owner_dir.join("owner-shell-manifest.json");
+    if !index.is_file() || !internal_path.is_file() {
         panic!(
             "owner bundle is missing at {}; run ./scripts/build-owner-app.sh before building presto-server",
             owner_dir.display()
         );
     }
 
-    let mut assets = fs::read_dir(&assets_dir)
-        .unwrap_or_else(|error| {
-            panic!(
-                "owner bundle assets are missing at {}: {error}; run ./scripts/build-owner-app.sh",
-                assets_dir.display()
-            )
-        })
-        .map(|entry| entry.expect("owner asset directory entry").path())
-        .filter(|path| path.is_file())
-        .collect::<Vec<_>>();
-    assets.sort();
-    assert!(
-        !assets.is_empty(),
-        "owner bundle has no assets; run ./scripts/build-owner-app.sh"
+    let internal_bytes = fs::read(&internal_path).expect("read owner shell manifest");
+    let internal: Value =
+        serde_json::from_slice(&internal_bytes).expect("parse owner shell manifest");
+    assert_eq!(
+        internal["schema"], "rumble.owner-shell.v1",
+        "unsupported owner shell manifest"
     );
+    let entries = internal["precache"]
+        .as_array()
+        .expect("owner precache must be an array");
+    let mut expected = BTreeSet::new();
+    let mut previous = "";
+    for entry in entries {
+        let url = entry["url"].as_str().expect("precache URL");
+        assert!(url > previous, "owner precache must be strictly sorted");
+        previous = url;
+        let relative = if url == "/app" {
+            "index.html"
+        } else {
+            url.strip_prefix("/app/")
+                .expect("precache URL must stay below /app/")
+        };
+        let path = owner_dir.join(relative);
+        assert!(path.is_file(), "precache file is missing: {relative}");
+        assert_eq!(
+            sha256(&fs::read(&path).expect("read precache file")),
+            entry["sha256"].as_str().expect("precache SHA-256"),
+            "precache digest mismatch: {relative}"
+        );
+        expected.insert(relative.to_owned());
+    }
+    let mut canonical = serde_json::to_vec(entries).expect("serialize owner precache");
+    canonical.push(b'\n');
+    assert_eq!(
+        sha256(&canonical),
+        internal["bundle_id"].as_str().expect("owner bundle_id"),
+        "owner bundle_id mismatch"
+    );
+    expected.insert("owner-shell-manifest.json".to_owned());
+    expected.insert("sw.js".to_owned());
+
+    let mut files = Vec::new();
+    collect_files(&owner_dir, &mut files);
+    files.sort();
+    let actual = files
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&owner_dir)
+                .expect("owner path")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected, "owner bundle file allowlist diverged");
 
     let mut generated =
-        String::from("pub(crate) const OWNER_APP_ASSETS: &[EmbeddedOwnerAsset] = &[\n");
-    for path in assets {
-        println!("cargo:rerun-if-changed={}", path.display());
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .expect("owner asset names must be UTF-8");
+        String::from("pub(crate) const OWNER_APP_FILES: &[EmbeddedOwnerFile] = &[\n");
+    for path in files.into_iter().filter(|path| path != &index) {
+        let relative = path
+            .strip_prefix(&owner_dir)
+            .expect("owner relative path")
+            .to_string_lossy()
+            .replace('\\', "/");
         let content_type = match path.extension().and_then(|extension| extension.to_str()) {
             Some("js") => "text/javascript; charset=utf-8",
             Some("wasm") => "application/wasm",
-            extension => panic!("unsupported owner asset extension: {extension:?}"),
+            Some("css") => "text/css; charset=utf-8",
+            Some("png") => "image/png",
+            Some("webmanifest") => "application/manifest+json",
+            Some("json") => "application/json; charset=utf-8",
+            extension => panic!("unsupported owner file extension: {extension:?}"),
         };
+        let body = fs::read(&path).expect("read owner file");
         generated.push_str(&format!(
-            "    EmbeddedOwnerAsset {{ path: {file_name:?}, content_type: {content_type:?}, body: include_bytes!({path:?}) }},\n",
+            "    EmbeddedOwnerFile {{ path: {relative:?}, content_type: {content_type:?}, etag: {etag:?}, body: include_bytes!({path:?}) }},\n",
+            etag = sha256(&body),
             path = path.display().to_string(),
         ));
     }

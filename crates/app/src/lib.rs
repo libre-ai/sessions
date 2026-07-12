@@ -13,7 +13,7 @@ use presto_core::api::{
     DocumentUploadResult, RagQueryRequest, RagQueryResponse, SpaceCapability,
 };
 use presto_core::client::RagQueryState;
-use rumble_lm_ui::{AppSurface, BottomNav, Card, NavItem, SourceCard, ThemeStyles};
+use rumble_lm_ui::{AppSurface, BottomNav, Card, NavItem, SourceCard};
 
 pub const OWNER_STYLES: &str = include_str!("owner.css");
 
@@ -52,6 +52,19 @@ pub enum Route {
 
 #[component]
 pub fn App() -> Element {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::rc::Rc;
+
+        use dioxus_history::History;
+        return rsx! {
+            dioxus::router::components::HistoryProvider {
+                history: move |_| Rc::new(dioxus_web::WebHistory::new(Some("/app".to_string()), true)) as Rc<dyn History>,
+                Router::<Route> {}
+            }
+        };
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     rsx! { Router::<Route> {} }
 }
 
@@ -82,8 +95,6 @@ fn navigation(current: Screen) -> Vec<NavItem> {
 fn OwnerFrame(current: Screen, children: Element) -> Element {
     rsx! {
         AppSurface {
-            ThemeStyles {}
-            style { "{OWNER_STYLES}" }
             div { class: "owner-shell",
                 header { class: "owner-header",
                     div {
@@ -137,8 +148,6 @@ pub fn Home() -> Element {
 pub fn Login() -> Element {
     rsx! {
         AppSurface {
-            ThemeStyles {}
-            style { "{OWNER_STYLES}" }
             section { class: "owner-login", aria_labelledby: "login-title",
                 p { class: "owner-eyebrow", "Rumble LM · espace owner" }
                 h1 { id: "login-title", "Connexion" }
@@ -673,7 +682,7 @@ pub fn Settings() -> Element {
                 }
                 Card {
                     title: "Stockage local".to_string(),
-                    body: "Désactivé : ni localStorage, ni sessionStorage, ni service worker.".to_string()
+                    body: "Le service worker conserve uniquement le shell public statique. Aucun token, corpus, réponse RAG ou contenu owner n’est stocké hors ligne.".to_string()
                 }
             }
         }
@@ -703,6 +712,7 @@ mod tests {
         assert!(corpus.contains("Chargement du corpus"));
         assert!(corpus.contains("Pending"));
         assert!(settings.contains("Aucun réglage n’est persisté"));
+        assert!(settings.contains("uniquement le shell public statique"));
         assert!(settings.contains("action=\"/auth/logout\""));
         assert!(!notebook.contains("Paris est la capitale"));
     }

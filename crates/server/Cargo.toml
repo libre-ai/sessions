@@ -50,6 +50,10 @@ chrono.workspace = true
 time.workspace = true
 tower = { version = "0.5.3", features = ["limit"] }
 
+[build-dependencies]
+serde_json.workspace = true
+sha2 = "0.11"
+
 [dev-dependencies]
 futures-util = "0.3.32"
 tokio-tungstenite = "0.29.0"

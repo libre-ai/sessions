@@ -18,8 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
+          toolchain: 1.97.0
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Gate generated assets out of Git
@@ -30,14 +31,13 @@ jobs:
           fi
       - name: Install pinned Dioxus CLI
         run: cargo install dioxus-cli --version 0.7.9 --locked
-      - name: Build and verify owner bundle from this checkout
+      - name: Build twice and verify owner bundle repeatability in the pinned producer
         run: |
-          ./scripts/build-owner-app.sh
+          ./scripts/test-owner-app-reproducible.sh
           ./scripts/verify-owner-app.sh
           ./scripts/test-owner-app-package.sh
           ./scripts/package-owner-app.sh
-          find target/wasm32-unknown-unknown/wasm-release target/dx/rumble-lm-app/release/web/public \
-            -type f \( -name '*.wasm' -o -name '*.js' \) -print0 \
+          find crates/server/static/owner-app -type f -print0 \
             | sort -z | xargs -0 sha256sum
       - name: Upload verified owner bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -97,6 +97,14 @@ jobs:
         run: |
           if git ls-files | grep -iE '[.](env|pem|key|p12)$' ; then
             echo "::error::secret file committed"; exit 1
+          fi
+      - name: No secret or private response in the owner client cache
+        run: |
+          if git grep -nE 'localStorage[.(]|sessionStorage[.(]|cache[.]put|skipWaiting|unsafe-inline|[^-]unsafe-eval' -- crates/app crates/ui scripts/owner-sw-register.js; then
+            echo "::error::forbidden owner client storage/cache construct"; exit 1
+          fi
+          if git grep -n 'INGEST_TOKEN' -- crates/app crates/ui; then
+            echo "::error::legacy ingestion token reached the owner client"; exit 1
           fi
       - name: No println!/eprintln! in server handlers (I2 observability gate)
         run: |
@@ -325,6 +333,8 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:presto@localhost:5432/postgres
       REDIS_URL: redis://localhost:6379/
+      # Explicit non-secret test-only value; legacy ingestion is server-to-server only.
+      INGEST_TOKEN: playwright-explicit-non-secret-000000000000
       # presto-server defaults to 8080; Playwright's webServer waits on :3000.
       PORT: "3000"
     steps:
@@ -347,7 +357,7 @@ jobs:
         run: |
           cd e2e
           npm ci
-          npx playwright install --with-deps
+          npx playwright install --with-deps chromium firefox webkit
       - name: Run e2e tests
         run: |
           cd e2e

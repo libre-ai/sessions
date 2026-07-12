@@ -215,7 +215,7 @@ function renderQuestion(q) {
 
   // Render choices.
   const choices = $("#choices");
-  choices.innerHTML = "";
+  choices.replaceChildren();
   const multi = q.kind === "multi";
   const selected = new Set();
 
@@ -264,7 +264,7 @@ function renderLeaderboard(m) {
   show("leaderboard");
   show("flashcards"); // participants can now request a spaced-repetition deck
   const board = $("#board");
-  board.innerHTML = "";
+  board.replaceChildren();
   (m.leaderboard || []).forEach((e) => {
     const li = document.createElement("li");
     li.textContent = `${e.name || e.participant_id} — ${e.score}`;
@@ -273,7 +273,7 @@ function renderLeaderboard(m) {
 
   // The host can open a grounded breakout for any confused section.
   const heatmap = $("#heatmap");
-  heatmap.innerHTML = "";
+  heatmap.replaceChildren();
   if (isHost && m.heatmap) {
     Object.entries(m.heatmap).forEach(([section, confusion]) => {
       const b = document.createElement("button");
@@ -293,7 +293,7 @@ function renderBreakout(m) {
 function renderFlashcards(m) {
   show("flashcards");
   const deck = $("#deck");
-  deck.innerHTML = "";
+  deck.replaceChildren();
   if (!m.cards || m.cards.length === 0) {
     const li = document.createElement("li");
     li.textContent = "Aucune section faible — bien joué.";
@@ -408,9 +408,6 @@ function init() {
     }
   };
 
-  // Document ingestion.
-  $("#do-ingest").onclick = ingestDocument;
-
   // Heartbeat (optional but good for detecting stale connections).
   setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -421,51 +418,6 @@ function init() {
       }
     }
   }, 30000);
-}
-
-async function ingestDocument() {
-  const id = $("#doc-id").value.trim();
-  const text = $("#doc-text").value.trim();
-  const statusEl = $("#ingest-status");
-
-  if (!id) {
-    statusEl.textContent = "erreur: entrez un ID de document";
-    return;
-  }
-  if (!text) {
-    statusEl.textContent = "erreur: entrez du texte";
-    return;
-  }
-
-  statusEl.textContent = "ingestion en cours…";
-  try {
-    const r = await fetch(`/corpus/documents?document_id=${encodeURIComponent(id)}`, {
-      method: "POST",
-      headers: { "content-type": "text/markdown" },
-      body: text,
-    });
-
-    if (!r.ok) {
-      statusEl.textContent = `erreur HTTP ${r.status}`;
-      log(`ingestion échouée: ${r.status}`);
-      return;
-    }
-
-    const j = await r.json().catch(() => ({}));
-    if (j.data && j.data.chunks_stored !== undefined) {
-      statusEl.textContent = `✓ ${j.data.chunks_stored} chunks ingérés pour "${j.data.document_id}"`;
-      log("document ingéré avec succès");
-      // Clear form.
-      $("#doc-id").value = "";
-      $("#doc-text").value = "";
-    } else {
-      statusEl.textContent = "erreur: réponse invalide";
-      log("réponse d'ingestion invalide");
-    }
-  } catch (e) {
-    statusEl.textContent = `erreur réseau: ${e.message}`;
-    log(`erreur ingestion: ${e.message}`);
-  }
 }
 
 init();

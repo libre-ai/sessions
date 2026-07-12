@@ -20,6 +20,9 @@ rm -rf "$source_dir"
 
 (
   cd "$root/crates/app"
+  export CARGO_INCREMENTAL=0
+  export SOURCE_DATE_EPOCH=0
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$root=. --remap-path-prefix=$HOME=<home>"
   "$cli" build --release --web --locked
 )
 
@@ -27,6 +30,7 @@ destination="$root/crates/server/static/owner-app"
 rm -rf "$destination"
 mkdir -p "$destination"
 cp -R "$source_dir"/. "$destination"/
+python3 "$root/scripts/finalize-owner-app.py" "$destination"
 "$root/scripts/verify-owner-app.sh" "$destination"
 
 echo "owner bundle copied to crates/server/static/owner-app"
