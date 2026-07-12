@@ -17,9 +17,12 @@ clever create --type rust presto-matic --region par
 # Select the workspace binary and cache deps for faster builds:
 clever env set CC_RUST_BIN presto-server
 clever env set CC_CACHE_DEPENDENCIES true
+clever env set CC_PRE_BUILD_HOOK './scripts/clever-pre-build.sh'
 ```
 
-Clever builds with `cargo build --release --locked` (so `Cargo.lock` must be
+Le hook fail-closed installe Dioxus CLI 0.7.9, construit le bundle owner depuis le checkout déployé et vérifie son paquet SHA-256 avant le build Rust. Les assets sont générés et ne sont volontairement pas suivis par Git. Ne retirez pas ce hook : le build serveur doit embarquer le bundle qu’il vient de produire, jamais un bundle committé obsolète.
+
+Clever builds ensuite avec `cargo build --release --locked` (so `Cargo.lock` must be
 committed — it is) and expects the app to listen on `0.0.0.0:8080`. `main.rs`
 defaults `PORT` to 8080, so no extra config is needed.
 

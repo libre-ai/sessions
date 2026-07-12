@@ -42,7 +42,11 @@ Neither endpoint claims to call a real model provider, durable store or complete
 
 ## Verify locally
 
+`presto-server` embeds a generated Dioxus bundle. On a clean checkout, install the pinned Dioxus CLI and build that bundle first (it is intentionally ignored by Git):
+
 ```bash
+cargo install dioxus-cli --version 0.7.9 --locked
+./scripts/build-owner-app.sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace

@@ -88,6 +88,10 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(http::index))
         .route("/app.js", get(http::app_js))
+        .route("/app", get(http::owner_app_index))
+        .route("/app/", get(http::owner_app_index))
+        .route("/app/assets/{asset}", get(http::owner_app_asset))
+        .route("/app/{*path}", get(http::owner_app_index))
         .route("/health", get(health))
         .route("/p0/contract/proof", get(http::p0_contract_proof))
         .route("/p0/stub/run", post(http::p0_stub_run))
@@ -125,6 +129,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn owner_app_and_nested_routes_serve_the_dioxus_shell() {
+        for uri in ["/app", "/app/", "/app/notebook", "/app/corpus/deep-link"] {
+            let state = AppState::in_memory(Arc::new(Auth::generate()));
+            let response = app(state)
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            assert_eq!(
+                response.headers().get("content-type").unwrap(),
+                "text/html; charset=utf-8"
+            );
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            assert!(html.contains("<title>Rumble LM — espace owner</title>"));
+            assert!(html.contains("/app/assets/rumble-lm-app-"));
+            assert!(html.contains("<div id=\"main\"></div>"));
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_app_serves_javascript_and_wasm_with_safe_content_types() {
+        assert!(
+            http::OWNER_APP_ASSETS
+                .iter()
+                .any(|asset| asset.content_type == "application/wasm")
+        );
+        for asset in http::OWNER_APP_ASSETS {
+            let uri = format!("/app/assets/{}", asset.path);
+            let state = AppState::in_memory(Arc::new(Auth::generate()));
+            let response = app(state)
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            assert_eq!(
+                response.headers().get("content-type").unwrap(),
+                asset.content_type
+            );
+            assert_eq!(
+                response.headers().get("x-content-type-options").unwrap(),
+                "nosniff"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_owner_asset_is_not_replaced_by_the_html_fallback() {
+        let state = AppState::in_memory(Arc::new(Auth::generate()));
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/app/assets/missing.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     async fn ingest(uri: &str, content_type: &str, body: &'static str) -> StatusCode {

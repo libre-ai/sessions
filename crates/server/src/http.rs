@@ -282,6 +282,44 @@ pub(crate) async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
+/// Dioxus owner shell entry point. Nested `/app/*` browser routes return this
+/// same document; the client router selects the screen after WASM starts.
+pub(crate) async fn owner_app_index() -> impl IntoResponse {
+    (
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        Html(include_str!("../static/owner-app/index.html")),
+    )
+}
+
+pub(crate) struct EmbeddedOwnerAsset {
+    pub(crate) path: &'static str,
+    pub(crate) content_type: &'static str,
+    pub(crate) body: &'static [u8],
+}
+
+include!(concat!(env!("OUT_DIR"), "/owner_app_assets.rs"));
+
+/// Immutable, content-hashed assets emitted by dioxus-cli 0.7.9 and embedded
+/// into the server binary by `build.rs`.
+pub(crate) async fn owner_app_asset(Path(asset): Path<String>) -> impl IntoResponse {
+    match OWNER_APP_ASSETS.iter().find(|item| item.path == asset) {
+        Some(found) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, found.content_type),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            found.body,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 pub(crate) async fn app_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],

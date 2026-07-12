@@ -1,0 +1,12 @@
+[application]
+name = "rumble-lm-app"
+
+[web.app]
+title = "Rumble LM — espace owner"
+base_path = "app"
+
+[web.watcher]
+index_on_404 = true
+
+[web]
+pre_compress = false
