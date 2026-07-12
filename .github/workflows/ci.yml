@@ -34,7 +34,16 @@ jobs:
       - name: Documentation
         run: cargo doc --workspace --all-features --no-deps
       - name: WASM portability (client crates)
-        run: cargo check -p presto-core -p rumble-lm-ui --target wasm32-unknown-unknown
+        run: cargo check -p presto-core -p rumble-lm-ui -p rumble-lm-app --target wasm32-unknown-unknown
+      - name: Install pinned Dioxus CLI
+        run: cargo install dioxus-cli --version 0.7.9 --locked
+      - name: Build owner web bundle
+        run: |
+          ./scripts/build-owner-app.sh
+          test -f crates/server/static/owner-app/index.html
+          test "$(find crates/server/static/owner-app/assets -type f -name '*.wasm' | wc -l)" -eq 1
+          test "$(find crates/server/static/owner-app/assets -type f -name '*.js' | wc -l)" -ge 1
+          grep -q 'src="/app/assets/' crates/server/static/owner-app/index.html
 
   guard:
     name: Repository guardrails

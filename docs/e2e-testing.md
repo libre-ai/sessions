@@ -12,6 +12,8 @@ The `e2e/` directory contains Playwright tests for the current minimal web clien
 - the participant answers;
 - the host reveals the leaderboard.
 
+The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no browser storage or service worker.
+
 These tests exercise the deployed browser surface. Deeper protocol and scoring cases remain in Rust integration tests.
 
 ## Prerequisites
@@ -35,6 +37,9 @@ npx playwright install
 ```bash
 cd e2e
 npm test
+
+# Owner shell smoke only
+npx playwright test tests/owner-shell.spec.ts --project=chromium
 ```
 
 Playwright will:

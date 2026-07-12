@@ -144,7 +144,10 @@ test.describe('Session lifecycle', () => {
     // the participant UI, which has no "Ouvrir une question" control).
     await host.goto('/');
     await host.getByRole('button', { name: 'Créer une session (host)' }).click();
-    const joinHref = await host.locator('#joinlink').getAttribute('href');
+    const joinLink = host.locator('#joinlink');
+    await expect(joinLink).toHaveAttribute('href', /[?]s=/);
+    const joinHref = await joinLink.getAttribute('href');
+    expect(joinHref).not.toBeNull();
     await expect(host.locator('#log')).toContainText('connecté');
 
     await participant.goto(joinHref!);

@@ -1,0 +1,26 @@
+[package]
+name = "rumble-lm-app"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "rumble_lm_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rumble-lm-app"
+path = "src/main.rs"
+
+[features]
+default = ["web"]
+web = ["dioxus/web"]
+
+[dependencies]
+dioxus = { workspace = true, features = ["router"] }
+presto-core.workspace = true
+rumble-lm-ui.workspace = true
+
+[dev-dependencies]
+dioxus-ssr = "0.7"
