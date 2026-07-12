@@ -86,7 +86,7 @@ impl Retriever for MockRetriever {
 }
 
 /// Mock AI provider: simulates generation and structured verification evidence.
-/// `verifier_supports` controls whether the complete grounding gate passes.
+/// `verifier_supports` controls whether the exact lexical gate passes.
 struct MockAiProvider {
     verifier_supports: bool,
 }

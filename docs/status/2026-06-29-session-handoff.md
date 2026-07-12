@@ -30,10 +30,10 @@ blocked" to **§1 complete**. Each KPI has a named source test, green in CI
 |                    | Anonymous live join-link still works        | `server/tests/ws_integration.rs::late_joiner_*` (session path untouched)            |
 |                    | Anti-enumeration (404 identical)            | `server::authz::denials_are_indistinguishable_anti_enumeration`                     |
 |                    | Revocation despite valid token              | `server::membership::revoked_member_is_denied_a_sensitive_op_despite_a_valid_token` |
-| Ingestion          | Prompt-injection rejected (S1)              | `server/tests/live_rag.rs` (real model, local)                                      |
+| Ingestion          | Instruction-like payload exercised (not an anti-injection proof) | `server/tests/live_rag.rs` (real model, local)                         |
 |                    | Signed integrity hash per chunk             | `server::integrity::every_ingested_chunk_gets_a_verifiable_tag`                     |
 |                    | Signed PII verdict (distinct key)           | `server::classification::pii_verdict_is_signed_with_a_distinct_classifier_key`      |
-| Generation         | Verifier rejects the ungrounded             | `rag::pipeline::drops_questions_that_fail_grounding`                                |
+| Generation         | Exact gate rejects absent/mismatched evidence | `rag::verify` + `rag::pipeline`                                                    |
 |                    | Retrieval never crosses `space_id`          | `rag/tests/corpus_pgvector.rs::retrieve_never_crosses_space_or_clearance`           |
 |                    | Under-cleared excludes over-level           | same test (clearance filter)                                                        |
 |                    | Live-gen gate                               | `server::classification::live_generation_is_gated_by_clearance`                     |
@@ -63,8 +63,8 @@ assertions are invalid under coverage instrumentation).
 
 `server/tests/load.rs` (200 real WS participants, `--release`): delivery
 p99 ≈ 26 ms (< 200) · reveal ≈ 18 ms (< 500) · answer-submit ≈ 51 ms (< 100),
-1000/1000 zero loss. `live_rag` passes against a real model (gemma-31b), the
-injection payload neutralized.
+1000/1000 zero loss. `live_rag` passes against a real model (gemma-31b), but
+that positive run does not prove that the source instruction was neutralized.
 
 ---
 

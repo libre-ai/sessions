@@ -1,8 +1,8 @@
 //! The grounded-quiz pipeline: **retrieve → generate → verify**. A candidate
-//! question is generated from each retrieved chunk and kept only if the
-//! grounding-verifier confirms it is supported by that chunk's source text.
-//! Verification is a gate: unsupported (or unverifiable) questions are dropped,
-//! never surfaced to a live session.
+//! question is kept only after a provider verdict and exact lexical evidence from
+//! its scoped source. Missing or mismatched evidence is dropped fail-closed. This
+//! gate does not prove truth or resist a source that contains the generated claim;
+//! it is defence in depth rather than a complete anti-injection boundary.
 
 use presto_core::protocol::{CitationValidation, Question};
 
@@ -35,8 +35,8 @@ pub async fn grounded_quiz(
         let Ok(mut question) = generate_from_chunk(&chunk, provider).await else {
             continue;
         };
-        // The verifier gates the question against its own source text. Only this
-        // accepted path marks the question as publicly grounded.
+        // The verifier adds a fail-closed lexical gate before the existing public
+        // marker. This marker does not claim independent anti-injection authority.
         if let Ok(verdict) = verify_grounding(&question, &chunk, provider).await
             && verdict.is_supported()
         {
@@ -191,9 +191,8 @@ mod tests {
     }
 
     /// Simulates a model following an instruction embedded in the retrieved
-    /// source: it generates an absent answer, then self-asserts support and
-    /// invents evidence. This is intentionally stronger than checking prompt
-    /// markers: the public pipeline result itself must stay fail-closed.
+    /// source, then inventing evidence for an answer absent from that source.
+    /// This fixes the source-absent rejection boundary, not injection resistance.
     struct SourceControlledAdversarialProvider;
 
     #[async_trait]
@@ -223,7 +222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_prompt_injection_cannot_forge_grounded_verdict() {
+    async fn source_absent_answer_is_rejected_despite_supported_true() {
         let retriever = FakeRetriever {
             chunks: vec![Retrieved {
                 source_section_id: "attack#p0".into(),

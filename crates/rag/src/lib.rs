@@ -32,11 +32,10 @@ pub(crate) fn extract_json(s: &str) -> &str {
 const CHUNK_BEGIN: &str = "[CORPUS CHUNK BEGIN]";
 const CHUNK_END: &str = "[CORPUS CHUNK END]";
 
-/// Wrap untrusted corpus text in explicit delimiters so the model treats it as
-/// **data, never instructions** — the prompt-injection isolation for the three
-/// LLM sites (generate, verify, clarify). The source is not escaped, only fenced;
-/// any attempt to forge the delimiters from inside the text is neutralized so the
-/// untrusted region cannot break out of the fence and append instructions.
+/// Wrap untrusted corpus text in explicit delimiters and rewrite nested marker
+/// spellings at the three LLM sites (generate, verify, clarify). This preserves a
+/// syntactic prompt boundary, but cannot make a model obey it or distinguish an
+/// instruction/false claim inside the source. It is defence in depth only.
 pub(crate) fn fenced_source(text: &str) -> String {
     let safe = text
         .replace(CHUNK_BEGIN, "[ CORPUS CHUNK BEGIN ]")

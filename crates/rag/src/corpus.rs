@@ -8,10 +8,10 @@
 //! # Security: the corpus is untrusted
 //!
 //! [`CorpusStore::ingest`] stores source text without trying to sanitize its
-//! meaning. Grounded-verdict prompt sites isolate it with `fenced_source`,
-//! but prompt delimiters are only defence in depth. Any path publishing a grounded verdict
-//! must also use [`crate::verify`] to bind accepted content to exact structured
-//! evidence from the scoped, authorized chunk.
+//! meaning. Prompt delimiters and [`crate::verify`]'s exact quote/answer matching
+//! are defence in depth: they reject absent evidence, but an instruction or false
+//! claim containing the answer can still match. A security-sensitive `Grounded`
+//! projection needs an independent server-side authority for approved claims.
 
 use async_trait::async_trait;
 use sqlx::Row;
