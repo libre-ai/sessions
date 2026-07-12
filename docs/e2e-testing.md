@@ -12,7 +12,7 @@ The `e2e/` directory contains Playwright tests for the current minimal web clien
 - the participant answers;
 - the host reveals the leaderboard.
 
-The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no browser storage or service worker. `owner-notebook.spec.ts` mocks the owner APIs to deterministically prove rendering, rejection, disabled submit, current-space retry, and a bounded first RAG `503` followed by a successful second submit with grounded citation. `owner-corpus.spec.ts` utilise un vrai input fichier puis prouve upload exact → liste → notebook `Grounded` avec citation du même `document_id`; il couvre aussi Pending honnête (`chunk_count=0`), erreurs `400`/`413`/`507`/`503`, retry uniquement sur `503` ou erreur transport, capability absente et session expirée; real cookie authz, cross-space, clearance and CSRF remain blocking Rust router tests. When `KEYCLOAK_E2E=1`, `owner-auth-keycloak.spec.ts` is the no-mock real mobile gate: login → `/api/me` → personal space → `/app/notebook` → real RAG handler answer/citation → refresh → logout against the pinned development Keycloak.
+The targeted `owner-shell.spec.ts` smoke additionally opens the Dioxus shell at `/app` with a 390×844 mobile viewport, navigates its owner routes, verifies accessible navigation/sticky query placement, and confirms that the shell creates no web storage while registering exactly one shell-only service worker. `pwa.spec.ts` proves Chromium manifest/installability metadata, PNG dimensions, exact Cache Storage allowlisting and offline shell behavior. `pwa-smoke.spec.ts` is the bounded Chromium/Firefox/WebKit/mobile-Chromium WASM/deep-link/CSP smoke. `owner-notebook.spec.ts` mocks the owner APIs to deterministically prove rendering, rejection, disabled submit, current-space retry, and a bounded first RAG `503` followed by a successful second submit with grounded citation. `owner-corpus.spec.ts` utilise un vrai input fichier puis prouve upload exact → liste → notebook `Grounded` avec citation du même `document_id`; il couvre aussi Pending honnête (`chunk_count=0`), erreurs `400`/`413`/`507`/`503`, retry uniquement sur `503` ou erreur transport, capability absente et session expirée; real cookie authz, cross-space, clearance and CSRF remain blocking Rust router tests. When `KEYCLOAK_E2E=1`, `owner-auth-keycloak.spec.ts` is the no-mock real mobile gate: login → `/api/me` → personal space → `/app/notebook` → real RAG handler answer/citation → refresh → logout against the pinned development Keycloak.
 
 These tests exercise the deployed browser surface. Deeper protocol and scoring cases remain in Rust integration tests.
 
@@ -32,7 +32,7 @@ For the real owner auth gate, Docker Compose, `curl`, and Python 3 are also requ
 ```bash
 cd e2e
 npm ci
-npx playwright install
+npx playwright install chromium firefox webkit
 ```
 
 ## Run tests
@@ -42,8 +42,11 @@ npx playwright install
 cd e2e
 npm test
 
-# Owner shell and mocked deterministic UI states
-npx playwright test tests/owner-shell.spec.ts tests/owner-notebook.spec.ts --project=chromium
+# Owner shell and mocked deterministic UI states (full Chromium project)
+npx playwright test --project=chromium
+
+# Dedicated cross-browser/mobile smoke only
+npx playwright test tests/pwa-smoke.spec.ts --project=firefox-smoke --project=webkit-smoke --project=mobile-chromium-smoke
 
 # Real Keycloak + real notebook API path (after the setup below)
 npx playwright test tests/owner-auth-keycloak.spec.ts --project=chromium
@@ -92,7 +95,7 @@ To run against an already-started server:
 ```bash
 INGEST_TOKEN=$(openssl rand -hex 32) PORT=3000 cargo run --bin presto-server
 cd e2e
-BASE_URL=http://localhost:3000 npm test
+TEST_BASE_URL=http://localhost:3000 npm test
 ```
 
 ## Debugging
@@ -111,8 +114,8 @@ The `.github/workflows/ci.yml` includes an `e2e` job that:
 1. télécharge le paquet owner construit une seule fois depuis le checkout courant et vérifie sa liste de fichiers et tous ses SHA-256;
 2. starts Postgres 16+pgvector + Redis 7;
 3. builds `presto-server`, qui embarque donc exactement ce paquet vérifié;
-4. installs Playwright dependencies with `npm ci`;
-5. runs `cd e2e && npm test`;
+4. installs the lockfile-pinned Chromium, Firefox and WebKit engines with `npm ci` and `playwright install`;
+5. runs the complete Chromium suite plus only the dedicated smoke on Firefox, WebKit and mobile Chromium;
 6. uploads the HTML report as a CI artifact.
 
 Tests must pass before merge.

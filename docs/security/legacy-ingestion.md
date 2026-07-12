@@ -1,7 +1,9 @@
 # Migration de l’ingestion live legacy
 
 `POST /corpus/documents` est une frontière distincte de l’API owner. Elle ingère
-vers l’espace live `default` et **n’est plus ouverte en développement**.
+vers l’espace live `default` et **n’est plus ouverte en développement**. Son ancien
+formulaire navigateur racine est désactivé : cette route est strictement destinée
+aux producteurs serveur-à-serveur, jamais au HTML/WASM/service worker.
 
 ## Configuration obligatoire
 

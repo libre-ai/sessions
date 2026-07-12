@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -307,40 +307,109 @@ pub(crate) async fn index() -> Html<&'static str> {
 
 /// Dioxus owner shell entry point. Nested `/app/*` browser routes return this
 /// same document; the client router selects the screen after WASM starts.
-pub(crate) async fn owner_app_index() -> impl IntoResponse {
-    (
-        [
-            (header::CACHE_CONTROL, "no-store"),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        Html(include_str!("../static/owner-app/index.html")),
-    )
+pub(crate) const OWNER_APP_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'";
+const OWNER_PERMISSIONS_POLICY: &str =
+    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()";
+
+fn secure_owner_response(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(OWNER_APP_CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static(OWNER_PERMISSIONS_POLICY),
+    );
+    response
 }
 
-pub(crate) struct EmbeddedOwnerAsset {
+pub(crate) async fn owner_app_index() -> Response {
+    let mut response = Html(include_str!("../static/owner-app/index.html")).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    secure_owner_response(response)
+}
+
+pub(crate) struct EmbeddedOwnerFile {
     pub(crate) path: &'static str,
     pub(crate) content_type: &'static str,
+    pub(crate) etag: &'static str,
     pub(crate) body: &'static [u8],
 }
 
 include!(concat!(env!("OUT_DIR"), "/owner_app_assets.rs"));
 
-/// Immutable, content-hashed assets emitted by dioxus-cli 0.7.9 and embedded
-/// into the server binary by `build.rs`.
-pub(crate) async fn owner_app_asset(Path(asset): Path<String>) -> impl IntoResponse {
-    match OWNER_APP_ASSETS.iter().find(|item| item.path == asset) {
-        Some(found) => (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, found.content_type),
-                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-            ],
-            found.body,
-        )
-            .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+fn owner_file(path: &str, request_headers: &HeaderMap) -> Response {
+    let Some(found) = OWNER_APP_FILES.iter().find(|item| item.path == path) else {
+        return secure_owner_response(StatusCode::NOT_FOUND.into_response());
+    };
+    let etag = format!("\"{}\"", found.etag);
+    let not_modified = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        == Some(etag.as_str());
+    let mut response = if not_modified {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        (StatusCode::OK, found.body).into_response()
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(found.content_type),
+    );
+    headers.insert(
+        "cross-origin-resource-policy",
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag).expect("valid ETag"),
+    );
+    let cache_control = if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    if path == "sw.js" {
+        headers.insert("service-worker-allowed", HeaderValue::from_static("/app/"));
     }
+    secure_owner_response(response)
+}
+
+pub(crate) async fn owner_app_asset(Path(asset): Path<String>, headers: HeaderMap) -> Response {
+    owner_file(&format!("assets/{asset}"), &headers)
+}
+
+pub(crate) async fn owner_app_icon(Path(icon): Path<String>, headers: HeaderMap) -> Response {
+    owner_file(&format!("icons/{icon}"), &headers)
+}
+
+pub(crate) async fn owner_app_manifest(headers: HeaderMap) -> Response {
+    owner_file("manifest.webmanifest", &headers)
+}
+
+pub(crate) async fn owner_app_internal_manifest(headers: HeaderMap) -> Response {
+    owner_file("owner-shell-manifest.json", &headers)
+}
+
+pub(crate) async fn owner_app_service_worker(headers: HeaderMap) -> Response {
+    owner_file("sw.js", &headers)
 }
 
 pub(crate) async fn app_js() -> impl IntoResponse {

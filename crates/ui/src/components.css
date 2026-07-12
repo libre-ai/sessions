@@ -162,12 +162,18 @@
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(var(--presto-bottom-nav-count, 3), minmax(0, 1fr));
   gap: var(--presto-space-2);
   padding: var(--presto-space-2) var(--presto-space-2) calc(var(--presto-space-2) + var(--presto-safe-bottom));
   border-top: var(--border-default) solid var(--presto-color-border);
   background: var(--presto-color-surface);
 }
+
+.presto-bottom-nav--1 { grid-template-columns: minmax(0, 1fr); }
+.presto-bottom-nav--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.presto-bottom-nav--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.presto-bottom-nav--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.presto-bottom-nav--5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.presto-bottom-nav--6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
 .presto-bottom-nav__link {
   min-height: var(--presto-touch-target);

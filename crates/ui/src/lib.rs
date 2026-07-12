@@ -8,15 +8,11 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use dioxus_primitives::label::Label;
 use presto_core::api::SourceCitation;
 
-// Dioxus Primitives: headless ARIA-compliant components, imported by module
-// (label, dialog, collapsible, tabs, …). TextInput consumes `label::Label`
-// (I1 2026-07-10). Button/Card remain custom: no primitive equivalents at the
-// pinned rev (Radix philosophy — no primitives for trivially-native
-// elements). Dialog and Toast stay custom too: see the notes on each
-// component for the verified reasons.
+// Native controls are preferred where HTML already supplies the required
+// semantics. This keeps the owner shell free of generic runtime HTML injection
+// branches and machine-local JavaScript asset paths.
 
 /// CSS custom properties: colors, spacing, radius, typography, motion, and safe areas.
 pub const TOKENS_CSS: &str = include_str!("tokens.css");
@@ -33,13 +29,10 @@ pub const COMPONENTS_CSS: &str = include_str!("components.css");
 /// Version and SHA-256 contract for the vendored Design System bundle.
 pub const DESIGN_MANIFEST: &str = include_str!("../fixtures/portal/manifest.json");
 
-/// Include once near the root of a Dioxus app.
-#[component]
-pub fn ThemeStyles() -> Element {
-    rsx! {
-        style { "{TOKENS_CSS}\n{THEMES_CSS}\n{PORTAL_BRIDGE_CSS}\n{COMPONENTS_CSS}" }
-    }
-}
+/// Hosts concatenate these local styles into a content-addressed stylesheet.
+/// Keeping CSS as bytes rather than a `<style>` component permits a strict CSP.
+pub const THEME_STYLE_SOURCES: [&str; 4] =
+    [TOKENS_CSS, THEMES_CSS, PORTAL_BRIDGE_CSS, COMPONENTS_CSS];
 
 /// A mobile app surface that applies safe-area padding and base typography.
 #[component]
@@ -97,7 +90,7 @@ pub fn TextInput(
     let described_by = help.as_ref().map(|_| format!("{id}-help"));
     rsx! {
         div { class: "presto-field",
-            Label { class: "presto-label", html_for: "{id}", "{label}" }
+            label { class: "presto-label", r#for: "{id}", "{label}" }
             input {
                 class: "presto-input",
                 id: "{id}",
@@ -130,12 +123,7 @@ pub fn Card(
     }
 }
 
-/// Dialog stays custom — `dioxus_primitives::dialog` cannot render in static
-/// SSR at the pinned rev (verified 2026-07-10): `DialogRoot` gates its
-/// children behind `use_animated_open`, whose `show_in_dom` signal starts
-/// `false` and only flips inside a `use_effect` (never run by one-shot
-/// `dioxus_ssr::render`), and `DialogCtx` has private fields so the context
-/// cannot be provided manually to render `DialogContent` directly.
+/// Dialog stays a semantic static component; no client-side provider is needed.
 #[component]
 pub fn Dialog(title: String, children: Element) -> Element {
     let title_id = format!("presto-dialog-{}", stable_id(&title));
@@ -233,10 +221,10 @@ pub fn BottomNav(
     items: Vec<NavItem>,
     #[props(default = String::from("Primary"))] label: String,
 ) -> Element {
-    let count = items.len().max(1);
-    let style = format!("--presto-bottom-nav-count: {count};");
+    let count = items.len().clamp(1, 6);
+    let class = format!("presto-bottom-nav presto-bottom-nav--{count}");
     rsx! {
-        nav { class: "presto-bottom-nav", aria_label: "{label}", style: "{style}",
+        nav { class: "{class}", aria_label: "{label}",
             for item in items {
                 a {
                     class: "presto-bottom-nav__link",
@@ -260,7 +248,6 @@ pub fn MobileDemo() -> Element {
     };
     rsx! {
         AppSurface {
-            ThemeStyles {}
             div { class: "presto-stack",
                 Card { title: "Presto notebook".to_string(), body: "Mobile-first Rust UI primitives.".to_string() }
                 TextInput { id: "query".to_string(), label: "Ask your corpus".to_string(), placeholder: "What should I learn?".to_string(), help: "Answers are grounded before they are shown.".to_string() }
@@ -294,12 +281,12 @@ mod tests {
     }
 
     #[test]
-    fn theme_styles_include_tokens_and_reduced_motion() {
-        let html = render(rsx! { ThemeStyles {} });
-        assert!(html.contains("--presto-color-primary"));
-        assert!(html.contains("--presto-touch-target: var(--control-touchTarget)"));
-        assert!(html.contains("prefers-reduced-motion"));
-        assert!(html.contains("--presto-color-primary: var(--color-action)"));
+    fn theme_style_sources_are_externalizable_and_complete() {
+        let css = THEME_STYLE_SOURCES.concat();
+        assert!(css.contains("--presto-color-primary"));
+        assert!(css.contains("--presto-touch-target: var(--control-touchTarget)"));
+        assert!(css.contains("prefers-reduced-motion"));
+        assert!(css.contains("--presto-color-primary: var(--color-action)"));
         assert!(DESIGN_MANIFEST.contains("\"version\": \"2.0.0\""));
         assert!(
             !COMPONENTS_CSS.contains("#"),
@@ -381,12 +368,12 @@ mod tests {
     }
 
     #[test]
-    fn text_input_label_links_to_input_via_primitive() {
+    fn text_input_native_label_links_to_input() {
         let html = render(rsx! { TextInput {
             id: "email".to_string(),
             label: "Email".to_string(),
         } });
-        // The Primitives Label must render a real <label for=…> linked to the input.
+        // Native label semantics link the control without a JavaScript primitive.
         assert!(html.contains("<label"));
         assert!(html.contains("for=\"email\""));
         assert!(html.contains("id=\"email\""));
@@ -418,7 +405,8 @@ mod tests {
         });
         assert!(html.contains("aria-label=\"Primary\""));
         assert!(html.contains("aria-current=\"page\""));
-        assert!(html.contains("--presto-bottom-nav-count: 2"));
+        assert!(html.contains("presto-bottom-nav--2"));
+        assert!(!html.contains("style="));
     }
 
     #[test]

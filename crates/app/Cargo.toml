@@ -23,6 +23,8 @@ presto-core.workspace = true
 rumble-lm-ui.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+dioxus-history = "0.7"
+dioxus-web = { version = "0.7", default-features = false, features = ["document"] }
 gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
 
 [dev-dependencies]

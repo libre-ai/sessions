@@ -129,6 +129,13 @@ pub fn app(state: AppState) -> Router {
         .route("/app", get(http::owner_app_index))
         .route("/app/", get(http::owner_app_index))
         .route("/app/assets/{asset}", get(http::owner_app_asset))
+        .route("/app/icons/{icon}", get(http::owner_app_icon))
+        .route("/app/manifest.webmanifest", get(http::owner_app_manifest))
+        .route("/app/sw.js", get(http::owner_app_service_worker))
+        .route(
+            "/app/owner-shell-manifest.json",
+            get(http::owner_app_internal_manifest),
+        )
         .route("/app/{*path}", get(http::owner_app_index))
         .route("/health", get(health))
         .route("/auth/login", get(owner_auth::login))
@@ -192,7 +199,26 @@ pub fn app(state: AppState) -> Router {
             state.clone(),
             enforce_cookie_same_origin,
         ))
+        .layer(middleware::from_fn(force_private_no_store))
         .with_state(state)
+}
+
+/// Dynamic identity/data boundaries are network-only. This centralized guard
+/// applies to successes and errors and also prevents any cookie-setting response
+/// from becoming cacheable when future routes are added.
+async fn force_private_no_store(request: Request<Body>, next: Next) -> Response {
+    let path = request.uri().path();
+    let private_path = ["/auth", "/api", "/corpus", "/sessions", "/ws"]
+        .iter()
+        .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")));
+    let mut response = next.run(request).await;
+    if private_path || response.headers().contains_key(header::SET_COOKIE) {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            "no-store".parse().expect("static cache control"),
+        );
+    }
+    response
 }
 
 /// Any unsafe request carrying the owner cookie must provide two independent
@@ -299,6 +325,14 @@ mod tests {
                 response.headers().get("content-type").unwrap(),
                 "text/html; charset=utf-8"
             );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                http::OWNER_APP_CSP
+            );
+            assert_eq!(response.headers()[header::X_FRAME_OPTIONS], "DENY");
+            assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+            assert!(response.headers().contains_key("permissions-policy"));
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
@@ -310,27 +344,116 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owner_app_serves_javascript_and_wasm_with_safe_content_types() {
+    async fn owner_app_static_files_have_exact_mime_cache_and_security_headers() {
         assert!(
-            http::OWNER_APP_ASSETS
+            http::OWNER_APP_FILES
                 .iter()
                 .any(|asset| asset.content_type == "application/wasm")
         );
-        for asset in http::OWNER_APP_ASSETS {
-            let uri = format!("/app/assets/{}", asset.path);
+        for file in http::OWNER_APP_FILES {
+            let uri = format!("/app/{}", file.path);
             let state = AppState::in_memory(Arc::new(Auth::generate()));
             let response = app(state)
                 .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            assert_eq!(response.headers()[header::CONTENT_TYPE], file.content_type);
             assert_eq!(
-                response.headers().get("content-type").unwrap(),
-                asset.content_type
+                response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                "nosniff"
             );
             assert_eq!(
-                response.headers().get("x-content-type-options").unwrap(),
-                "nosniff"
+                response.headers()["cross-origin-resource-policy"],
+                "same-origin"
+            );
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                http::OWNER_APP_CSP
+            );
+            assert!(response.headers().contains_key(header::ETAG));
+            if file.path.starts_with("assets/") {
+                assert_eq!(
+                    response.headers()[header::CACHE_CONTROL],
+                    "public, max-age=31536000, immutable"
+                );
+            } else {
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+            }
+            if file.path == "sw.js" {
+                assert_eq!(response.headers()["service-worker-allowed"], "/app/");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_service_worker_etag_supports_not_modified() {
+        let file = http::OWNER_APP_FILES
+            .iter()
+            .find(|file| file.path == "sw.js")
+            .unwrap();
+        let response = app(AppState::in_memory(Arc::new(Auth::generate())))
+            .oneshot(
+                Request::builder()
+                    .uri("/app/sw.js")
+                    .header(header::IF_NONE_MATCH, format!("\"{}\"", file.etag))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+    }
+
+    #[tokio::test]
+    async fn any_set_cookie_response_is_forced_to_no_store() {
+        async fn cookie_response() -> impl IntoResponse {
+            (
+                [
+                    (header::SET_COOKIE, "future=value; HttpOnly"),
+                    (header::CACHE_CONTROL, "public, max-age=60"),
+                ],
+                "ok",
+            )
+        }
+        let response = Router::new()
+            .route("/future", get(cookie_response))
+            .layer(middleware::from_fn(force_private_no_store))
+            .oneshot(
+                Request::builder()
+                    .uri("/future")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn dynamic_boundaries_are_no_store_on_success_and_error() {
+        for (method, uri) in [
+            ("GET", "/auth/login"),
+            ("GET", "/api/me"),
+            ("POST", "/corpus/documents"),
+            ("POST", "/sessions"),
+            ("GET", "/ws/missing"),
+        ] {
+            let response = app(AppState::in_memory(Arc::new(Auth::generate())))
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "no-store",
+                "{uri}"
             );
         }
     }

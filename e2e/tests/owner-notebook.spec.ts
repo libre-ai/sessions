@@ -40,6 +40,7 @@ test.describe('Owner notebook approved claims', () => {
         query: 'Quelle est la capitale de la France ?',
         max_sources: 3,
       });
+      await new Promise(resolve => setTimeout(resolve, 100));
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

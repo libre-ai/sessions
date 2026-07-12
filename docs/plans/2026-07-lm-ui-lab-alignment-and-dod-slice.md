@@ -63,12 +63,12 @@ Demandeurs: target-version 1.0.0 (flagship_slice = rumble-lm), the cos rebuild c
 
 ### I1 — UI on Dioxus Primitives + Tailwind v4 via dx (PR indépendante)
 
-**Status (2026-07-10, delivered — verified scoping):** `dioxus-primitives` is consumed for real by `TextInput` (its label renders through `dioxus_primitives::label::Label`, `for`/`id` link SSR-tested). The rest of the increment's original component list is scoped out for verified reasons, each documented on the component:
+**Status (2026-07-10, delivered — verified scoping; amended 2026-07-13):** `TextInput` avait été migré vers `dioxus_primitives::label::Label`. Le hardening PWA #36 a ensuite retiré cette dépendance : son bundle générique apportait une branche `dangerous_inner_html` inutilisée et un chemin JavaScript absolu non reproductible dans le WASM. Le contrôle revient au `<label for>` natif, avec le même test SSR d’association et sans perte sémantique. Le reste du scoping historique demeure :
 
 - Pre-requisites: none (parallel to the runtime plan).
-- Delivered:
-  - `crates/ui/Cargo.toml`: `dioxus-primitives` git dep pinned by full rev (`bf007c15d0cf4d04d3181cc46cf12325aa773955`, same rev as wrench-dioxus-lab); `deny.toml` allow-git exemption.
-  - `crates/ui/src/lib.rs`: `TextInput` consumes `label::Label`; new SSR test `text_input_label_links_to_input_via_primitive`.
+- Delivered puis amendé:
+  - la dépendance git et son exemption `deny.toml` ont été supprimées par #36;
+  - `TextInput` rend un label HTML natif; `text_input_native_label_links_to_input` conserve la preuve SSR `for`/`id`.
 - Verified scoping (evidence, not preferences):
   - **Button/Card**: no primitive equivalents at this rev (Radix philosophy — no primitives for trivially-native elements). Custom.
   - **Dialog**: `dioxus_primitives::dialog` cannot render in one-shot SSR at this rev — `DialogRoot` gates children behind `use_animated_open` whose `show_in_dom` signal starts `false` and only flips inside a `use_effect` (never run by `dioxus_ssr::render`), and `DialogCtx` has private fields so the context cannot be provided manually to `DialogContent`. Custom, with the strong ARIA SSR test kept (`role`, `aria-modal`, `aria-labelledby`).

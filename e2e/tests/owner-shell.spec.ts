@@ -51,7 +51,9 @@ test.describe('Owner mobile shell', () => {
         ? (await navigator.serviceWorker.getRegistrations()).length
         : 0,
     }));
-    expect(browserState).toEqual({ localStorage: 0, sessionStorage: 0, serviceWorkers: 0 });
+    expect(browserState.localStorage).toBe(0);
+    expect(browserState.sessionStorage).toBe(0);
+    expect(browserState.serviceWorkers).toBe(1);
     expect(pageErrors).toEqual([]);
   });
 
