@@ -5,13 +5,13 @@
 //! cosine distance. Embeddings are passed as `[...]::vector` literals, so no
 //! extra binding crate is required.
 //!
-//! # Security: the corpus is trusted
+//! # Security: the corpus is untrusted
 //!
-//! Ingested text flows verbatim into the generation and grounding-verifier
-//! prompts ([`crate::generate`], [`crate::verify`]); [`CorpusStore::ingest`] does
-//! NOT sanitize it for prompt injection. The corpus is therefore assumed to come
-//! from a trusted (admin) source. When user-supplied ingestion is added, that
-//! text must be treated as untrusted and isolated from prompt construction.
+//! [`CorpusStore::ingest`] stores source text without trying to sanitize its
+//! meaning. Prompt delimiters and [`crate::verify`]'s exact quote/answer matching
+//! are defence in depth: they reject absent evidence, but an instruction or false
+//! claim containing the answer can still match. A security-sensitive `Grounded`
+//! projection needs an independent server-side authority for approved claims.
 
 use async_trait::async_trait;
 use sqlx::Row;

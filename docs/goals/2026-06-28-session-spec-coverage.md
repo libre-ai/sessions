@@ -34,10 +34,10 @@ production inference + SP-C + the §4 compliance surface.
 |                                  | Anonymous live join-link still works after `session→space` generalization | OK              | e2e test               |
 |                                  | 404 body: _not-found_ == _forbidden_ (anti-enumeration)                   | identical       | SP-A test              |
 |                                  | Revoked member denied on sensitive op despite unexpired token             | < cache window  | integration test       |
-| **Ingestion** (P1/P11, SP-B, S1) | Prompt-injection: poisoned doc → verifier still rejects ungrounded        | 100%            | S1 regression          |
+| **Ingestion** (P1/P11, SP-B, S1) | Source-absent answer rejected despite provider `supported=true`           | 100%            | lexical regression     |
 |                                  | Signed `integrity` hash present per chunk                                 | 100%            | SP-B inc-1 test        |
 |                                  | Signed PII verdict (distinct classifier key)                              | 100%            | SP-B inc-3 test        |
-| **Grounded generation** (moat)   | Grounding-verifier rejects the ungrounded                                 | 100% on the set | verify test            |
+| **Grounded generation** (moat)   | Exact gate rejects absent/mismatched evidence                             | 100% on the set | verify test            |
 |                                  | Retrieval never crosses `space_id`                                        | 0 leak          | isolation test         |
 |                                  | Under-cleared member excludes over-level chunks                           | 100%            | SP-B anti-exfil test   |
 |                                  | Live-gen gate: generation never exceeds the audience ceiling              | 0 leak          | SP-B inc-3 test        |
@@ -84,4 +84,4 @@ For each spec element — **% with `{code + tests + API docs + example/ADR}`**:
 
 ## Minimal session goal (the high-signal subset)
 
-If the operation needs a smaller first target, the minimal "a session runs correctly **and securely** with the spec active" goal = the **moat** rows of §1 (injection rejection, space isolation, live-gen gate, grounding) **+ all of §2 (gate-wall) + the §3 SLOs**. This proves a session is functionally and security-complete before the full collaboration/classification surface is gated in by increment.
+If the operation needs a smaller first target, the minimal target includes the **moat** rows of §1 (lexical fail-closed rejection, space isolation, live-gen gate, grounding) **+ all of §2 (gate-wall) + the §3 SLOs**. This does not claim prompt-injection security completeness: a security-sensitive `Grounded` result still requires independent server-side approved claims.

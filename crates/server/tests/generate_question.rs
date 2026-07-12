@@ -85,8 +85,8 @@ impl Retriever for MockRetriever {
     }
 }
 
-/// Mock AI provider: simulates generation and verification responses.
-/// `verifier_supports` controls whether the grounding verifier gate passes.
+/// Mock AI provider: simulates generation and structured verification evidence.
+/// `verifier_supports` controls whether the exact lexical gate passes.
 struct MockAiProvider {
     verifier_supports: bool,
 }
@@ -100,10 +100,14 @@ impl AiProvider for MockAiProvider {
     async fn complete(&self, system: &str, _user: &str) -> Result<String, AiError> {
         if system.contains("grounding checker") {
             // Verifier response: gate pass/fail based on verifier_supports flag.
-            Ok(format!(
-                "{{\"supported\": {}, \"reason\": \"test\"}}",
-                self.verifier_supports
-            ))
+            Ok(if self.verifier_supports {
+                "{\"supported\":true,\"reason\":\"exact\",\
+                 \"evidence\":{\"source_section_id\":\"doc#p0\",\
+                 \"exact_quote\":\"The sky is blue.\"}}"
+                    .into()
+            } else {
+                "{\"supported\":false,\"reason\":\"absent\",\"evidence\":null}".into()
+            })
         } else {
             // Generator response: always generate a valid question.
             Ok(
@@ -339,8 +343,8 @@ async fn rag_pipeline_verifier_gate_drops_ungrounded_question() {
 
 #[tokio::test]
 async fn rag_pipeline_accepts_grounded_question() {
-    // Positive case: when verify_grounding() returns supported=true, the question
-    // passes through the gate and reaches participants as expected.
+    // Positive case: supported=true plus matching exact evidence passes the gate
+    // and reaches participants as expected.
     let auth = Arc::new(Auth::generate());
 
     let retriever = Arc::new(MockRetriever);

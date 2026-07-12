@@ -80,15 +80,12 @@ async fn real_provider_embeds_generates_and_verifies() {
     assert_eq!(q.source_section_ids, vec!["doc#p0".to_string()]);
 
     // Verification: a parseable verdict (the boolean is model-dependent).
-    let verdict = verify_grounding(&q, &chunk.text, &provider)
+    let verdict = verify_grounding(&q, &chunk, &provider)
         .await
         .expect("verification failed");
     eprintln!(
-        "real provider OK: dim={} | Q='{}' correct={:?} | grounded={} ({})",
+        "real provider OK: dim={} | generated question parsed | evidence_validated={}",
         vecs[0].len(),
-        q.text,
-        q.correct_choices,
-        verdict.supported,
-        verdict.reason
+        verdict.is_supported(),
     );
 }

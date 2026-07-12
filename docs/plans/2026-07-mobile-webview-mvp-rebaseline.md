@@ -94,24 +94,28 @@ supprimé implicitement par ce milestone.
 ## Gate de sécurité RAG — bloquant pour #33
 
 Le risque S1 documenté dans
-[la spécification d'évolution](../evolution/2026-06-28-evolution-and-hardening-spec.md#31-s1-p0--prompt-injection-isolation-defeats-the-moat-if-unaddressed)
+[la spécification d'évolution](../evolution/2026-06-28-evolution-and-hardening-spec.md)
 porte sur la source non fiable lue à la fois par le générateur et le verifier.
-L'existant fournit une disposition : `crates/rag/src/lib.rs::fenced_source`
-neutralise les marqueurs forgés et `generate.rs`, `verify.rs` et `clarify.rs`
-qualifient explicitement la source comme donnée non fiable. Le test réel-provider
+L'existant apporte seulement des défenses en profondeur :
+`crates/rag/src/lib.rs::fenced_source` maintient une frontière syntaxique, et
+`verify.rs` rejette un booléen provider lorsque l'extrait ou la réponse sont
+absents de la source scoped. Ni les fences ni ce matching exact ne prouvent qu'un
+modèle ignore une instruction source. Une instruction ou fausse affirmation qui
+contient la réponse peut encore passer le gate lexical. Le test réel-provider
 `crates/server/tests/live_rag.rs::host_generates_a_question_grounded_in_an_ingested_document`
-contient une charge d'injection, mais il est conditionné à une route AI approuvée.
+reste conditionné à une route AI approuvée et ne ferme pas cette limite.
 
 En conséquence, #33 ne peut être accepté « grounded » que si :
 
-1. le nouveau prompt de réponse notebook réutilise une frontière source/verifier
-   explicite et fail-closed, sans concaténation libre de corpus;
-2. un test adversarial déterministe, bloquant en CI et non auto-sauté, injecte une
-   instruction dans la source et prouve qu'elle ne peut ni forger l'acceptation du
-   verifier ni atteindre une réponse `Grounded` non supportée;
-3. le test réel-provider gated reste une preuve complémentaire, pas le seul gate;
-4. une erreur/indécision du verifier produit `Rejected` ou une erreur bornée,
-   jamais `Grounded`;
+1. une autorité indépendante de claims approuvés, construite côté serveur et non
+   choisie par le provider ou la source non fiable, autorise chaque claim publié;
+2. le nouveau prompt de réponse notebook réutilise les fences et le matching exact
+   comme défense en profondeur fail-closed, sans les présenter comme cette autorité;
+3. les tests déterministes couvrent les deux frontières : rejet d'une réponse
+   absente malgré `supported=true`, et acceptation lexicale transparente d'une
+   instruction source contenant elle-même la réponse;
+4. une erreur/indécision du verifier ou de l'autorité produit `Rejected` ou une
+   erreur bornée, jamais `Grounded`;
 5. les citations sont une projection autorisée : aucun texte confidentiel brut,
    prompt, verdict interne ou token n'est renvoyé/loggé.
 
