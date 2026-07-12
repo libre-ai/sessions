@@ -217,11 +217,7 @@ pub(crate) async fn p0_stub_run() -> Json<Envelope<P0StubWorkflowProof>> {
 /// Validate configuration once at the composition root. Tokens are deliberately
 /// strong and header-safe; absence or weak values are configuration errors.
 pub fn validate_legacy_ingest_token(value: &str) -> bool {
-    value.len() >= 32
-        && value.len() <= 512
-        && !value
-            .bytes()
-            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+    (32..=512).contains(&value.len()) && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
 }
 
 /// Fail-closed legacy ingestion gate. Digest comparison has fixed length and is
@@ -363,10 +359,20 @@ mod tests {
         assert!(validate_legacy_ingest_token(
             "0123456789abcdef0123456789abcdef"
         ));
+        assert!(validate_legacy_ingest_token(&"~".repeat(512)));
         assert!(!validate_legacy_ingest_token(""));
         assert!(!validate_legacy_ingest_token("short"));
         assert!(!validate_legacy_ingest_token(
             "0123456789abcdef 0123456789abcdef"
+        ));
+        assert!(!validate_legacy_ingest_token(
+            "0123456789abcdefé0123456789abcdef"
+        ));
+        assert!(!validate_legacy_ingest_token(
+            "0123456789abcdef\u{80}0123456789abcdef"
+        ));
+        assert!(!validate_legacy_ingest_token(
+            "0123456789abcdef\u{7f}0123456789abcdef"
         ));
         assert!(!validate_legacy_ingest_token(&"x".repeat(513)));
     }

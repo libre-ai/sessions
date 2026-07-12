@@ -459,7 +459,7 @@ async fn upload_document(
         .map_err(|_| UploadFailure::Rejected)?
         .send()
         .await
-        .map_err(|_| UploadFailure::Rejected)?;
+        .map_err(|_| UploadFailure::Unavailable)?;
     match response.status() {
         401 => return Err(UploadFailure::SessionExpired),
         400 => return Err(UploadFailure::Invalid),

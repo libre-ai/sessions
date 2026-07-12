@@ -283,7 +283,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let legacy_ingest_token = std::env::var("INGEST_TOKEN")
         .map_err(|_| "INGEST_TOKEN is required for the legacy ingestion route")?;
     if !presto_server::http::validate_legacy_ingest_token(&legacy_ingest_token) {
-        return Err("INGEST_TOKEN must be 32-512 non-whitespace bytes".into());
+        return Err("INGEST_TOKEN must be 32-512 printable ASCII bytes (0x21-0x7e)".into());
     }
     let legacy_ingest_token: Arc<str> = Arc::from(legacy_ingest_token);
 

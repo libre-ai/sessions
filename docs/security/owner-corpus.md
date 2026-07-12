@@ -33,6 +33,8 @@ est canonique et ne vient jamais du nom de fichier fourni par l’utilisateur.
 - body JSON : 2 Mio maximum; erreurs externes stables `400`, `413`, `507`, `503`;
 - 4 uploads maximum en concurrence sur le processus, permit conservé pendant
   extraction JSON et préparation; authz exécutée avant tout polling du body;
+- 4 queries maximum en concurrence sur le processus, permit conservé autour du
+  body et du pipeline complet; authz `read` exécutée avant ce permit et le body;
 - aucune éviction : l’insertion, le dédoublonnage et les capacités sont atomiques;
 - hashing, validation et découpage sont exécutés hors verrou; aucun `await` sous verrou.
 
@@ -47,16 +49,19 @@ le corps.
 
 `GET /api/corpus/documents` et `POST /api/rag/query` exigent `read`; `POST` upload
 exige `add_document`. Chacun relit la membership actuelle après validation du
-cookie et du Biscuit. Le middleware upload place l’owner authentifié dans les
-extensions avant l’extracteur JSON. Le CSRF global reste plus externe et s’exécute
-donc avant cette authz sur toute requête cookie unsafe.
+cookie et du Biscuit. Les middlewares upload et query placent l’owner authentifié
+dans les extensions avant l’extracteur JSON. Le CSRF global reste plus externe et
+s’exécute donc avant cette authz sur toute requête cookie unsafe.
 
 La révocation est fail-closed au début de chaque requête. Upload refait aussi le
-contrôle après préparation, juste avant insert; query le refait après le pipeline/
-timeout, juste avant toute projection potentielle `Grounded`. Une requête en vol
-n’est pas annulée atomiquement au moment exact d’une révocation : du travail peut
-terminer, mais ces seconds contrôles empêchent l’insert/publication si la
-révocation est déjà visible à leur instant. Une révocation concurrente après le
+contrôle après préparation, juste avant insert. Query le refait après parsing et
+sélection du permit, immédiatement avant le pipeline, puis après le pipeline/
+timeout juste avant toute projection potentielle `Grounded`. Une révocation qui
+survient pendant un appel provider est donc contrôlée avant publication, mais ne
+peut pas annuler un appel provider déjà démarré. Une requête en vol n’est pas
+annulée atomiquement au moment exact d’une révocation : du travail peut terminer,
+mais ces seconds contrôles empêchent l’insert/publication si la révocation est
+déjà visible à leur instant. Une révocation concurrente après le
 dernier contrôle garde la sémantique classique « autorisée au dernier check ».
 L’espace est exclusivement celui de la session owner.
 

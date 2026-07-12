@@ -525,17 +525,20 @@ mod tests {
             &[SpaceCapability::Read, SpaceCapability::AddDocument],
         );
         let router = app(state);
-        let active = Arc::new(AtomicUsize::new(0));
-        let maximum = Arc::new(AtomicUsize::new(0));
-        let release = Arc::new(tokio::sync::Notify::new());
+        let start = Arc::new(tokio::sync::Barrier::new(9));
+        let (polled_tx, mut polled_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut releases = Vec::new();
         let mut tasks = Vec::new();
+
         for index in 0..8 {
             let router = router.clone();
             let cookie = cookie.clone();
-            let active = active.clone();
-            let maximum = maximum.clone();
-            let release = release.clone();
+            let start = start.clone();
+            let polled_tx = polled_tx.clone();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            releases.push(Some(release_tx));
             tasks.push(tokio::spawn(async move {
+                start.wait().await;
                 let payload = json!({
                     "filename":format!("{index}.txt"),
                     "mime_type":"text/plain",
@@ -543,10 +546,8 @@ mod tests {
                 })
                 .to_string();
                 let body = Body::from_stream(stream::once(async move {
-                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    maximum.fetch_max(current, Ordering::SeqCst);
-                    release.notified().await;
-                    active.fetch_sub(1, Ordering::SeqCst);
+                    polled_tx.send(index).unwrap();
+                    release_rx.await.unwrap();
                     Ok::<_, Infallible>(Bytes::from(payload))
                 }));
                 request(
@@ -560,31 +561,40 @@ mod tests {
                 .status()
             }));
         }
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while active.load(Ordering::SeqCst) < MAX_CONCURRENT_UPLOADS {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        assert_eq!(maximum.load(Ordering::SeqCst), MAX_CONCURRENT_UPLOADS);
-        release.notify_waiters();
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while maximum.load(Ordering::SeqCst) < MAX_CONCURRENT_UPLOADS
-                || active.load(Ordering::SeqCst) == 0
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        assert_eq!(maximum.load(Ordering::SeqCst), MAX_CONCURRENT_UPLOADS);
-        release.notify_waiters();
+        drop(polled_tx);
+        start.wait().await;
+
+        let mut first_wave = Vec::new();
+        for _ in 0..MAX_CONCURRENT_UPLOADS {
+            first_wave.push(polled_rx.recv().await.unwrap());
+        }
+        assert_eq!(
+            polled_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        );
+
+        for index in first_wave {
+            releases[index].take().unwrap().send(()).unwrap();
+        }
+        let mut second_wave = Vec::new();
+        for _ in 0..MAX_CONCURRENT_UPLOADS {
+            second_wave.push(polled_rx.recv().await.unwrap());
+        }
+        assert_eq!(
+            polled_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        );
+        for index in second_wave {
+            releases[index].take().unwrap().send(()).unwrap();
+        }
+
         for task in tasks {
             assert_eq!(task.await.unwrap(), StatusCode::OK);
         }
+        assert_eq!(
+            polled_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        );
     }
 
     #[tokio::test]

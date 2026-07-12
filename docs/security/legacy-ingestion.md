@@ -6,7 +6,8 @@ vers l’espace live `default` et **n’est plus ouverte en développement**.
 ## Configuration obligatoire
 
 Le processus refuse de démarrer sans `INGEST_TOKEN`. La valeur doit contenir de
-32 à 512 octets non blancs et compatibles avec un header HTTP; générer par
+32 à 512 octets ASCII graphiques compatibles avec un header HTTP (`0x21..0x7e`);
+Unicode, espace, octets obs-text et DEL sont refusés. Générer par
 exemple `openssl rand -hex 32`, puis l’injecter via le gestionnaire de secrets du
 déploiement. Ne jamais la committer ni la logger.
 

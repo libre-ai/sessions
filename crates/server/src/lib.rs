@@ -138,7 +138,17 @@ pub fn app(state: AppState) -> Router {
         .route("/api/spaces/current", get(owner_auth::current_space))
         .route(
             "/api/rag/query",
-            post(rag_query::query).layer(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES)),
+            post(rag_query::query)
+                // Axum layers execute bottom-up: auth is outermost, then the
+                // shared permit around body buffering and the complete pipeline.
+                .layer::<_, Infallible>(DefaultBodyLimit::max(rag_query::MAX_RAG_BODY_BYTES))
+                .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
+                    rag_query::MAX_CONCURRENT_QUERIES,
+                ))
+                .layer::<_, Infallible>(middleware::from_fn_with_state(
+                    state.clone(),
+                    rag_query::authorize_query,
+                )),
         )
         .route(
             "/api/corpus/documents",

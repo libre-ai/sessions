@@ -177,6 +177,39 @@ test('503 preserves the selected request and retries only that transient failure
   expect(attempts).toBe(2);
 });
 
+test('transport abort preserves the upload request for a successful retry', async ({ page }) => {
+  await mockSpace(page);
+  let attempts = 0;
+  await page.route('**/api/corpus/documents', async route => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":{"documents":[]}}' });
+      return;
+    }
+    attempts += 1;
+    if (attempts === 1) {
+      await route.abort('connectionfailed');
+      return;
+    }
+    const body = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: {
+      document: { id: 'doc_transport_retry', title: body.filename, mime_type: body.mime_type, byte_size: 9, chunk_count: 0, approval_status: 'pending' },
+      deduplicated: false,
+    } }) });
+  });
+
+  await page.goto('/app/corpus');
+  await page.getByLabel('Choisir exactement un document').setInputFiles({
+    name: 'retry.md', mimeType: 'text/markdown', buffer: Buffer.from('safe text'),
+  });
+  const submit = page.getByRole('button', { name: 'Ajouter le document' });
+  await submit.click();
+  await expect(page.getByText('Service temporairement indisponible. Réessayez.')).toBeVisible();
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(page.getByText(/Pending — métadonnées enregistrées/)).toBeVisible();
+  expect(attempts).toBe(2);
+});
+
 test('missing add_document capability hides the upload form', async ({ page }) => {
   await page.route('**/api/spaces/current', route => route.fulfill({
     status: 200, contentType: 'application/json',
