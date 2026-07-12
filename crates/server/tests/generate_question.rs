@@ -124,6 +124,7 @@ async fn spawn(quiz: Arc<dyn QuizSource>, auth: Arc<Auth>) -> std::net::SocketAd
         fanout: Arc::new(BroadcastFanout::new()),
         owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
         approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
+        notebook_rag: Arc::new(presto_server::notebook_rag::StagedNotebookRagEngine::fixture()),
         auth,
         quiz,
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

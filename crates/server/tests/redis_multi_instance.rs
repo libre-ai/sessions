@@ -28,6 +28,7 @@ async fn instance(url: &str, auth: Arc<Auth>) -> SocketAddr {
         fanout,
         owner_auth: Arc::new(presto_server::owner_auth::OwnerAuth::disabled(auth.clone())),
         approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
+        notebook_rag: Arc::new(presto_server::notebook_rag::StagedNotebookRagEngine::fixture()),
         auth,
         quiz: Arc::new(presto_server::quiz::FixtureQuizSource),
         breakout: Arc::new(presto_server::quiz::FixtureBreakoutSource),

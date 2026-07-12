@@ -93,10 +93,13 @@ supprimé implicitement par ce milestone.
 
 ## État d’implémentation #33 (2026-07-12)
 
-La verticale est implémentée sur sa branche de revue : registre immutable d’un
-claim public versionné/hashé avec provenance de contrôle, route owner bornée et
-`no-store`, états Dioxus complets et E2E Playwright déterministes. Le corpus
-owner reste un placeholder pour #34. L’acceptation définitive reste soumise à la
+La verticale est implémentée sur sa branche de revue : un permit approuvé est
+émis avant une vraie orchestration fixture `retrieve scoped → generate depuis
+chunk fenced → verifier fail-closed #90 → autorité finale`. La source locale est
+seedée séparément par espace ; ses IDs et hashes incluent le scope. La route est
+bornée/`no-store`, les erreurs de chaque stage sont testées, et les états Dioxus
+incluent retry et session expirée. Le corpus owner général et tout upload restent
+pending/non-éligibles jusqu’à #34. L’acceptation définitive reste soumise à la
 revue de la PR ; ce paragraphe ne déclare ni merge ni disponibilité produit.
 
 La propriété obtenue est l’appartenance à l’univers serveur explicitement
@@ -121,13 +124,13 @@ En conséquence, #33 ne peut être accepté « grounded » que si :
 
 1. une autorité indépendante de claims approuvés, construite côté serveur et non
    choisie par le provider ou la source non fiable, autorise chaque claim publié;
-2. si un futur provider est ajouté au Notebook, son prompt réutilise les fences
-   et le matching exact comme défense en profondeur fail-closed, sans jamais
-   sélectionner/créer un claim ni devenir cette autorité ; le MVP déterministe
-   n’appelle aucun provider ;
-3. les tests déterministes couvrent les deux frontières : rejet d'une réponse
-   absente malgré `supported=true`, et acceptation lexicale transparente d'une
-   instruction source contenant elle-même la réponse;
+2. le provider local déterministe du Notebook reçoit une source fenced et passe
+   le matching exact fail-closed, sans jamais recevoir, sélectionner ou créer le
+   permit ; il est remplaçable par le seam `AiProvider`, sans fallback silencieux ;
+3. les tests déterministes couvrent les deux frontières et l’attaque exacte :
+   pour un alias approuvé, un retriever substitue une instruction source qui fait
+   générer Paris et `supported=true`; l’autorité finale rejette néanmoins le
+   candidat non conforme ;
 4. une erreur/indécision du verifier ou de l'autorité produit `Rejected` ou une
    erreur bornée, jamais `Grounded`;
 5. les citations sont une projection autorisée : aucun texte confidentiel brut,

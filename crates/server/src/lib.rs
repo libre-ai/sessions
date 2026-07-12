@@ -19,6 +19,7 @@ pub mod ingestion;
 pub mod integrity;
 pub mod jobs;
 pub mod membership;
+pub mod notebook_rag;
 pub mod oidc;
 pub mod owner_auth;
 pub mod postgres_jobs;
@@ -46,6 +47,7 @@ use axum::routing::{get, post};
 use approved_claims::ApprovedClaimRegistry;
 use auth::Auth;
 use fanout::{BroadcastFanout, Fanout};
+use notebook_rag::{NotebookRagEngine, StagedNotebookRagEngine};
 use owner_auth::OwnerAuth;
 use quiz::{
     BreakoutSource, DocumentIngestor, FixtureBreakoutSource, FixtureFlashcardSource,
@@ -71,6 +73,8 @@ pub struct AppState {
     pub owner_auth: Arc<OwnerAuth>,
     /// Immutable, server-side authority for publishable notebook claims.
     pub approved_claims: Arc<ApprovedClaimRegistry>,
+    /// Untrusted retrieve/generate/verify stages; never an approval authority.
+    pub notebook_rag: Arc<dyn NotebookRagEngine>,
     pub quiz: Arc<dyn QuizSource>,
     pub breakout: Arc<dyn BreakoutSource>,
     pub flashcards: Arc<dyn FlashcardSource>,
@@ -88,6 +92,7 @@ impl AppState {
             fanout: Arc::new(BroadcastFanout::new()),
             owner_auth: Arc::new(OwnerAuth::disabled(auth.clone())),
             approved_claims: Arc::new(ApprovedClaimRegistry::fixture()),
+            notebook_rag: Arc::new(StagedNotebookRagEngine::fixture()),
             auth,
             quiz: Arc::new(FixtureQuizSource),
             breakout: Arc::new(FixtureBreakoutSource),
@@ -172,6 +177,39 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[test]
+    fn grounded_projection_is_confined_to_the_authority_module() {
+        fn visit(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, files);
+                } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let authority = source_root.join("approved_claims.rs");
+        let direct_variant = ["RagQueryResponse", "::Grounded"].concat();
+        let convenience_constructor = ["RagQueryResponse", "::grounded("].concat();
+        let mut files = Vec::new();
+        visit(&source_root, &mut files);
+        let violations: Vec<_> = files
+            .into_iter()
+            .filter(|path| path != &authority)
+            .filter(|path| {
+                let source = std::fs::read_to_string(path).unwrap();
+                source.contains(&direct_variant) || source.contains(&convenience_constructor)
+            })
+            .collect();
+        assert!(
+            violations.is_empty(),
+            "Grounded may only be constructed by approved_claims.rs: {violations:?}"
+        );
+    }
 
     #[tokio::test]
     async fn health_returns_ok() {

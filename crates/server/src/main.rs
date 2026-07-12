@@ -283,6 +283,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         auth,
         owner_auth,
         approved_claims: Arc::new(presto_server::approved_claims::ApprovedClaimRegistry::fixture()),
+        notebook_rag: Arc::new(presto_server::notebook_rag::StagedNotebookRagEngine::fixture()),
         quiz,
         breakout,
         flashcards,

@@ -61,14 +61,41 @@ test.describe('Owner notebook approved claims', () => {
 
     await page.goto('/app/notebook');
     await expect(page.getByRole('heading', { name: 'Prêt à interroger les claims approuvés' })).toBeVisible();
+    const submit = page.getByRole('button', { name: 'Envoyer' });
+    await expect(submit).toBeDisabled();
     await page.getByLabel('Question au corpus').fill('Quelle est la capitale de la France ?');
-    await page.getByRole('button', { name: 'Envoyer' }).click();
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    await expect(submit).toBeDisabled();
 
     await expect(page.getByRole('heading', { name: 'Réponse', exact: true })).toBeVisible();
     await expect(page.getByText('Paris est la capitale de la France.')).toBeVisible();
     const citations = page.getByRole('region', { name: 'Citations approuvées' });
     await expect(citations.getByText('Référence géographique approuvée')).toBeVisible();
     await expect(citations.getByText('approved-geography#france')).toBeVisible();
+  });
+
+  test('retries a failed current-space load', async ({ page }) => {
+    let attempts = 0;
+    await page.route('**/api/spaces/current', async (route) => {
+      attempts += 1;
+      if (attempts === 1) {
+        await route.fulfill({ status: 503, body: '{"error":"unavailable"}' });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: { 'cache-control': 'no-store' },
+          body: JSON.stringify(space),
+        });
+      }
+    });
+
+    await page.goto('/app/notebook');
+    await expect(page.getByRole('heading', { name: 'Espace indisponible' })).toBeVisible();
+    await page.getByRole('button', { name: 'Réessayer le chargement' }).click();
+    await expect(page.getByRole('heading', { name: 'Prêt à interroger les claims approuvés' })).toBeVisible();
+    expect(attempts).toBe(2);
   });
 
   test('renders approved-registry rejection as a distinct safe state', async ({ page }) => {

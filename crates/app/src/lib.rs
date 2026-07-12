@@ -224,8 +224,10 @@ pub fn Notebook() -> Element {
     let mut session = use_signal(|| NotebookSession::Loading);
     let mut query = use_signal(String::new);
     let mut rag_state = use_signal(|| RagQueryState::Idle);
+    let mut reload_space = use_signal(|| 0_u32);
 
     use_effect(move || {
+        let _reload_generation = *reload_space.read();
         spawn(async move {
             session.set(match load_current_space().await {
                 Ok(space) => NotebookSession::Ready(space),
@@ -237,8 +239,9 @@ pub fn Notebook() -> Element {
 
     let current_session = session.read().clone();
     let current_rag_state = rag_state.read().clone();
-    let can_submit =
+    let can_edit =
         matches!(current_session, NotebookSession::Ready(_)) && !current_rag_state.is_loading();
+    let can_submit = can_edit && !query.read().trim().is_empty();
 
     rsx! {
         OwnerFrame { current: Screen::Notebook,
@@ -263,7 +266,16 @@ pub fn Notebook() -> Element {
                         NotebookSession::Failed => rsx! {
                             div { class: "owner-empty owner-result--failure", role: "alert",
                                 h2 { "Espace indisponible" }
-                                p { "Le service est temporairement indisponible. Réessayez plus tard." }
+                                p { "Le service est temporairement indisponible." }
+                                button {
+                                    class: "presto-button presto-button--secondary",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        session.set(NotebookSession::Loading);
+                                        reload_space += 1;
+                                    },
+                                    "Réessayer le chargement"
+                                }
                             }
                         },
                         NotebookSession::Ready(_) => match current_rag_state {
@@ -352,7 +364,7 @@ pub fn Notebook() -> Element {
                         name: "query",
                         rows: "2",
                         maxlength: "4096",
-                        disabled: !can_submit,
+                        disabled: !can_edit,
                         aria_describedby: "owner-query-help",
                         placeholder: "Quelle est la capitale de la France ?",
                         value: "{query}",

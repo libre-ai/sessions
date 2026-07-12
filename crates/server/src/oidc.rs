@@ -16,6 +16,7 @@ use jsonwebtoken::{
     Algorithm, DecodingKey, Validation, decode, decode_header, get_current_timestamp,
 };
 use parking_lot::RwLock;
+use presto_core::api::ConfidentialityLevel;
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -79,7 +80,8 @@ impl std::error::Error for OidcProtocolError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OidcIdentity {
     pub sub: String,
-    pub clearance_org: Option<String>,
+    /// Closed, validated organization ceiling. Missing claims map to Public.
+    pub clearance_org: ConfidentialityLevel,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,10 +156,22 @@ pub fn validate_id_token(
         return Err(OidcError::Invalid);
     }
 
+    let clearance_org = parse_clearance_org(data.claims.clearance_org.as_deref())?;
     Ok(OidcIdentity {
         sub: data.claims.sub,
-        clearance_org: data.claims.clearance_org,
+        clearance_org,
     })
+}
+
+fn parse_clearance_org(value: Option<&str>) -> Result<ConfidentialityLevel, OidcError> {
+    match value {
+        None => Ok(ConfidentialityLevel::Public),
+        Some("public") => Ok(ConfidentialityLevel::Public),
+        Some("internal") => Ok(ConfidentialityLevel::Internal),
+        Some("confidential") => Ok(ConfidentialityLevel::Confidential),
+        Some("secret") => Ok(ConfidentialityLevel::Secret),
+        Some(_) => Err(OidcError::Invalid),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -556,7 +570,35 @@ mod tests {
     fn accepts_a_valid_id_token_and_extracts_identity() {
         let id = validate(&sign(SECRET, &valid_claims())).unwrap();
         assert_eq!(id.sub, "user-1");
-        assert_eq!(id.clearance_org.as_deref(), Some("internal"));
+        assert_eq!(id.clearance_org, ConfidentialityLevel::Internal);
+    }
+
+    #[test]
+    fn clearance_is_closed_missing_public_and_unknown_fail_closed() {
+        let mut missing = valid_claims();
+        missing.as_object_mut().unwrap().remove("clearance_org");
+        assert_eq!(
+            validate(&sign(SECRET, &missing)).unwrap().clearance_org,
+            ConfidentialityLevel::Public
+        );
+
+        for (name, expected) in [
+            ("public", ConfidentialityLevel::Public),
+            ("internal", ConfidentialityLevel::Internal),
+            ("confidential", ConfidentialityLevel::Confidential),
+            ("secret", ConfidentialityLevel::Secret),
+        ] {
+            let mut claims = valid_claims();
+            claims["clearance_org"] = json!(name);
+            assert_eq!(
+                validate(&sign(SECRET, &claims)).unwrap().clearance_org,
+                expected
+            );
+        }
+
+        let mut unknown = valid_claims();
+        unknown["clearance_org"] = json!("top-secret");
+        assert_eq!(validate(&sign(SECRET, &unknown)), Err(OidcError::Invalid));
     }
 
     #[test]
