@@ -1,0 +1,141 @@
+{
+  "format": "wrench.evidence_report.v0.1",
+  "report_id": "wrench-portal-usage-849300e4d73c2fa4",
+  "generated_at": "2026-07-13T07:04:41Z",
+  "producer": {
+    "name": "wrench-inspect",
+    "version": "0.1.0"
+  },
+  "subject": {
+    "kind": "portal_ui",
+    "reference": "sessions/crates/ui"
+  },
+  "status": "passed",
+  "summary": {
+    "errors": 0,
+    "warnings": 0,
+    "infos": 0
+  },
+  "findings": [],
+  "checks": [
+    {
+      "code": "portal_tokens_present",
+      "status": "passed",
+      "summary": "47 recognized Portal token declaration(s)"
+    },
+    {
+      "code": "portal_contrast_report_present",
+      "status": "passed",
+      "summary": "contrast report format: portal.contrast_report.v0.1"
+    },
+    {
+      "code": "component_token_usage",
+      "status": "passed",
+      "summary": "96 Portal-compatible component token reference(s)"
+    },
+    {
+      "code": "no_hardcoded_component_colors",
+      "status": "passed",
+      "summary": "hex=0, function=0, named=0"
+    },
+    {
+      "code": "no_inline_hardcoded_color_styles",
+      "status": "passed",
+      "summary": "0 inline hardcoded color style finding(s)"
+    },
+    {
+      "code": "libre_ia_design_system_v2",
+      "status": "passed",
+      "summary": "version=2.0.0, checksum_matches=true"
+    },
+    {
+      "code": "libre_ia_flat_self_hosted_visuals",
+      "status": "passed",
+      "summary": "forbidden_effects=0, remote_assets=0"
+    }
+  ],
+  "evidence_refs": [
+    {
+      "kind": "component_css",
+      "reference": "sessions/crates/ui/src/components.css",
+      "hash": "sha256:5bd30fb6bc109ecc0e0815300378c54665c09bb7365bfd7bc0f410bf1e2e3ce9",
+      "status": "inspected",
+      "summary": "Rumble component CSS inspected for Portal token usage and hardcoded colors"
+    },
+    {
+      "kind": "source_file",
+      "reference": "sessions/crates/ui/src/lib.rs",
+      "hash": "sha256:9b29b1892da488c708d087653e58369c32ceaa93394bd030ddf73a6717b1ec7a",
+      "status": "inspected",
+      "summary": "source file inspected for inline hardcoded color styles"
+    },
+    {
+      "kind": "portal_tokens",
+      "reference": "sessions/crates/ui/fixtures/portal/tokens.css",
+      "hash": "sha256:2f6a9b84145a8f899b85c03b59f3465af5cc0b685d24017fa2db7f1ce40c5e7a",
+      "status": "present",
+      "summary": "Portal token bundle used by the UI inspection"
+    },
+    {
+      "kind": "portal_contrast_report",
+      "reference": "sessions/crates/ui/fixtures/portal/contrast-report.json",
+      "hash": "sha256:65a99cb1f0ed1a8b694ad1946bf8beea0b20617143f6a5aaf4e16736be3939e9",
+      "status": "present",
+      "summary": "Portal contrast report used by the UI inspection"
+    },
+    {
+      "kind": "libre_ia_design_manifest",
+      "reference": "sessions/crates/ui/fixtures/portal/manifest.json",
+      "hash": "sha256:f93dd1b53f1a3f7c2615af855c8917a34bca1c7700252a90aad3232afc109049",
+      "status": "present",
+      "summary": "Libre IA Design System version and checksum manifest"
+    }
+  ],
+  "source_report": {
+    "format": "wrench.portal_usage_report.v0.2",
+    "hash": "sha256:849300e4d73c2fa409ab518994d284cc00830153408e6d124c645324c8a1688a",
+    "body": {
+      "evidence": {
+        "component_css_files": [
+          "sessions/crates/ui/src/components.css"
+        ],
+        "component_token_reference_count": 96,
+        "contrast_report_checks": 8,
+        "contrast_report_format": "portal.contrast_report.v0.1",
+        "contrast_report_path": "sessions/crates/ui/fixtures/portal/contrast-report.json",
+        "contrast_report_present": true,
+        "design_manifest_path": "sessions/crates/ui/fixtures/portal/manifest.json",
+        "design_manifest_present": true,
+        "design_system_version": "2.0.0",
+        "design_token_checksum_matches": true,
+        "forbidden_effect_count": 0,
+        "hardcoded_function_color_count": 0,
+        "hardcoded_hex_color_count": 0,
+        "hardcoded_named_color_count": 0,
+        "inline_hardcoded_style_count": 0,
+        "portal_token_count": 47,
+        "portal_tokens_path": "sessions/crates/ui/fixtures/portal/tokens.css",
+        "portal_tokens_present": true,
+        "remote_asset_reference_count": 0,
+        "source_files": [
+          "sessions/crates/ui/src/lib.rs"
+        ],
+        "target": "sessions/crates/ui"
+      },
+      "findings": [],
+      "format": "wrench.portal_usage_report.v0.2",
+      "next_actions": [
+        "Attach this report as Wrench evidence for Portal UI usage"
+      ],
+      "summary": {
+        "errors": 0,
+        "infos": 0,
+        "warnings": 0
+      },
+      "valid": true
+    }
+  },
+  "next_actions": [
+    "Attach this report as Wrench evidence for Portal UI usage"
+  ]
+}

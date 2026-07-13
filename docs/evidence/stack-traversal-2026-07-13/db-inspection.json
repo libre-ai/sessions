@@ -1,0 +1,65 @@
+{
+  "data": {
+    "findings": [],
+    "format": "wrench.db_inspect.report.v0.1",
+    "metrics": {
+      "blocking_finding_count": 0,
+      "embedding_table_count": 0,
+      "manifest_table_count": 2,
+      "mutating_operation_count": 0,
+      "parser_error_count": 0,
+      "pgvector_tenant_coverage": null,
+      "raw_embedding_leak_count": 0,
+      "redactions_applied_count": 0,
+      "report_pii_leak_count": 0,
+      "report_secret_leak_count": 0,
+      "tenant_force_rls_coverage": 1.0,
+      "tenant_rls_coverage": 1.0,
+      "tenant_scoped_table_count": 2,
+      "unknown_state_count": 0,
+      "waiver_count": 0,
+      "waiver_invalid_count": 0
+    },
+    "report_gate": {
+      "blocks": false,
+      "profile": "protected_branch",
+      "reason": "no report-level gate block"
+    },
+    "scope": {
+      "inputs": [
+        {
+          "content_hash": "sha256:65ffa0d7663b14c1ed35daecf38ccdf6d284af24420a57b34f71d375625ffc7c",
+          "kind": "manifest",
+          "path": "sessions/docs/db/jobs-manifest.json"
+        },
+        {
+          "content_hash": "sha256:d99c478b3260207edd59d358102f456c94d77dee8943bac72bced8037c8878e9",
+          "kind": "schema_dump",
+          "path": "sessions/crates/server/migrations/0001_jobs_and_outbox.sql"
+        }
+      ],
+      "inspected_at": "2026-07-13T00:00:00Z",
+      "product": "sessions",
+      "tenant": "organization"
+    },
+    "status": "passed",
+    "summary": {
+      "critical": 0,
+      "gate_blocked": false,
+      "high": 0,
+      "info": 0,
+      "low": 0,
+      "medium": 0
+    }
+  },
+  "meta": {
+    "redaction": {
+      "applied": false,
+      "mode": "strict",
+      "secrets_or_pii_included": false
+    },
+    "schema_version": "0.1",
+    "tool": "wrench-db-inspect",
+    "tool_version": "0.1.0-alpha.7"
+  }
+}

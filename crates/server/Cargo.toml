@@ -26,9 +26,9 @@ serde.workspace = true
 serde_json.workspace = true
 parking_lot = "0.12.5"
 biscuit-auth = "6.0.0"
-# Pure-Rust crypto backend (rust_crypto: hmac/rsa/p256/ed25519) — avoids `ring`,
-# stays sovereign + permissively licensed. Validates OIDC id_tokens (SP-A inc-1).
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+# Permissively licensed AWS-LC backend for local OIDC signature verification
+# (SP-A inc-1): no AWS service or data flow, and no vulnerable RustCrypto RSA path.
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 # Keyed content-integrity tags (HMAC-SHA256) for the SP-B grounding moat.
 hmac = "0.13"
 sha2 = "0.11"
@@ -58,5 +58,5 @@ sha2 = "0.11"
 futures-util = "0.3.32"
 tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["util", "limit"] }
-rsa = "0.9"
+aws-lc-rs = "1.17.1"
 tempfile = "3"

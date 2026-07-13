@@ -3,6 +3,7 @@
   "kind": "planning_request",
   "source": {
     "product": "rumble-lm",
+    "organization_id": "libre-ai",
     "workspace_id": "rumble-lm-dod-2026-07",
     "handoff_id": "lm-slice-dod-chain-2026-07-09",
     "created_by": "claude-code",
@@ -65,6 +66,15 @@
     }
   ],
   "capability_candidates": [],
+  "database_inspection": {
+    "applicability": "postgres",
+    "report": {
+      "artifact_ref": "artifact:sessions-jobs-db-inspection-2026-07-13",
+      "sha256": "sha256:6f51034220795732a8873af11494d27b9a67b00f5f8db3df0589f16a0e0093a0",
+      "profile": "protected_branch",
+      "wrench_version": "0.1.0-alpha.7"
+    }
+  },
   "requested_outputs": [
     "implementation_plan",
     "evidence_summary",
