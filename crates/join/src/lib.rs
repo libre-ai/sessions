@@ -13,8 +13,6 @@ use rumble_lm_ui::{
 use serde::Deserialize;
 use serde_json::json;
 
-pub const JOIN_STYLES: &str = include_str!("join.css");
-
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static JOIN_CONNECTION: RefCell<Option<JoinTransport>> = const { RefCell::new(None) };
@@ -81,29 +79,18 @@ pub fn App() -> Element {
         let Some(window) = web_sys::window() else {
             return;
         };
-        let mut state_for_offline = state;
+        let state_for_offline = state;
         let reconnect_attempts_for_offline = reconnect_attempts;
         let connection_epoch_for_offline = connection_epoch;
         let participant_credentials_for_offline = participant_credentials;
         let offline = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
             move |_| {
-                if let Some(credentials) = participant_credentials_for_offline.read().clone() {
-                    let current = state_for_offline.read().clone();
-                    if matches!(
-                        current,
-                        GuestJoinState::Expired { .. } | GuestJoinState::Failed { .. }
-                    ) {
-                        return;
-                    }
-                    clear_join_connection();
-                    state_for_offline.set(current.apply_event(GuestJoinEvent::Disconnected));
-                    schedule_reconnect(
-                        credentials,
-                        state_for_offline,
-                        reconnect_attempts_for_offline,
-                        connection_epoch_for_offline,
-                    );
-                }
+                trigger_join_disconnect(
+                    state_for_offline,
+                    reconnect_attempts_for_offline,
+                    connection_epoch_for_offline,
+                    participant_credentials_for_offline,
+                );
             },
         ));
         let _ =
@@ -145,7 +132,6 @@ pub fn App() -> Element {
 
     rsx! {
         AppSurface {
-            style { "{JOIN_STYLES}" }
             div { class: "join-shell join-safe-area", aria_label: "Espace participant",
                 header { class: "join-hero",
                     p { class: "join-kicker", "Rumble LM · participant" }
@@ -307,6 +293,27 @@ pub fn App() -> Element {
         AppSurface {
             Card { title: "Lien participant".to_string(), body: "Le client join est disponible uniquement en wasm32.".to_string() }
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn trigger_join_disconnect(
+    mut state: Signal<GuestJoinState>,
+    reconnect_attempts: Signal<u8>,
+    connection_epoch: Signal<u64>,
+    participant_credentials: Signal<Option<JoinCredentials>>,
+) {
+    if let Some(credentials) = participant_credentials.read().clone() {
+        let current = state.read().clone();
+        if matches!(
+            current,
+            GuestJoinState::Expired { .. } | GuestJoinState::Failed { .. }
+        ) {
+            return;
+        }
+        clear_join_connection();
+        state.set(current.apply_event(GuestJoinEvent::Disconnected));
+        schedule_reconnect(credentials, state, reconnect_attempts, connection_epoch);
     }
 }
 

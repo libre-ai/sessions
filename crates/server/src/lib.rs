@@ -237,12 +237,16 @@ pub fn app(state: AppState) -> Router {
 /// applies to successes and errors and also prevents any cookie-setting response
 /// from becoming cacheable when future routes are added.
 async fn force_private_no_store(request: Request<Body>, next: Next) -> Response {
-    let path = request.uri().path();
+    let path = request.uri().path().to_owned();
     let private_path = ["/auth", "/api", "/corpus", "/join", "/sessions", "/ws"]
         .iter()
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")));
     let mut response = next.run(request).await;
-    if private_path || response.headers().contains_key(header::SET_COOKIE) {
+    let is_public_join_asset = path.starts_with("/join/assets/")
+        && matches!(response.status(), StatusCode::OK | StatusCode::NOT_MODIFIED);
+    if (private_path && !is_public_join_asset)
+        || response.headers().contains_key(header::SET_COOKIE)
+    {
         response.headers_mut().insert(
             header::CACHE_CONTROL,
             "no-store".parse().expect("static cache control"),
@@ -465,6 +469,66 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn join_assets_keep_their_public_cache_headers_and_404s_stay_private() {
+        let file = http::JOIN_APP_FILES
+            .iter()
+            .find(|file| file.path.starts_with("assets/"))
+            .expect("join asset");
+        let state = AppState::in_memory(Arc::new(Auth::generate()));
+
+        let response = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/join/{}", file.path))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(
+            response.headers()[header::ETAG],
+            format!("\"{}\"", file.etag)
+        );
+
+        let not_modified = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/join/{}", file.path))
+                    .header(header::IF_NONE_MATCH, format!("\"{}\"", file.etag))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            not_modified.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(
+            not_modified.headers()[header::ETAG],
+            format!("\"{}\"", file.etag)
+        );
+
+        let missing = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/join/assets/missing.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
     }
 
     #[tokio::test]

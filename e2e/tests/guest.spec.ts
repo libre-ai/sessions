@@ -16,6 +16,10 @@ function collectWebSocketFrames(page: Page) {
   return frames;
 }
 
+function frameCount(frames: string[], needle: string) {
+  return frames.filter(frame => frame.includes(needle)).length;
+}
+
 async function createHostSession(page: Page) {
   await page.goto('/');
   const responsePromise = page.waitForResponse(response =>
@@ -37,6 +41,9 @@ async function createHostSession(page: Page) {
 async function joinSecureSession(page: Page, secureHref: string, name: string) {
   await page.goto(secureHref);
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('');
+  await expect.poll(() => page.evaluate(() => document.querySelectorAll('style').length)).toBe(0);
+  await expect(page.locator('.join-shell')).toBeVisible();
+  await expect(page.locator('.join-shell')).toHaveCSS('display', 'grid');
   await page.locator('#join-name').fill(name);
   const responsePromise = page.waitForResponse(response =>
     response.request().method() === 'POST'
@@ -171,6 +178,9 @@ test('secure guest flow keeps the hash scrubbed, rejects host-only guest message
   const hostOnlyReason = await sendGuestWebSocketMessage(guest1, sessionId, participantToken);
   expect(hostOnlyReason).toBe('host only');
 
+  await expect(guest1.getByRole('button', { name: 'Valider' })).toBeDisabled();
+  await expect(guest1.locator('.presto-question-set')).toHaveAttribute('disabled', 'true');
+
   await sendRawWebSocketMessage(host, sessionId, hostToken, { type: 'reveal' });
   await expect(guest1.getByRole('heading', { name: 'Révélation' })).toBeVisible();
   await expect(guest2.getByRole('heading', { name: 'Révélation' })).toBeVisible();
@@ -178,18 +188,19 @@ test('secure guest flow keeps the hash scrubbed, rejects host-only guest message
   expect(frames2.some(frame => frame.includes('"type":"answers_revealed"') && frame.includes('correct_choices'))).toBe(true);
 
   await expect(guest1.getByRole('heading', { name: 'Classement' })).toBeVisible();
-  const scoreBefore = (await guest1.locator('.presto-list li').first().textContent()) ?? '';
-  await guestContext.setOffline(true);
-  await guest1.evaluate(() => window.dispatchEvent(new Event('offline')));
-  await guestContext.setOffline(false);
-  await guest1.evaluate(() => window.dispatchEvent(new Event('online')));
-  await expect.poll(async () => (await guest1.locator('.presto-list li').first().textContent()) ?? '').toBe(scoreBefore);
+  const leaderboardBeforeRevealReconnect = await guest1.locator('.presto-list li').allTextContents();
+  await expect(guest1.locator('[role="status"]').first()).toContainText('Réponse révélée');
+  await expect(guest1.getByRole('heading', { name: 'Révélation' })).toBeVisible();
+  await expect(guest1.getByRole('heading', { name: 'Classement' })).toBeVisible();
+  await expect(guest1.locator('.presto-list li')).toHaveText(leaderboardBeforeRevealReconnect);
 
   await guest3.goto(secureHref);
   await expect.poll(() => guest3.evaluate(() => location.hash)).toBe('');
   await guest3.locator('#join-name').fill('Cara');
   await guest3.getByRole('button', { name: 'Rejoindre' }).click();
   await expect(guest3.getByRole('heading', { name: 'Révélation' })).toBeVisible({ timeout: 10000 });
+  expect(frames3.some(frame => frame.includes('"type":"snapshot"') && frame.includes('"phase":"revealed"'))).toBe(true);
+  await expect(guest3.locator('.presto-list li')).toHaveText(leaderboardBeforeRevealReconnect);
 
   await hostContext.close();
   await guestContext.close();
