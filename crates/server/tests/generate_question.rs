@@ -190,7 +190,7 @@ async fn host_generate_question_reaches_participants() {
     let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -222,7 +222,7 @@ async fn participant_cannot_generate_question() {
         )
         .unwrap();
 
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
 
@@ -305,7 +305,7 @@ async fn rag_pipeline_verifier_gate_drops_ungrounded_question() {
     let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
 
@@ -383,7 +383,7 @@ async fn rag_pipeline_accepts_grounded_question() {
     let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
 
@@ -504,7 +504,7 @@ async fn host_breakout_reaches_participants() {
     let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -534,7 +534,7 @@ async fn participant_cannot_open_a_breakout() {
             SystemTime::now(),
         )
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     p1.send(Message::text(
@@ -573,7 +573,7 @@ async fn participant_gets_flashcards_for_weak_sections() {
     let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{addr}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;

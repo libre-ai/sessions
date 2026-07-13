@@ -36,14 +36,15 @@ wasm = [path for path in assets if path.suffix == ".wasm"]
 javascript = [path for path in assets if path.suffix == ".js"]
 styles = [path for path in assets if path.suffix == ".css"]
 runtimes = [path for path in javascript if re.fullmatch(r"join-runtime-[0-9a-f]{16}\.js", path.name)]
+scrubs = [path for path in javascript if re.fullmatch(r"join-hash-scrub-[0-9a-f]{16}\.js", path.name)]
 runtime_wasm = [path for path in wasm if re.fullmatch(r"join-runtime-[0-9a-f]{16}\.wasm", path.name)]
 shell_styles = [path for path in styles if re.fullmatch(r"join-shell-[0-9a-f]{16}\.css", path.name)]
-if len(wasm) != 1 or len(runtime_wasm) != 1 or len(javascript) != 1 or len(styles) != 1 or len(runtimes) != 1 or len(shell_styles) != 1:
+if len(wasm) != 1 or len(runtime_wasm) != 1 or len(javascript) != 2 or len(styles) != 1 or len(runtimes) != 1 or len(scrubs) != 1 or len(shell_styles) != 1:
     raise SystemExit(
         "unexpected join asset topology: "
         f"wasm={[p.name for p in wasm]}, js={[p.name for p in javascript]}, css={[p.name for p in styles]}"
     )
-for generated in [runtimes[0], runtime_wasm[0], shell_styles[0]]:
+for generated in [runtimes[0], runtime_wasm[0], shell_styles[0], scrubs[0]]:
     filename_digest = generated.stem.rsplit("-", 1)[-1]
     final_digest = hashlib.sha256(generated.read_bytes()).hexdigest()
     if filename_digest != final_digest[:16]:

@@ -134,6 +134,22 @@ impl SessionStore for PostgresSessionStore {
         Ok(count as u32)
     }
 
+    async fn participant_name(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<String>> {
+        let name = sqlx::query_scalar(
+            "SELECT name FROM presto_participants WHERE session_id = $1 AND participant_id = $2",
+        )
+        .bind(session_id)
+        .bind(participant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(name)
+    }
+
     async fn push_question(
         &self,
         session_id: &str,

@@ -322,3 +322,90 @@ async fn secure_join_link_redemption_rejects_long_control_and_utf8_names() {
         assert_eq!(resp.text().await.unwrap(), "invalid name", "{label}");
     }
 }
+
+#[tokio::test]
+async fn secure_join_reconnect_uses_the_authoritative_name_without_a_ws_name_query() {
+    let addr = spawn().await;
+    let base = format!("http://{addr}");
+    let http = reqwest::Client::new();
+
+    let created: Value = http
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let session_id = created["data"]["session_id"].as_str().unwrap().to_string();
+    let host_token = created["data"]["host_token"].as_str().unwrap().to_string();
+    let secure_join_url = created["data"]["secure_join_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let token = secure_join_url
+        .split("#token=")
+        .nth(1)
+        .expect("secure join token")
+        .to_string();
+
+    let joined: Value = http
+        .post(format!("{base}/join/{session_id}/participants"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"name":"  Alice  "}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let participant_token = joined["data"]["participant_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resume = http
+        .get(format!("{base}/sessions/{session_id}/participants/resume"))
+        .bearer_auth(&participant_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resume.status(), reqwest::StatusCode::NO_CONTENT);
+
+    let (mut host, _) = connect_async(format!("ws://{addr}/ws/{session_id}?token={host_token}"))
+        .await
+        .unwrap();
+    let (mut participant, _) = connect_async(format!(
+        "ws://{addr}/ws/{session_id}?token={participant_token}"
+    ))
+    .await
+    .unwrap();
+
+    host.send(Message::text(
+        r#"{"type":"push_question","question":{"id":"q1","text":"2+2?","choices":["3","4"],"correct_choices":[1],"source_section_ids":["doc#s1"],"timer_sec":30}}"#.to_string(),
+    ))
+    .await
+    .unwrap();
+    let q = recv_until(&mut participant, "question_opened").await;
+    assert_eq!(q["question"]["id"], "q1");
+
+    participant
+        .send(Message::text(
+            r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#.to_string(),
+        ))
+        .await
+        .unwrap();
+    recv_until(&mut host, "answer_received").await;
+
+    host.send(Message::text(r#"{"type":"reveal"}"#.to_string()))
+        .await
+        .unwrap();
+    let rev = recv_until(&mut participant, "answers_revealed").await;
+    assert!(
+        rev["leaderboard"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "Alice")
+    );
+}

@@ -195,6 +195,10 @@ pub fn app(state: AppState) -> Router {
             post(http::join_session),
         )
         .route(
+            "/sessions/{session_id}/participants/resume",
+            get(http::validate_participant_resume),
+        )
+        .route(
             "/join/{session_id}/participants",
             post(http::redeem_join_link)
                 .layer::<_, Infallible>(DefaultBodyLimit::max(http::MAX_JOIN_REDEMPTION_BODY_BYTES))
@@ -543,6 +547,16 @@ mod tests {
             self.inner.join(session_id, participant_id, name).await
         }
 
+        async fn participant_name(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+        ) -> crate::store::StoreResult<Option<String>> {
+            self.inner
+                .participant_name(session_id, participant_id)
+                .await
+        }
+
         async fn push_question(
             &self,
             session_id: &str,
@@ -631,6 +645,16 @@ mod tests {
             self.inner.join(session_id, participant_id, name).await
         }
 
+        async fn participant_name(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+        ) -> crate::store::StoreResult<Option<String>> {
+            self.inner
+                .participant_name(session_id, participant_id)
+                .await
+        }
+
         async fn push_question(
             &self,
             session_id: &str,
@@ -706,6 +730,16 @@ mod tests {
             _participant_id: &str,
             _name: &str,
         ) -> crate::store::StoreResult<u32> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn participant_name(
+            &self,
+            _session_id: &str,
+            _participant_id: &str,
+        ) -> crate::store::StoreResult<Option<String>> {
             Err(crate::store::StoreError::Backend(
                 "backend unavailable".into(),
             ))

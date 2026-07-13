@@ -89,10 +89,25 @@ def main(bundle: Path) -> None:
     css_name = f"join-shell-{digest(css)[:16]}.css"
     (assets / css_name).write_bytes(css)
 
+    scrub_js = (
+        b"(() => { try { const l = window.location; window.__PRESTO_JOIN_FRAGMENT__ = l.hash; "
+        b"const path = l.pathname + l.search; history.replaceState(null, '', path); l.hash = ''; } catch (_) {} })();\n"
+    )
+    scrub_name = f"join-hash-scrub-{digest(scrub_js)[:16]}.js"
+    (assets / scrub_name).write_bytes(scrub_js)
+
     html = index_path.read_text(encoding="utf-8")
     if html.count("/join/assets/join-shell.css") != 1:
         raise SystemExit("expected exactly one join CSS placeholder")
     html = html.replace("/join/assets/join-shell.css", f"/join/assets/{css_name}")
+    runtime_script = f'<script type="module" async src="{runtime_url}"></script>'
+    if html.count(runtime_script) != 1:
+        raise SystemExit("expected exactly one join runtime script tag")
+    html = html.replace(
+        runtime_script,
+        f'<script src="/join/assets/{scrub_name}"></script>\n  {runtime_script}',
+        1,
+    )
     index_path.write_text(html, encoding="utf-8", newline="\n")
 
     precache_files = [index_path, *sorted(path for path in assets.iterdir() if path.is_file())]

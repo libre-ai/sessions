@@ -4,13 +4,13 @@
 //! token out of state entirely: the app may hold it in memory to open the first
 //! POST/WS, but the machine only tracks session progress and server authority.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{
-    ParticipantId, PublicReveal, QuestionId, QuestionKind, QuestionPublic, SessionPhasePublic,
-    SessionSnapshot,
+    LeaderboardEntry, ParticipantId, PublicReveal, QuestionId, QuestionKind, QuestionPublic,
+    ServerMessage, SessionPhasePublic, SessionSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,8 +30,20 @@ pub enum GuestJoinEvent {
         participant_id: ParticipantId,
         participants_count: u32,
     },
+    Joined {
+        participant_id: ParticipantId,
+        participants_count: u32,
+    },
     Snapshot {
         snapshot: SessionSnapshot,
+    },
+    QuestionOpened {
+        question: QuestionPublic,
+    },
+    AnswersRevealed {
+        correct_choices: Vec<u8>,
+        leaderboard: Vec<LeaderboardEntry>,
+        heatmap: BTreeMap<String, f32>,
     },
     ToggleChoice {
         choice: u8,
@@ -48,6 +60,39 @@ pub enum GuestJoinEvent {
     Failed {
         reason: String,
     },
+}
+
+impl GuestJoinEvent {
+    pub fn from_server_message(message: ServerMessage) -> Option<Self> {
+        match message {
+            ServerMessage::Joined {
+                participant_id,
+                participants,
+            } => Some(Self::Joined {
+                participant_id,
+                participants_count: participants,
+            }),
+            ServerMessage::Snapshot { snapshot } => Some(Self::Snapshot { snapshot }),
+            ServerMessage::QuestionOpened { question } => Some(Self::QuestionOpened { question }),
+            ServerMessage::AnswersRevealed {
+                correct_choices,
+                leaderboard,
+                heatmap,
+            } => Some(Self::AnswersRevealed {
+                correct_choices,
+                leaderboard,
+                heatmap,
+            }),
+            ServerMessage::AnswerAccepted { question_id } => {
+                Some(Self::AnswerAccepted { question_id })
+            }
+            ServerMessage::Error { reason } => Some(Self::Failed { reason }),
+            ServerMessage::Pong
+            | ServerMessage::AnswerReceived { .. }
+            | ServerMessage::BreakoutOpened { .. }
+            | ServerMessage::FlashcardsReady { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,7 +167,8 @@ pub enum GuestJoinState {
         participant_id: ParticipantId,
         name: String,
         participants_count: u32,
-        question: QuestionPublic,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question: Option<QuestionPublic>,
         selected: BTreeSet<u8>,
         submission: JoinSubmission,
         reveal: PublicReveal,
@@ -220,6 +266,9 @@ impl GuestJoinState {
                     token_present,
                     name,
                 },
+                Self::Disconnected { resume } => Self::Disconnected {
+                    resume: Box::new(resume.apply_event(GuestJoinEvent::NameEdited { name })),
+                },
                 other => other,
             },
             GuestJoinEvent::JoinStarted => match self {
@@ -237,9 +286,16 @@ impl GuestJoinState {
                     token_present,
                     name,
                 },
+                Self::Disconnected { resume } => Self::Disconnected {
+                    resume: Box::new(resume.apply_event(GuestJoinEvent::JoinStarted)),
+                },
                 other => other,
             },
             GuestJoinEvent::JoinSucceeded {
+                participant_id,
+                participants_count,
+            }
+            | GuestJoinEvent::Joined {
                 participant_id,
                 participants_count,
             } => match self {
@@ -248,10 +304,76 @@ impl GuestJoinState {
                 }
                 | Self::NameEntry {
                     session_id, name, ..
-                } => Self::lobby(session_id, participant_id, name, participants_count),
+                } => Self::Lobby {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count,
+                },
+                Self::Lobby {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: current,
+                } => Self::Lobby {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: current.max(participants_count),
+                },
+                Self::Asking {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: current,
+                    question,
+                    selected,
+                    submission,
+                    answered,
+                } => Self::Asking {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: current.max(participants_count),
+                    question,
+                    selected,
+                    submission,
+                    answered,
+                },
+                Self::Revealed {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: current,
+                    question,
+                    selected,
+                    submission,
+                    reveal,
+                } => Self::Revealed {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: current.max(participants_count),
+                    question,
+                    selected,
+                    submission,
+                    reveal,
+                },
+                Self::Disconnected { resume } => Self::Disconnected {
+                    resume: Box::new(resume.apply_event(GuestJoinEvent::Joined {
+                        participant_id,
+                        participants_count,
+                    })),
+                },
                 other => other,
             },
             GuestJoinEvent::Snapshot { snapshot } => self.apply_snapshot(snapshot),
+            GuestJoinEvent::QuestionOpened { question } => self.apply_question_opened(question),
+            GuestJoinEvent::AnswersRevealed {
+                correct_choices,
+                leaderboard,
+                heatmap,
+            } => self.apply_answers_revealed(correct_choices, leaderboard, heatmap),
             GuestJoinEvent::ToggleChoice { choice } => self.toggle_choice(choice),
             GuestJoinEvent::SubmitAnswer => self.submit_answer(),
             GuestJoinEvent::AnswerAccepted { question_id } => self.answer_accepted(question_id),
@@ -269,20 +391,70 @@ impl GuestJoinState {
 
     pub fn apply_snapshot(self, snapshot: SessionSnapshot) -> Self {
         match self {
+            Self::Disconnected { resume } => Self::Disconnected {
+                resume: Box::new(resume.apply_snapshot(snapshot)),
+            },
             Self::Lobby {
                 session_id,
                 participant_id,
                 name,
                 participants_count,
-            } => Self::project_snapshot(
-                session_id,
-                participant_id,
-                name,
-                participants_count,
-                snapshot,
-                BTreeSet::new(),
-                JoinSubmission::Idle,
-            ),
+            } => match snapshot.phase {
+                SessionPhasePublic::Lobby => Self::Lobby {
+                    session_id,
+                    participant_id,
+                    name,
+                    participants_count: participants_count.max(snapshot.participants_count),
+                },
+                SessionPhasePublic::Asking => {
+                    let Some(question) = snapshot.question else {
+                        return Self::Failed {
+                            reason: "asking snapshot missing question".into(),
+                        };
+                    };
+                    let submission = if snapshot.answered {
+                        JoinSubmission::Accepted {
+                            question_id: question.id.clone(),
+                        }
+                    } else {
+                        JoinSubmission::Idle
+                    };
+                    Self::Asking {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count: participants_count.max(snapshot.participants_count),
+                        question,
+                        selected: BTreeSet::new(),
+                        submission,
+                        answered: snapshot.answered,
+                    }
+                }
+                SessionPhasePublic::Revealed => {
+                    let Some(question) = snapshot.question else {
+                        return Self::Failed {
+                            reason: "revealed snapshot missing question".into(),
+                        };
+                    };
+                    let Some(reveal) = snapshot.reveal else {
+                        return Self::Failed {
+                            reason: "revealed snapshot missing reveal".into(),
+                        };
+                    };
+                    Self::Revealed {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count: participants_count.max(snapshot.participants_count),
+                        question: Some(question),
+                        selected: BTreeSet::new(),
+                        submission: JoinSubmission::Accepted {
+                            question_id: reveal.question_id.clone(),
+                        },
+                        reveal,
+                    }
+                }
+            },
             Self::Asking {
                 session_id,
                 participant_id,
@@ -297,22 +469,73 @@ impl GuestJoinState {
                     session_id,
                     participant_id,
                     name,
-                    participants_count,
+                    participants_count: participants_count.max(snapshot.participants_count),
                     question,
                     selected,
                     submission,
                     answered,
                 },
-                SessionPhasePublic::Asking | SessionPhasePublic::Revealed => {
-                    Self::project_snapshot(
+                SessionPhasePublic::Asking => {
+                    let Some(snapshot_question) = snapshot.question else {
+                        return Self::Failed {
+                            reason: "asking snapshot missing question".into(),
+                        };
+                    };
+                    let same_question = snapshot_question.id == question.id;
+                    let submission = if snapshot.answered {
+                        lock_submitted(if same_question {
+                            submission
+                        } else {
+                            JoinSubmission::Accepted {
+                                question_id: snapshot_question.id.clone(),
+                            }
+                        })
+                    } else if same_question {
+                        submission
+                    } else {
+                        JoinSubmission::Idle
+                    };
+                    Self::Asking {
                         session_id,
                         participant_id,
                         name,
-                        participants_count,
-                        snapshot,
-                        BTreeSet::new(),
-                        JoinSubmission::Idle,
-                    )
+                        participants_count: participants_count.max(snapshot.participants_count),
+                        question: snapshot_question,
+                        selected: if same_question {
+                            selected
+                        } else {
+                            BTreeSet::new()
+                        },
+                        submission,
+                        answered: answered || snapshot.answered,
+                    }
+                }
+                SessionPhasePublic::Revealed => {
+                    let Some(snapshot_question) = snapshot.question else {
+                        return Self::Failed {
+                            reason: "revealed snapshot missing question".into(),
+                        };
+                    };
+                    let Some(reveal) = snapshot.reveal else {
+                        return Self::Failed {
+                            reason: "revealed snapshot missing reveal".into(),
+                        };
+                    };
+                    let same_question = snapshot_question.id == question.id;
+                    Self::Revealed {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count: participants_count.max(snapshot.participants_count),
+                        question: Some(snapshot_question),
+                        selected: if same_question {
+                            selected
+                        } else {
+                            BTreeSet::new()
+                        },
+                        submission: lock_submitted(submission),
+                        reveal,
+                    }
                 }
             },
             Self::Revealed {
@@ -325,28 +548,46 @@ impl GuestJoinState {
                 submission,
                 reveal,
             } => match snapshot.phase {
-                SessionPhasePublic::Revealed => Self::project_snapshot(
-                    session_id,
-                    participant_id,
-                    name,
-                    participants_count,
-                    snapshot,
-                    BTreeSet::new(),
-                    JoinSubmission::Idle,
-                ),
                 SessionPhasePublic::Lobby | SessionPhasePublic::Asking => Self::Revealed {
                     session_id,
                     participant_id,
                     name,
-                    participants_count,
+                    participants_count: participants_count.max(snapshot.participants_count),
                     question,
                     selected,
                     submission,
                     reveal,
                 },
-            },
-            Self::Disconnected { resume } => Self::Disconnected {
-                resume: Box::new(resume.apply_snapshot(snapshot)),
+                SessionPhasePublic::Revealed => {
+                    let Some(snapshot_question) = snapshot.question else {
+                        return Self::Failed {
+                            reason: "revealed snapshot missing question".into(),
+                        };
+                    };
+                    let Some(snapshot_reveal) = snapshot.reveal else {
+                        return Self::Failed {
+                            reason: "revealed snapshot missing reveal".into(),
+                        };
+                    };
+                    let same_question = question
+                        .as_ref()
+                        .map(|current| current.id.as_str() == snapshot_question.id.as_str())
+                        .unwrap_or(true);
+                    Self::Revealed {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count: participants_count.max(snapshot.participants_count),
+                        question: Some(snapshot_question),
+                        selected: if same_question {
+                            selected
+                        } else {
+                            BTreeSet::new()
+                        },
+                        submission: lock_submitted(submission),
+                        reveal: snapshot_reveal,
+                    }
+                }
             },
             other => match snapshot.phase {
                 SessionPhasePublic::Lobby => other,
@@ -356,74 +597,187 @@ impl GuestJoinState {
         }
     }
 
-    fn project_snapshot(
-        session_id: String,
-        participant_id: ParticipantId,
-        name: String,
-        participants_count: u32,
-        snapshot: SessionSnapshot,
-        selected: BTreeSet<u8>,
-        submission: JoinSubmission,
-    ) -> Self {
-        match snapshot.phase {
-            SessionPhasePublic::Lobby => Self::Lobby {
+    fn apply_question_opened(self, question: QuestionPublic) -> Self {
+        match self {
+            Self::Lobby {
                 session_id,
                 participant_id,
                 name,
-                participants_count: snapshot.participants_count.max(participants_count),
+                participants_count,
+            } => Self::Asking {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question,
+                selected: BTreeSet::new(),
+                submission: JoinSubmission::Idle,
+                answered: false,
             },
-            SessionPhasePublic::Asking => {
-                let Some(question) = snapshot.question else {
-                    return Self::Failed {
-                        reason: "asking snapshot missing question".into(),
-                    };
-                };
-                let answered = snapshot.answered || submission.is_locked();
-                let (selected, submission) = if matches!(
-                    submission,
-                    JoinSubmission::Pending { .. } | JoinSubmission::Accepted { .. }
-                ) {
-                    (selected, submission)
+            Self::Asking {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question: current,
+                selected,
+                submission,
+                answered,
+            } => {
+                if current.id == question.id {
+                    Self::Asking {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count,
+                        question,
+                        selected,
+                        submission,
+                        answered,
+                    }
                 } else {
-                    (BTreeSet::new(), JoinSubmission::Idle)
-                };
-                Self::Asking {
-                    session_id,
-                    participant_id,
-                    name,
-                    participants_count: snapshot.participants_count.max(participants_count),
-                    question,
-                    selected,
-                    submission: if answered {
-                        lock_submitted(submission)
-                    } else {
-                        submission
-                    },
-                    answered,
+                    Self::Asking {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count,
+                        question,
+                        selected: BTreeSet::new(),
+                        submission: JoinSubmission::Idle,
+                        answered: false,
+                    }
                 }
             }
-            SessionPhasePublic::Revealed => {
-                let Some(question) = snapshot.question else {
-                    return Self::Failed {
-                        reason: "revealed snapshot missing question".into(),
-                    };
-                };
-                let Some(reveal) = snapshot.reveal else {
-                    return Self::Failed {
-                        reason: "revealed snapshot missing reveal".into(),
-                    };
-                };
+            Self::Revealed {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question: current_question,
+                selected,
+                submission,
+                reveal,
+            } => {
+                let current_question_id = current_question.as_ref().map(|q| q.id.as_str());
+                if current_question_id == Some(reveal.question_id.as_str())
+                    || current_question_id.is_none()
+                {
+                    Self::Revealed {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count,
+                        question: Some(question),
+                        selected,
+                        submission,
+                        reveal,
+                    }
+                } else {
+                    Self::Asking {
+                        session_id,
+                        participant_id,
+                        name,
+                        participants_count,
+                        question,
+                        selected: BTreeSet::new(),
+                        submission: JoinSubmission::Idle,
+                        answered: false,
+                    }
+                }
+            }
+            Self::Disconnected { resume } => Self::Disconnected {
+                resume: Box::new(resume.apply_question_opened(question)),
+            },
+            other => other,
+        }
+    }
+
+    fn apply_answers_revealed(
+        self,
+        correct_choices: Vec<u8>,
+        leaderboard: Vec<LeaderboardEntry>,
+        heatmap: BTreeMap<String, f32>,
+    ) -> Self {
+        let reveal = PublicReveal {
+            question_id: self
+                .question()
+                .map(|question| question.id.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            correct_choices,
+            leaderboard,
+            heatmap,
+        };
+        match self {
+            Self::Asking {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question,
+                selected,
+                submission,
+                ..
+            } if question.id == reveal.question_id => Self::Revealed {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question: Some(question),
+                selected,
+                submission: lock_submitted(submission),
+                reveal,
+            },
+            Self::Revealed {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question,
+                selected,
+                submission,
+                reveal: current,
+            } if current.question_id == reveal.question_id
+                || question
+                    .as_ref()
+                    .map(|question| question.id.as_str() == reveal.question_id)
+                    .unwrap_or(true) =>
+            {
                 Self::Revealed {
                     session_id,
                     participant_id,
                     name,
-                    participants_count: snapshot.participants_count.max(participants_count),
+                    participants_count,
                     question,
                     selected,
                     submission: lock_submitted(submission),
                     reveal,
                 }
             }
+            Self::Lobby {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+            } => Self::Revealed {
+                session_id,
+                participant_id,
+                name,
+                participants_count,
+                question: None,
+                selected: BTreeSet::new(),
+                submission: JoinSubmission::Accepted {
+                    question_id: reveal.question_id.clone(),
+                },
+                reveal,
+            },
+            Self::Disconnected { resume } => Self::Disconnected {
+                resume: Box::new(resume.apply_answers_revealed(
+                    reveal.correct_choices,
+                    reveal.leaderboard,
+                    reveal.heatmap,
+                )),
+            },
+            other => other,
         }
     }
 
@@ -466,16 +820,10 @@ impl GuestJoinState {
                     answered,
                 }
             }
-            Self::Revealed { .. }
-            | Self::Lobby { .. }
-            | Self::ReadingLink { .. }
-            | Self::Invalid { .. }
-            | Self::NameEntry { .. }
-            | Self::Joining { .. }
-            | Self::Disconnected { .. }
-            | Self::Expired { .. }
-            | Self::Failed { .. }
-            | Self::Asking { .. } => self,
+            Self::Disconnected { resume } => Self::Disconnected {
+                resume: Box::new(resume.toggle_choice(choice)),
+            },
+            other => other,
         }
     }
 
@@ -509,6 +857,9 @@ impl GuestJoinState {
                     answered: false,
                 }
             }
+            Self::Disconnected { resume } => Self::Disconnected {
+                resume: Box::new(resume.submit_answer()),
+            },
             other => other,
         }
     }
@@ -549,7 +900,11 @@ impl GuestJoinState {
                 submission,
                 reveal,
             } if submission.question_id() == Some(question_id.as_str())
-                || reveal.question_id == question_id =>
+                || reveal.question_id == question_id
+                || question
+                    .as_ref()
+                    .map(|question| question.id == question_id)
+                    .unwrap_or(false) =>
             {
                 Self::Revealed {
                     session_id,
@@ -562,6 +917,9 @@ impl GuestJoinState {
                     reveal,
                 }
             }
+            Self::Disconnected { resume } => Self::Disconnected {
+                resume: Box::new(resume.answer_accepted(question_id)),
+            },
             other => other,
         }
     }
@@ -592,27 +950,21 @@ impl GuestJoinState {
     }
 
     pub fn is_locked(&self) -> bool {
-        matches!(
-            self,
-            Self::Asking {
-                submission,
-                answered: true,
-                ..
-            } if submission.is_locked()
-        ) || matches!(
-            self,
-            Self::Revealed {
-                submission,
-                ..
-            } if submission.is_locked()
-        )
+        match self {
+            Self::Asking { submission, .. } => submission.is_locked(),
+            Self::Revealed { submission, .. } => submission.is_locked(),
+            Self::Disconnected { resume } => resume.is_locked(),
+            _ => false,
+        }
     }
 
-    pub fn selected_choices(&self) -> &[u8] {
+    pub fn selected_choices(&self) -> Vec<u8> {
         match self {
-            Self::Asking { .. } => &[],
-            Self::Revealed { .. } => &[],
-            _ => &[],
+            Self::Asking { selected, .. } | Self::Revealed { selected, .. } => {
+                selected.iter().copied().collect()
+            }
+            Self::Disconnected { resume } => resume.selected_choices(),
+            _ => Vec::new(),
         }
     }
 
@@ -633,7 +985,8 @@ impl GuestJoinState {
 
     pub fn question(&self) -> Option<&QuestionPublic> {
         match self {
-            Self::Asking { question, .. } | Self::Revealed { question, .. } => Some(question),
+            Self::Asking { question, .. } => Some(question),
+            Self::Revealed { question, .. } => question.as_ref(),
             Self::Disconnected { resume } => resume.question(),
             _ => None,
         }
@@ -662,7 +1015,6 @@ fn selected_choices_are_valid(question: &QuestionPublic, selected: &BTreeSet<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{LeaderboardEntry, PublicReveal};
 
     fn asking_snapshot(answered: bool) -> SessionSnapshot {
         SessionSnapshot::new(
@@ -725,7 +1077,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(state.toggle_choice(0).question().is_some());
+        assert_eq!(state.selected_choices(), vec![1]);
     }
 
     #[test]
@@ -737,28 +1089,90 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_does_not_regress_and_reveal_is_authority_for_correctness() {
-        let asking =
-            GuestJoinState::lobby("S", "p1", "Alice", 1).apply_snapshot(asking_snapshot(false));
-        let accepted = asking.clone().answer_accepted("q1");
-        assert!(accepted.is_locked());
-        let revealed = accepted.apply_snapshot(revealed_snapshot());
-        assert!(matches!(revealed, GuestJoinState::Revealed { .. }));
-        let regress = revealed.apply_snapshot(asking_snapshot(false));
-        assert!(
-            matches!(regress, GuestJoinState::Revealed { .. }),
-            "snapshot must not regress"
-        );
+    fn joined_participant_count_never_regresses() {
+        let state =
+            GuestJoinState::lobby("S", "p1", "Alice", 1).apply_event(GuestJoinEvent::Joined {
+                participant_id: "p2".into(),
+                participants_count: 2,
+            });
+        let state = state.apply_event(GuestJoinEvent::Joined {
+            participant_id: "p3".into(),
+            participants_count: 1,
+        });
+        assert!(matches!(
+            state,
+            GuestJoinState::Lobby {
+                participants_count: 2,
+                ..
+            }
+        ));
     }
 
     #[test]
-    fn invalid_question_payloads_are_refused() {
-        assert!(
-            serde_json::from_str::<SessionSnapshot>(
-                r#"{"phase":"asking","participants":[],"participants_count":0,"answered":false}"#
-            )
-            .is_err()
+    fn stale_snapshots_do_not_regress_after_reveal() {
+        let asking =
+            GuestJoinState::lobby("S", "p1", "Alice", 1).apply_snapshot(asking_snapshot(false));
+        let revealed = asking.clone().apply_snapshot(revealed_snapshot());
+        assert!(matches!(revealed, GuestJoinState::Revealed { .. }));
+        let stale_lobby = revealed.clone().apply_snapshot(
+            SessionSnapshot::new(SessionPhasePublic::Lobby, vec![], 0, None, false, None).unwrap(),
         );
+        assert!(matches!(stale_lobby, GuestJoinState::Revealed { .. }));
+        let stale_asking = revealed.apply_snapshot(asking_snapshot(false));
+        assert!(matches!(stale_asking, GuestJoinState::Revealed { .. }));
+    }
+
+    #[test]
+    fn answer_accepted_locks_the_submission() {
+        let asking =
+            GuestJoinState::lobby("S", "p1", "Alice", 1).apply_snapshot(asking_snapshot(false));
+        let asking = asking.toggle_choice(1).submit_answer();
+        let accepted = asking.answer_accepted("q1");
+        assert!(matches!(
+            accepted,
+            GuestJoinState::Asking {
+                answered: true,
+                submission: JoinSubmission::Accepted { .. },
+                ..
+            }
+        ));
+        assert!(accepted.is_locked());
+    }
+
+    #[test]
+    fn legacy_answers_revealed_does_not_invent_a_fake_question() {
+        let state = GuestJoinState::lobby("S", "p1", "Alice", 1).apply_event(
+            GuestJoinEvent::AnswersRevealed {
+                correct_choices: vec![1],
+                leaderboard: vec![LeaderboardEntry {
+                    participant_id: "p1".into(),
+                    name: "Alice".into(),
+                    score: 10,
+                }],
+                heatmap: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(
+            state,
+            GuestJoinState::Revealed { question: None, .. }
+        ));
+        let state = state.apply_event(GuestJoinEvent::QuestionOpened {
+            question: QuestionPublic {
+                id: "q1".into(),
+                text: "2+2 ?".into(),
+                kind: QuestionKind::Single,
+                choices: vec!["3".into(), "4".into()],
+                timer_sec: 30,
+                grounding: Default::default(),
+            },
+        });
+        assert!(matches!(
+            state,
+            GuestJoinState::Revealed {
+                question: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]

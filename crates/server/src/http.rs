@@ -294,6 +294,39 @@ pub(crate) async fn redeem_join_link(
     }))
 }
 
+pub(crate) async fn validate_participant_resume(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(token) = bearer_token(&headers) else {
+        return join_unavailable(StatusCode::UNAUTHORIZED);
+    };
+    if !validate_session_code(&session_id) {
+        return join_unavailable(StatusCode::UNAUTHORIZED);
+    }
+    let claims = match state.auth.verify(token, &session_id, SystemTime::now()) {
+        Ok(claims) => claims,
+        Err(_) => return join_unavailable(StatusCode::UNAUTHORIZED),
+    };
+    if claims.capability.is_host() {
+        return join_unavailable(StatusCode::UNAUTHORIZED);
+    }
+    match state
+        .store
+        .participant_name(&session_id, &claims.participant_id)
+        .await
+    {
+        Ok(Some(_)) => (
+            StatusCode::NO_CONTENT,
+            [(header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response(),
+        Ok(None) => join_unavailable(StatusCode::UNAUTHORIZED),
+        Err(_) => join_unavailable(StatusCode::SERVICE_UNAVAILABLE),
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct IngestParams {
     document_id: String,

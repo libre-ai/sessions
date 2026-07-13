@@ -95,6 +95,16 @@ impl SessionStore for BlockingSnapshotStore {
         self.inner.join(session_id, participant_id, name).await
     }
 
+    async fn participant_name(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<String>> {
+        self.inner
+            .participant_name(session_id, participant_id)
+            .await
+    }
+
     async fn push_question(
         &self,
         session_id: &str,
@@ -311,7 +321,7 @@ async fn late_joiner_receives_the_open_question() {
 
     // A participant joining mid-question receives the personalized snapshot
     // immediately, then the legacy question_opened message for compatibility.
-    let (mut p1, _) = connect_async(format!("{base}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("{base}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     let first = p1.next().await.unwrap().unwrap();
@@ -475,7 +485,7 @@ async fn late_joiner_sees_the_snapshot_before_the_in_flight_reveal_transition() 
         .unwrap();
     let base = format!("ws://{}/ws/sess-race", srv.addr);
 
-    let (mut p1, _) = connect_async(format!("{base}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("{base}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(3), entered_rx)
