@@ -57,20 +57,23 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
     assert_eq!(snap.unwrap().id, "q1");
 
     // Past the timer + grace: the server closes the question to answers.
-    let closed = store.submit_answer(&s, "p2", vec![1], 31_501).await;
+    let closed = store.submit_answer(&s, "p2", "q1", vec![1], 31_501).await;
     assert!(matches!(
         closed,
-        Err(StoreError::Session(SessionError::Closed))
+        Err(StoreError::Session(SessionError::AnswerClosed))
     ));
 
     // Within the window: accepted (server-timed).
-    store.submit_answer(&s, "p1", vec![1], 1_000).await.unwrap();
+    store
+        .submit_answer(&s, "p1", "q1", vec![1], 1_000)
+        .await
+        .unwrap();
 
-    // After reveal, the snapshot is empty again.
-    store.reveal(&s).await.unwrap();
+    let first = store.reveal(&s).await.unwrap();
+    assert_eq!(store.reveal(&s).await.unwrap(), first);
     assert!(store.snapshot(&s).await.unwrap().is_none());
 
-    // Reveal accumulated per-section mastery: p1 answered doc#p0 correctly (1/1).
+    // Reveal accumulated per-section mastery exactly once: p1 answered doc#p0 correctly (1/1).
     let mastery = store.mastery(&s, "p1").await.unwrap();
     let doc = mastery.iter().find(|m| m.section_id == "doc#p0").unwrap();
     assert_eq!((doc.correct, doc.total), (1, 1));

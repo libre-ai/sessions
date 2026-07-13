@@ -182,3 +182,99 @@ async fn late_joiner_receives_the_open_question() {
         "the snapshot must not leak the answer"
     );
 }
+
+#[tokio::test]
+async fn answer_errors_use_stable_codes_without_backend_leakage() {
+    let srv = spawn_server().await;
+    let host_token = srv
+        .auth
+        .mint(
+            "sess-err",
+            "host",
+            Capability::Host,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
+        .unwrap();
+    let p1_token = srv
+        .auth
+        .mint(
+            "sess-err",
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
+        .unwrap();
+    let p2_token = srv
+        .auth
+        .mint(
+            "sess-err",
+            "p2",
+            Capability::Participant,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
+        .unwrap();
+    let base = format!("ws://{}/ws/sess-err", srv.addr);
+
+    let (mut host, _) = connect_async(format!("{base}?token={host_token}"))
+        .await
+        .unwrap();
+    let (mut p1, _) = connect_async(format!("{base}?token={p1_token}&name=Alice"))
+        .await
+        .unwrap();
+    let (mut p2, _) = connect_async(format!("{base}?token={p2_token}&name=Bob"))
+        .await
+        .unwrap();
+    recv_until(&mut p1, "joined").await;
+    recv_until(&mut p2, "joined").await;
+
+    send(
+        &mut host,
+        r#"{"type":"push_question","question":{"id":"q1","text":"2+2?","choices":["3","4"],"correct_choices":[1],"source_section_ids":["doc1#s2"],"timer_sec":0}}"#,
+    )
+    .await;
+    recv_until(&mut p1, "question_opened").await;
+    recv_until(&mut p2, "question_opened").await;
+
+    send(
+        &mut p1,
+        r#"{"type":"submit_answer","question_id":"wrong","choices":[1]}"#,
+    )
+    .await;
+    let err = recv_until(&mut p1, "error").await;
+    assert_eq!(err["reason"], "wrong_question");
+
+    send(
+        &mut p1,
+        r#"{"type":"submit_answer","question_id":"q1","choices":[]}"#,
+    )
+    .await;
+    let err = recv_until(&mut p1, "error").await;
+    assert_eq!(err["reason"], "invalid_answer");
+
+    send(
+        &mut p1,
+        r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#,
+    )
+    .await;
+    recv_until(&mut host, "answer_received").await;
+
+    send(
+        &mut p1,
+        r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#,
+    )
+    .await;
+    let err = recv_until(&mut p1, "error").await;
+    assert_eq!(err["reason"], "already_answered");
+
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    send(
+        &mut p2,
+        r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#,
+    )
+    .await;
+    let err = recv_until(&mut p2, "error").await;
+    assert_eq!(err["reason"], "answer_closed");
+}

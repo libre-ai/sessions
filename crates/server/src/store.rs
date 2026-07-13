@@ -3,8 +3,10 @@
 //!
 //! [`InMemorySessionStore`] wraps the in-memory [`Session`] engine (single
 //! instance); [`crate::postgres_store::PostgresSessionStore`] shares state across
-//! instances. The WS handler only ever calls these operations — never touches
-//! state directly — so swapping the backend needs no handler change.
+//! instances. Answer submission is accepted only for the exact open question,
+//! and reveal is idempotent: the score mutates at most once per round. The WS
+//! handler only ever calls these operations — never touches state directly — so
+//! swapping the backend needs no handler change.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +25,15 @@ pub enum StoreError {
     Session(SessionError),
     /// The backend (database, network) failed.
     Backend(String),
+}
+
+impl StoreError {
+    pub fn client_reason(&self) -> &'static str {
+        match self {
+            StoreError::Session(e) => e.client_reason(),
+            StoreError::Backend(_) => "backend_error",
+        }
+    }
 }
 
 impl From<SessionError> for StoreError {
@@ -60,11 +71,13 @@ pub trait SessionStore: Send + Sync {
         opened_at_ms: u64,
     ) -> StoreResult<()>;
     /// Record a participant's answer (once, while `Asking`, before the deadline).
-    /// `now_ms` is the server clock; elapsed time is computed server-side.
+    /// `question_id` must match the open question; `now_ms` is the server
+    /// clock and elapsed time is computed server-side.
     async fn submit_answer(
         &self,
         session_id: &str,
         participant_id: &str,
+        question_id: &str,
         choices: Vec<u8>,
         now_ms: u64,
     ) -> StoreResult<()>;
@@ -143,12 +156,16 @@ impl SessionStore for InMemorySessionStore {
         &self,
         session_id: &str,
         participant_id: &str,
+        question_id: &str,
         choices: Vec<u8>,
         now_ms: u64,
     ) -> StoreResult<()> {
-        self.get_or_create(session_id, "")
-            .lock()
-            .submit_answer(participant_id, choices, now_ms)?;
+        self.get_or_create(session_id, "").lock().submit_answer(
+            question_id,
+            participant_id,
+            choices,
+            now_ms,
+        )?;
         Ok(())
     }
 
@@ -204,15 +221,22 @@ mod tests {
         // The open question is available as a snapshot for late joiners.
         assert!(store.snapshot("s1").await.unwrap().is_some());
         store
-            .submit_answer("s1", "p1", vec![1], 1000)
+            .submit_answer("s1", "p1", "q1", vec![1], 1000)
             .await
             .unwrap();
         // double answer is rejected by the engine, surfaced as a store error.
-        assert!(store.submit_answer("s1", "p1", vec![0], 1).await.is_err());
+        assert!(
+            store
+                .submit_answer("s1", "p1", "q1", vec![0], 1)
+                .await
+                .is_err()
+        );
         let reveal = store.reveal("s1").await.unwrap();
         assert_eq!(reveal.correct_choices, vec![1]);
         assert_eq!(reveal.leaderboard[0].participant_id, "p1");
         assert!(reveal.leaderboard[0].score >= 500);
+        // Repeated reveal is immutable.
+        assert_eq!(store.reveal("s1").await.unwrap(), reveal);
         // After reveal, there is no open question to snapshot.
         assert!(store.snapshot("s1").await.unwrap().is_none());
     }

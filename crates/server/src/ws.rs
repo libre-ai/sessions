@@ -190,22 +190,22 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
                 participants: count,
             }),
             Err(e) => reply(ServerMessage::Error {
-                reason: e.to_string(),
+                reason: e.client_reason().into(),
             }),
         },
         ClientMessage::SubmitAnswer {
-            question_id: _,
+            question_id,
             choices,
         } => match state
             .store
-            .submit_answer(session_id, pid, choices, now_ms())
+            .submit_answer(session_id, pid, &question_id, choices, now_ms())
             .await
         {
             Ok(()) => broadcast(ServerMessage::AnswerReceived {
                 participant_id: pid.clone(),
             }),
             Err(e) => reply(ServerMessage::Error {
-                reason: e.to_string(),
+                reason: e.client_reason().into(),
             }),
         },
         ClientMessage::PushQuestion { mut question } => {
@@ -240,7 +240,7 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
                     heatmap: r.heatmap,
                 }),
                 Err(e) => reply(ServerMessage::Error {
-                    reason: e.to_string(),
+                    reason: e.client_reason().into(),
                 }),
             }
         }
@@ -270,7 +270,7 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
                 reply(ServerMessage::FlashcardsReady { cards })
             }
             Err(e) => reply(ServerMessage::Error {
-                reason: e.to_string(),
+                reason: e.client_reason().into(),
             }),
         },
         ClientMessage::Ping => reply(ServerMessage::Pong),
@@ -298,7 +298,7 @@ async fn push_question(
     {
         Ok(()) => broadcast(ServerMessage::QuestionOpened { question: public }),
         Err(e) => reply(ServerMessage::Error {
-            reason: e.to_string(),
+            reason: e.client_reason().into(),
         }),
     }
 }

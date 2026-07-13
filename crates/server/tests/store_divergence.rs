@@ -45,16 +45,34 @@ async fn run(
 
     // Round 1 — section A, correct = 0.
     store.push_question(s, &q("q1", "A", 0), 0).await.unwrap();
-    store.submit_answer(s, "p1", vec![0], 1_000).await.unwrap(); // correct, fast
-    store.submit_answer(s, "p2", vec![1], 2_000).await.unwrap(); // wrong
-    store.submit_answer(s, "p3", vec![0], 5_000).await.unwrap(); // correct, slower
+    store
+        .submit_answer(s, "p1", "q1", vec![0], 1_000)
+        .await
+        .unwrap(); // correct, fast
+    store
+        .submit_answer(s, "p2", "q1", vec![1], 2_000)
+        .await
+        .unwrap(); // wrong
+    store
+        .submit_answer(s, "p3", "q1", vec![0], 5_000)
+        .await
+        .unwrap(); // correct, slower
     store.reveal(s).await.unwrap();
 
     // Round 2 — section B, correct = 1.
     store.push_question(s, &q("q2", "B", 1), 0).await.unwrap();
-    store.submit_answer(s, "p1", vec![1], 3_000).await.unwrap(); // correct
-    store.submit_answer(s, "p2", vec![1], 1_000).await.unwrap(); // correct, fast
-    store.submit_answer(s, "p3", vec![2], 1_000).await.unwrap(); // wrong
+    store
+        .submit_answer(s, "p1", "q2", vec![1], 3_000)
+        .await
+        .unwrap(); // correct
+    store
+        .submit_answer(s, "p2", "q2", vec![1], 1_000)
+        .await
+        .unwrap(); // correct, fast
+    store
+        .submit_answer(s, "p3", "q2", vec![2], 1_000)
+        .await
+        .unwrap(); // wrong
     let reveal = store.reveal(s).await.unwrap();
 
     let mut mastery = Vec::new();
