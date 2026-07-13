@@ -1,0 +1,113 @@
+{
+  "report": {
+    "format": "canvas.bolt_handoff.v0.1",
+    "kind": "planning_request",
+    "organization_id": "libre-ai",
+    "workspace_id": "rumble-lm-dod-2026-07",
+    "handoff_id": "lm-slice-dod-chain-2026-07-09",
+    "package_id": "lm-slice-planning-handoff",
+    "package_hash": "sha256:55b6129a61aba0d91fee87c53c5a1e80b2ae344fc4099cf9357d85f88ae2aa65",
+    "planning_goal": "Deliver planning-only Bolt handoff with real Wrench inspection + Gear artifact evidence for the DoD chain maillon",
+    "requested_outputs": [
+      "implementation_plan",
+      "evidence_summary",
+      "gate_status"
+    ],
+    "findings": []
+  },
+  "gates": [
+    {
+      "code": "package_approved",
+      "status": "pass",
+      "detail": "package metadata and items are present"
+    },
+    {
+      "code": "planning_only_enforced",
+      "status": "pass",
+      "detail": "execution is explicitly forbidden"
+    },
+    {
+      "code": "traceability_present",
+      "status": "pass",
+      "detail": "traceability links are present"
+    },
+    {
+      "code": "blocking_questions_waived_or_absent",
+      "status": "pass",
+      "detail": "no unwaived blocking question detected"
+    },
+    {
+      "code": "high_risks_waived_or_absent",
+      "status": "pass",
+      "detail": "no unwaived high/critical risk detected"
+    },
+    {
+      "code": "wrench_report_passed",
+      "status": "pass",
+      "detail": "Wrench evidence refs are present, hash-pinned, and not failed/quarantined"
+    },
+    {
+      "code": "database_inspection_verified",
+      "status": "pass",
+      "detail": "hash-matching Wrench DB report verified with status=passed",
+      "evidence": {
+        "artifact_ref": "artifact:sessions-jobs-db-inspection-2026-07-13",
+        "report_hash": "sha256:6f51034220795732a8873af11494d27b9a67b00f5f8db3df0589f16a0e0093a0",
+        "profile": "protected_branch",
+        "wrench_version": "0.1.0-alpha.7"
+      }
+    },
+    {
+      "code": "shared_capability_review_requested",
+      "status": "pass",
+      "detail": "shared capability extraction review can be produced [skeleton (static)]"
+    },
+    {
+      "code": "human_approval_checkpoint",
+      "status": "pass",
+      "detail": "human approval is explicitly required before any future execution"
+    },
+    {
+      "code": "artifact_supply_chain_verified",
+      "status": "pass",
+      "detail": "artifact registry integration pending [skeleton (static)]"
+    },
+    {
+      "code": "sovereignty_and_license_audit",
+      "status": "pass",
+      "detail": "external audit tool integration pending [skeleton (static)]"
+    },
+    {
+      "code": "biscuit_authorization",
+      "status": "passed",
+      "detail": "delegated authorization mode: enforce"
+    }
+  ],
+  "tasks": [
+    {
+      "title": "Draft implementation plan",
+      "source_trace": [],
+      "acceptance": [
+        "Draft implementation plan is produced without execution"
+      ]
+    },
+    {
+      "title": "Produce requested output `evidence_summary`",
+      "source_trace": [],
+      "acceptance": [
+        "Output `evidence_summary` is present in the dry-run report"
+      ]
+    },
+    {
+      "title": "Produce requested output `gate_status`",
+      "source_trace": [],
+      "acceptance": [
+        "Output `gate_status` is present in the dry-run report"
+      ]
+    }
+  ],
+  "next_actions": [
+    "review dry-run plan with a human owner",
+    "run Wrench inspections before any execution approval"
+  ]
+}

@@ -762,13 +762,14 @@ fn cookie_value(headers: &HeaderMap, expected_name: &str) -> Option<String> {
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    use aws_lc_rs::encoding::{AsDer, Pkcs8V1Der};
+    use aws_lc_rs::rsa::{KeyPair as RsaKeyPair, KeySize};
+    use aws_lc_rs::signature::KeyPair as _;
     use axum::Form;
     use axum::body::{Body, to_bytes};
     use axum::routing::{get, post};
+    use base64::engine::general_purpose::STANDARD;
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, get_current_timestamp};
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::traits::PublicKeyParts;
-    use rsa::{RsaPrivateKey, RsaPublicKey};
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
@@ -889,14 +890,22 @@ mod tests {
     async fn spawn_fake_idp() -> FakeIdp {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
-        let private = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
-        let public = RsaPublicKey::from(&private);
-        let der = private.to_pkcs1_der().unwrap();
+        let private = RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
+        let public = private.public_key();
+        let der = AsDer::<Pkcs8V1Der>::as_der(&private).unwrap();
+        let encoded_der = STANDARD.encode(der.as_ref());
+        let pem_body = encoded_der
+            .as_bytes()
+            .chunks(64)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let pem = format!("-----BEGIN PRIVATE KEY-----\n{pem_body}\n-----END PRIVATE KEY-----\n");
         let idp = FakeIdp {
             issuer,
-            encoding_key: Arc::new(EncodingKey::from_rsa_der(der.as_bytes())),
-            modulus: URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),
-            exponent: URL_SAFE_NO_PAD.encode(public.e().to_bytes_be()),
+            encoding_key: Arc::new(EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap()),
+            modulus: URL_SAFE_NO_PAD.encode(public.modulus().big_endian_without_leading_zero()),
+            exponent: URL_SAFE_NO_PAD.encode(public.exponent().big_endian_without_leading_zero()),
             expected_nonce: Arc::new(Mutex::new(None)),
             expected_challenge: Arc::new(Mutex::new(None)),
             mode: Arc::new(Mutex::new(TokenMode::Valid)),

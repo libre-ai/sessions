@@ -27,6 +27,7 @@ invariants, and an explicit cross-spec ledger.
 | [`security/approved-notebook-claims.md`](security/approved-notebook-claims.md)                                             | Immutable owner-notebook claim authority, HTTP boundary and precise proof limits   | Implemented MVP |
 | [`security/owner-corpus.md`](security/owner-corpus.md)                                                                     | Bounded process-local owner uploads, exact-byte approval and retrieval limits       | Implemented MVP |
 | [`pwa-testing.md`](pwa-testing.md)                                                                                           | PWA shell-only cache, automated/mobile Android+iOS test procedure and availability limits | Implemented test proof |
+| [`evidence/stack-traversal-2026-07-13.md`](evidence/stack-traversal-2026-07-13.md)                                           | Redacted Proof Kit, DB, artifact and Agent Factory local traversal with explicit limits   | Local evidence |
 
 SP-A/B/C are written as a coherent family (SP-A is the substrate; SP-B classifies
 over it; SP-C consumes both). The evolution spec critiques the **built** product

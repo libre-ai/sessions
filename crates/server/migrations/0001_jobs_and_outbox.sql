@@ -72,40 +72,24 @@ ALTER TABLE presto_jobs FORCE ROW LEVEL SECURITY;
 ALTER TABLE presto_job_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE presto_job_events FORCE ROW LEVEL SECURITY;
 
-DO $policy$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE schemaname = current_schema()
-          AND tablename = 'presto_jobs'
-          AND policyname = 'presto_jobs_tenant_scope'
-    ) THEN
-        CREATE POLICY presto_jobs_tenant_scope ON presto_jobs
-            USING (
-                organization_id = current_setting('presto.organization_id', true)
-                AND workspace_id = current_setting('presto.workspace_id', true)
-            )
-            WITH CHECK (
-                organization_id = current_setting('presto.organization_id', true)
-                AND workspace_id = current_setting('presto.workspace_id', true)
-            );
-    END IF;
+-- SQLx applies this versioned migration exactly once. Keep policies declarative
+-- so static inspection can fail closed without executing a procedural DO block.
+CREATE POLICY presto_jobs_tenant_scope ON presto_jobs
+    USING (
+        organization_id = current_setting('presto.organization_id', true)
+        AND workspace_id = current_setting('presto.workspace_id', true)
+    )
+    WITH CHECK (
+        organization_id = current_setting('presto.organization_id', true)
+        AND workspace_id = current_setting('presto.workspace_id', true)
+    );
 
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE schemaname = current_schema()
-          AND tablename = 'presto_job_events'
-          AND policyname = 'presto_job_events_tenant_scope'
-    ) THEN
-        CREATE POLICY presto_job_events_tenant_scope ON presto_job_events
-            USING (
-                organization_id = current_setting('presto.organization_id', true)
-                AND workspace_id = current_setting('presto.workspace_id', true)
-            )
-            WITH CHECK (
-                organization_id = current_setting('presto.organization_id', true)
-                AND workspace_id = current_setting('presto.workspace_id', true)
-            );
-    END IF;
-END
-$policy$;
+CREATE POLICY presto_job_events_tenant_scope ON presto_job_events
+    USING (
+        organization_id = current_setting('presto.organization_id', true)
+        AND workspace_id = current_setting('presto.workspace_id', true)
+    )
+    WITH CHECK (
+        organization_id = current_setting('presto.organization_id', true)
+        AND workspace_id = current_setting('presto.workspace_id', true)
+    );

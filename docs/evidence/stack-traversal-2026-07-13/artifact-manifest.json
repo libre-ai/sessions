@@ -1,0 +1,30 @@
+{
+  "manifest_id": "manifest:sha256:9dbc1f2aba43cc2d22bbfea5747738075c97d7ed8f47acbddff75bdecf16acc9",
+  "artifact": {
+    "artifact_id": "artifact:sha256:9dbc1f2aba43cc2d22bbfea5747738075c97d7ed8f47acbddff75bdecf16acc9",
+    "artifact_type": "release_asset",
+    "producer": "rumble-lm",
+    "version": "0.0.0",
+    "hash": "sha256:9dbc1f2aba43cc2d22bbfea5747738075c97d7ed8f47acbddff75bdecf16acc9",
+    "manifest_ref": "manifest:sha256:9dbc1f2aba43cc2d22bbfea5747738075c97d7ed8f47acbddff75bdecf16acc9",
+    "state": "active",
+    "created_at": "2026-07-13T07:05:09.572218Z"
+  },
+  "package_type": "binary",
+  "checksums": [
+    {
+      "algorithm": "sha256",
+      "value": "sha256:9dbc1f2aba43cc2d22bbfea5747738075c97d7ed8f47acbddff75bdecf16acc9"
+    }
+  ],
+  "provenance_id": "provenance:rumble-lm:presto-server:2026-07-13",
+  "retention": {},
+  "distribution": {},
+  "metadata": {
+    "values": {
+      "artifact_type": "release_binary",
+      "binary_name": "presto-server",
+      "product": "rumble-lm"
+    }
+  }
+}

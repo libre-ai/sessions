@@ -25,14 +25,10 @@ confidence-threshold = 0.9
 yanked = "deny"
 # Vulnerabilities block the gate. This single entry acknowledges an *unmaintained*
 # (not vulnerable) transitive macro dep; remove once an upstream dep drops it.
+# OIDC JWT verification uses the AWS-LC backend, so the vulnerable `rsa` crate
+# and its former RUSTSEC-2023-0071 waiver are absent from the locked graph.
 ignore = [
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained (transitive; no vuln)
-    # Marvin Attack (rsa crate): a timing sidechannel in RSA *private-key
-    # decryption*. Pulled in transitively by jsonwebtoken's rust_crypto backend
-    # for RS256. Our OIDC use only VERIFIES id_token signatures with the IdP's
-    # PUBLIC key — it never performs RSA decryption or private-key ops — so the
-    # sidechannel is not reachable here. Drop when `rsa` ships a fix.
-    "RUSTSEC-2023-0071",
 ]
 
 [bans]

@@ -54,6 +54,16 @@ cargo test --workspace
 
 See [`docs/`](docs/) for the current contracts and testing notes.
 
+### Bounded stack traversal
+
+The current local replay crosses Proof Kit UI inspection, static PostgreSQL inspection, the `presto-server` artifact manifest and an Agent Factory planning-only handoff protected by a short-lived Biscuit token:
+
+```bash
+./scripts/generate-stack-proof.sh
+```
+
+The redacted machine reports and explicit limitations are recorded in [`docs/evidence/stack-traversal-2026-07-13.md`](docs/evidence/stack-traversal-2026-07-13.md). This proves a local technical traversal, not a complete user session, hosted availability or production authorization.
+
 ## Boundaries
 
 Sessions owns the learner, facilitator and participant workflow. It may hand off explicit source, planning, inspection and artifact contracts to independent infrastructure. It does not own generic ingestion, agent orchestration, client-platform primitives or long-term memory.
