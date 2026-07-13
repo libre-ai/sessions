@@ -35,6 +35,8 @@ const TOKEN_TTL: Duration = Duration::from_secs(6 * 3600);
 const JOIN_LINK_TTL: Duration = Duration::from_secs(30 * 60);
 /// Unambiguous alphabet (no 0/O/1/I) for human-typable codes.
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const LEGACY_SESSION_CODE_LEN: usize = 6;
+const CURRENT_SESSION_CODE_LEN: usize = 12;
 pub(crate) const MAX_LEGACY_INGEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_CONCURRENT_LEGACY_INGESTS: usize = 4;
 pub(crate) const MAX_JOIN_REDEMPTION_BODY_BYTES: usize = 256;
@@ -70,7 +72,7 @@ pub(crate) async fn create_session(
     if !state.session_rate.allow() {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
-    let session_id = code(6);
+    let session_id = code(CURRENT_SESSION_CODE_LEN);
     let scope = SessionScope::for_session(&session_id);
     let host_id = format!("host-{}", code(4));
     state
@@ -135,7 +137,7 @@ pub(crate) async fn join_session(
         return Err(StatusCode::NOT_FOUND);
     }
     let scope = SessionScope::for_session(&session_id);
-    let participant_id = format!("p-{}", code(6));
+    let participant_id = format!("p-{}", uuid::Uuid::new_v4().simple());
     let participant_token = state
         .auth
         .mint_scoped(
@@ -161,6 +163,7 @@ pub(crate) async fn join_session(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct JoinParticipantRequest {
     name: String,
 }
@@ -172,15 +175,23 @@ fn join_path_session_id(path: &str) -> Option<&str> {
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    value
+        .to_str()
+        .ok()
         .and_then(|value| value.strip_prefix("Bearer "))
         .filter(|token| !token.is_empty())
 }
 
 fn validate_session_code(session_id: &str) -> bool {
-    session_id.len() == 6 && session_id.bytes().all(|byte| CODE_CHARS.contains(&byte))
+    matches!(
+        session_id.len(),
+        LEGACY_SESSION_CODE_LEN | CURRENT_SESSION_CODE_LEN
+    ) && session_id.bytes().all(|byte| CODE_CHARS.contains(&byte))
 }
 
 pub(crate) fn validate_join_name(name: &str) -> Option<String> {
@@ -275,7 +286,7 @@ pub(crate) async fn redeem_join_link(
     if !exists {
         return Err((StatusCode::NOT_FOUND, "session not found".into()));
     }
-    let participant_id = format!("p-{}", code(6));
+    let participant_id = format!("p-{}", uuid::Uuid::new_v4().simple());
     state
         .store
         .join(&session_id, &participant_id, &name)
@@ -593,6 +604,28 @@ pub(crate) async fn app_js() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn join_boundary_rejects_ambiguous_bearers_and_invalid_codes() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-one"),
+        );
+        assert_eq!(bearer_token(&headers), Some("token-one"));
+        headers.append(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-two"),
+        );
+        assert_eq!(bearer_token(&headers), None);
+
+        assert!(validate_session_code("ABCDEF"));
+        assert!(validate_session_code("ABCDEFGHJKLM"));
+        assert!(!validate_session_code("ABCDE"));
+        assert!(!validate_session_code("ABCDEFG"));
+        assert!(!validate_session_code("ABCDEFGHJKLMN"));
+        assert!(!validate_session_code("ABC0EF"));
+    }
 
     #[test]
     fn legacy_ingest_token_requires_strong_header_safe_entropy() {

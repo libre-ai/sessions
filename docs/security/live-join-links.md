@@ -7,7 +7,9 @@
 ## Sécurité
 
 Le lien sécurisé transporte le Biscuit dans le **fragment** :
-`/join/{CODE}#token=<...>`. Le fragment ne part jamais au serveur, ne doit pas
+`/join/{CODE}#token=<...>`. Les nouvelles sessions utilisent 12 caractères de
+l’alphabet non ambigu (60 bits) ; les codes legacy à 6 caractères restent
+acceptés pendant la migration. Le fragment ne part jamais au serveur, ne doit pas
 être loggé, et ne doit pas être recopié dans une query string. Le serveur garde
 la forme legacy `join_url=/?s=CODE` intacte pour compat.
 
@@ -25,7 +27,8 @@ s’applique au nom encore transporté par la query du WS legacy. La route répo
 en `no-store`; un bucket dédié borne les tentatives avant l’exécution Biscuit et
 une limite de concurrence extérieure borne auth, body et mutation ensemble.
 
-Les snapshots personnalisés appliquent leurs invariants à la construction,
+Les identités participant nouvellement émises utilisent un UUIDv4 et non le
+petit espace des codes humains. Les snapshots personnalisés appliquent leurs invariants à la construction,
 désérialisation et sérialisation. Le roster et le leaderboard sont plafonnés à
 32 entrées, la heatmap à 64 ; une phase `asking` ne peut sérialiser aucun reveal.
 

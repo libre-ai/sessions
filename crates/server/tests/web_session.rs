@@ -122,6 +122,7 @@ async fn http_session_api_drives_a_full_round() {
         .await
         .unwrap();
     let session_id = created["data"]["session_id"].as_str().unwrap().to_string();
+    assert_eq!(session_id.len(), 12, "new session codes carry 60 bits");
     let host_token = created["data"]["host_token"].as_str().unwrap().to_string();
     assert_eq!(created["data"]["tenant_id"], "tenant_local");
     assert_eq!(
@@ -267,6 +268,13 @@ async fn secure_join_link_redemption_mints_a_participant_and_trims_the_name() {
         .await
         .unwrap();
     assert_eq!(joined["data"]["name"], "Alice");
+    let participant_id = joined["data"]["participant_id"].as_str().unwrap();
+    assert!(participant_id.starts_with("p-"));
+    assert_eq!(
+        participant_id.len(),
+        34,
+        "participant ids use UUIDv4 entropy"
+    );
     assert_eq!(
         joined["data"]["workspace_identity"]["role_assignments"][0]["role"],
         "participant"
