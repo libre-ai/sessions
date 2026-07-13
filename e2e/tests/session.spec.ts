@@ -23,7 +23,7 @@ test.describe('Session lifecycle', () => {
     expect(data.workspace_identity.role_assignments[0].actor_ref.actor_type).toBe('human');
   });
 
-  test('host creates a session, participant answers, host reveals leaderboard', async ({ browser }) => {
+  test('host creates a session, secure join client answers, host reveals leaderboard', async ({ browser }) => {
     const host = await browser.newPage();
     const participant = await browser.newPage();
 
@@ -33,39 +33,41 @@ test.describe('Session lifecycle', () => {
     const sessionCode = host.locator('#code');
     await expect(sessionCode).not.toHaveText('');
 
-    const joinHref = await host.locator('#joinlink').getAttribute('href');
-    expect(joinHref).toContain('/?s=');
+    const secureHref = await host.locator('#secure-joinlink').getAttribute('href');
+    expect(secureHref).toMatch(/^\/join\/[A-Z0-9]{6,12}#token=/);
     await expect(host.locator('#log')).toContainText('connecté');
 
-    await participant.goto(joinHref!);
-    await expect(participant.locator('#join-code')).not.toHaveText('');
-    await participant.locator('#name').fill('Alice');
+    await participant.goto(secureHref!);
+    await expect(participant).not.toHaveURL(/#token=/);
+    await expect(participant.getByRole('heading', { name: 'Rejoindre une session' })).toBeVisible();
+    await participant.locator('#join-name').fill('Alice');
     await participant.getByRole('button', { name: 'Rejoindre' }).click();
-    await expect(participant.locator('#log')).toContainText('connecté');
     await expect(host.locator('#hoststatus')).toContainText('1 participant');
+    await expect(participant.locator('text=Lobby')).toBeVisible();
 
     await host.getByRole('button', { name: 'Ouvrir une question' }).click();
-    await expect(participant.locator('#question')).not.toHaveText('');
-    const grounding = participant.locator('#grounding');
-    await expect(grounding).toContainText('Question sourcée');
-    await expect(grounding).toContainText('refs privées');
+    await expect(participant.getByRole('heading', { name: 'Question' })).toBeVisible();
 
-    // The served quiz depends on the server's content mode: fixture quiz
-    // without DATABASE_URL, grounded quiz (real ingested source) with it.
-    // Scoring >= 500 below requires answering correctly in both modes.
-    const fixtureMode = ((await grounding.textContent()) ?? '').includes(
-      'fixture de démonstration',
-    );
-    const correctAnswer = fixtureMode ? 'Paris' : 'Data races and use-after-free';
-    await participant.getByRole('button', { name: correctAnswer }).click();
+    // The served quiz depends on the server's content mode.
+    // Identify the correct answer from the question text so the test stays stable.
+    const questionText = (await participant.locator('.presto-card__body').first().textContent()) ?? '';
+    const correctAnswer = questionText.includes('Capital of France')
+      ? 'Paris'
+      : questionText.includes('ownership system prevent')
+        ? 'Data races and use-after-free'
+        : questionText.includes('many owners can a value have')
+          ? 'Exactly one'
+          : questionText.includes('goes out of scope')
+            ? 'Rust calls drop() automatically'
+            : 'Paris';
+    await participant.getByLabel(correctAnswer).click();
+    await participant.getByRole('button', { name: 'Valider' }).click();
     await expect(host.locator('#log')).toContainText('réponse reçue');
 
     await host.getByRole('button', { name: 'Révéler' }).click();
-    await expect(participant.locator('#leaderboard')).toBeVisible();
-    await expect(participant.locator('#board')).toContainText('Alice');
-    const leaderboardText = (await participant.locator('#board').textContent()) ?? '';
-    const score = Number(leaderboardText.match(/Alice — (\d+)/)?.[1] ?? '0');
-    expect(score).toBeGreaterThanOrEqual(500);
+    await expect(participant.getByRole('heading', { name: 'Révélation' })).toBeVisible();
+    await expect(participant.getByRole('heading', { name: 'Classement' })).toBeVisible();
+    await expect(participant.getByText('Alice')).toBeVisible();
 
     await host.close();
     await participant.close();

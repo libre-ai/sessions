@@ -7,10 +7,12 @@
 pub mod api;
 pub mod client;
 pub mod fixtures;
+pub mod guest_join;
 pub mod p0_contract;
 pub mod protocol;
 pub mod role_assignment;
 
+pub use guest_join::{GuestJoinEvent, GuestJoinState, JoinSubmission};
 pub use role_assignment::{
     ActorReference, ActorType, MembershipStatus, PermissionPrimitive, RoleAssignment,
     WorkspaceIdentity, WorkspaceMembership,

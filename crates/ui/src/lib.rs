@@ -9,6 +9,7 @@
 
 use dioxus::prelude::*;
 use presto_core::api::SourceCitation;
+use presto_core::protocol::{LeaderboardEntry, PublicReveal, QuestionKind, QuestionPublic};
 
 // Native HTML elements preserve browser semantics without a component runtime.
 // Theme styles remain externalized by the owner host so its CSP needs no inline
@@ -186,6 +187,86 @@ pub fn SourceCard(citation: SourceCitation) -> Element {
             p { class: "presto-help", "{citation.source_section_id}" }
             if let Some(excerpt) = citation.excerpt {
                 blockquote { class: "presto-card__body", "{excerpt}" }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn JoinStatus(message: String) -> Element {
+    rsx! {
+        aside { class: "presto-toast", role: "status", aria_live: "polite", "{message}" }
+    }
+}
+
+#[component]
+pub fn JoinLeaderboard(entries: Vec<LeaderboardEntry>) -> Element {
+    rsx! {
+        section { class: "presto-card", aria_labelledby: "join-board-title",
+            h2 { id: "join-board-title", class: "presto-card__title", "Classement" }
+            ol { class: "presto-list",
+                for entry in entries {
+                    li { "{entry.name} — {entry.score}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn JoinReveal(question: QuestionPublic, reveal: PublicReveal) -> Element {
+    let correct = reveal
+        .correct_choices
+        .iter()
+        .map(|choice| choice.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    rsx! {
+        section { class: "presto-card", aria_labelledby: "join-reveal-title",
+            h2 { id: "join-reveal-title", class: "presto-card__title", "Révélation" }
+            p { class: "presto-help", "Réponse correcte: {correct}" }
+            p { class: "presto-help", "Question: {question.text}" }
+        }
+    }
+}
+
+#[component]
+pub fn JoinQuestion(
+    question: QuestionPublic,
+    #[props(default)] selected: Vec<u8>,
+    #[props(default)] locked: bool,
+    on_toggle: EventHandler<u8>,
+    on_submit: EventHandler<()>,
+) -> Element {
+    let input_type = match question.kind {
+        QuestionKind::Single => "radio",
+        QuestionKind::Multi => "checkbox",
+    };
+    let legend = format!("Question {}", question.id);
+    rsx! {
+        section { class: "presto-card", aria_labelledby: "join-question-title",
+            h2 { id: "join-question-title", class: "presto-card__title", "Question" }
+            p { class: "presto-card__body", "{question.text}" }
+            fieldset { class: "presto-question-set", disabled: locked,
+                legend { class: "presto-help", "{legend}" }
+                for (index, choice) in question.choices.iter().enumerate() {
+                    label { class: "presto-choice",
+                        input {
+                            r#type: input_type,
+                            name: "join-choice",
+                            value: "{index}",
+                            checked: selected.contains(&(index as u8)),
+                            onclick: move |_| on_toggle.call(index as u8),
+                        }
+                        span { "{choice}" }
+                    }
+                }
+            }
+            button {
+                class: "presto-button presto-button--primary",
+                disabled: locked,
+                onclick: move |_| on_submit.call(()),
+                "Valider"
             }
         }
     }
@@ -414,5 +495,33 @@ mod tests {
         assert!(html.contains("Ask your corpus"));
         assert!(html.contains("Grounding verified"));
         assert!(html.contains("presto-bottom-nav"));
+    }
+
+    #[test]
+    fn join_components_render_accessible_passive_markup() {
+        let reveal = render(rsx! {
+            JoinReveal {
+                question: QuestionPublic {
+                    id: "q1".into(),
+                    text: "Choose one".into(),
+                    kind: QuestionKind::Single,
+                    choices: vec!["A".into(), "B".into()],
+                    timer_sec: 20,
+                    grounding: Default::default(),
+                },
+                reveal: PublicReveal { question_id: "q1".into(), correct_choices: vec![1], leaderboard: vec![], heatmap: Default::default() }
+            }
+        });
+        assert!(reveal.contains("Révélation"));
+        assert!(reveal.contains("Question: Choose one"));
+        assert!(reveal.contains("Réponse correcte"));
+
+        let board = render(rsx! {
+            JoinLeaderboard { entries: vec![LeaderboardEntry { participant_id: "p1".into(), name: "Alice".into(), score: 42 }] }
+        });
+        assert!(board.contains("Alice — 42"));
+
+        let status = render(rsx! { JoinStatus { message: "Connexion en cours".to_string() } });
+        assert!(status.contains("role=\"status\""));
     }
 }

@@ -1,0 +1,12 @@
+[application]
+name = "rumble-lm-join"
+
+[web.app]
+title = "Rumble LM — lien participant"
+base_path = "join"
+
+[web.watcher]
+index_on_404 = true
+
+[web]
+pre_compress = false

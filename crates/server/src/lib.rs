@@ -141,6 +141,14 @@ pub fn app(state: AppState) -> Router {
             get(http::owner_app_internal_manifest),
         )
         .route("/app/{*path}", get(http::owner_app_index))
+        .route("/join/assets/{asset}", get(http::join_app_asset))
+        .route(
+            "/join/join-shell-manifest.json",
+            get(http::join_app_internal_manifest),
+        )
+        .route("/join/{session_id}", get(http::join_app_index))
+        .route("/join/{session_id}/", get(http::join_app_index))
+        .route("/join/{session_id}/{*path}", get(http::join_app_index))
         .route("/health", get(health))
         .route("/auth/login", get(owner_auth::login))
         .route("/auth/callback", get(owner_auth::callback))

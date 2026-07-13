@@ -562,6 +562,94 @@ pub(crate) async fn owner_app_service_worker(headers: HeaderMap) -> Response {
     owner_file("sw.js", &headers)
 }
 
+pub(crate) struct EmbeddedJoinFile {
+    pub(crate) path: &'static str,
+    pub(crate) content_type: &'static str,
+    pub(crate) etag: &'static str,
+    pub(crate) body: &'static [u8],
+}
+
+include!(concat!(env!("OUT_DIR"), "/join_app_assets.rs"));
+
+const JOIN_APP_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'none'; manifest-src 'none'";
+
+fn secure_join_response(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(JOIN_APP_CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static(OWNER_PERMISSIONS_POLICY),
+    );
+    response
+}
+
+pub(crate) async fn join_app_index() -> Response {
+    let mut response = Html(include_str!("../static/join-app/index.html")).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    secure_join_response(response)
+}
+
+fn join_file(path: &str, request_headers: &HeaderMap) -> Response {
+    let Some(found) = JOIN_APP_FILES.iter().find(|item| item.path == path) else {
+        return secure_join_response(StatusCode::NOT_FOUND.into_response());
+    };
+    let etag = format!("\"{}\"", found.etag);
+    let not_modified = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        == Some(etag.as_str());
+    let mut response = if not_modified {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        (StatusCode::OK, found.body).into_response()
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(found.content_type),
+    );
+    headers.insert(
+        "cross-origin-resource-policy",
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag).expect("valid ETag"),
+    );
+    let cache_control = if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    secure_join_response(response)
+}
+
+pub(crate) async fn join_app_asset(Path(asset): Path<String>, headers: HeaderMap) -> Response {
+    join_file(&format!("assets/{asset}"), &headers)
+}
+
+pub(crate) async fn join_app_internal_manifest(headers: HeaderMap) -> Response {
+    join_file("join-shell-manifest.json", &headers)
+}
+
 pub(crate) async fn app_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],

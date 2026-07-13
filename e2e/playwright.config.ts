@@ -36,7 +36,7 @@ export default defineConfig({
     },
   ],
   webServer: externalTarget ? undefined : {
-    command: 'cd .. && ./scripts/verify-owner-app.sh && INGEST_TOKEN=playwright-explicit-non-secret-000000000000 PORT=3000 cargo run --release --bin presto-server',
+    command: 'cd .. && ./scripts/verify-owner-app.sh && ./scripts/verify-join-app.sh && INGEST_TOKEN=playwright-explicit-non-secret-000000000000 PORT=3000 cargo run --release --bin presto-server',
     url: 'http://localhost:3000/health',
     reuseExistingServer: !process.env.CI && process.env.KEYCLOAK_E2E !== '1',
     timeout: 120000,

@@ -317,6 +317,10 @@ async function createSession() {
     isHost = true;
     sessionId = data.session_id;
     $("#code").textContent = data.session_id;
+    const secureJoin = data.secure_join_url || data.join_url;
+    const secure = $("#secure-joinlink");
+    secure.href = secureJoin;
+    secure.textContent = location.origin + secureJoin;
     const a = $("#joinlink");
     a.href = data.join_url;
     a.textContent = location.origin + data.join_url;

@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light dark;
+}
+
+.join-shell {
+  display: grid;
+  gap: 1rem;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
+.join-safe-area {
+  min-height: 100dvh;
+}
+
+.join-hero {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.join-kicker {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.join-lede {
+  margin: 0;
+  max-width: 42rem;
+}
+
+.join-panel,
+.join-stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.join-input {
+  min-height: var(--presto-touch-target);
+}
+
+.join-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.join-question-set {
+  display: grid;
+  gap: 0.5rem;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.join-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: var(--presto-touch-target);
+}
+
+.preto-list,
+.presto-list {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
