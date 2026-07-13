@@ -280,3 +280,45 @@ async fn secure_join_link_redemption_mints_a_participant_and_trims_the_name() {
         "participant"
     );
 }
+
+#[tokio::test]
+async fn secure_join_link_redemption_rejects_long_control_and_utf8_names() {
+    let addr = spawn().await;
+    let base = format!("http://{addr}");
+    let http = reqwest::Client::new();
+
+    let created: Value = http
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let session_id = created["data"]["session_id"].as_str().unwrap().to_string();
+    let secure_join_url = created["data"]["secure_join_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let token = secure_join_url
+        .split("#token=")
+        .nth(1)
+        .expect("secure join token")
+        .to_string();
+
+    for (label, name) in [
+        ("overlong", "a".repeat(25)),
+        ("control", "\u{0001}".to_string()),
+        ("utf8 bytes", "😀".repeat(25)),
+    ] {
+        let resp = http
+            .post(format!("{base}/join/{session_id}/participants"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({"name": name}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST, "{label}");
+        assert_eq!(resp.text().await.unwrap(), "invalid name", "{label}");
+    }
+}

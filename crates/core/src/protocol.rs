@@ -628,5 +628,68 @@ mod tests {
         let mut mismatched = sample_snapshot(SessionPhasePublic::Revealed);
         mismatched.reveal.as_mut().unwrap().question_id = "other".into();
         assert!(serde_json::to_string(&mismatched).is_err());
+
+        let mut invalid_roster = sample_snapshot(SessionPhasePublic::Asking);
+        invalid_roster.participants[0].name = "a".repeat(MAX_SESSION_PARTICIPANT_NAME_CHARS + 1);
+        assert!(serde_json::to_string(&invalid_roster).is_err());
+
+        let mut oversize_roster = sample_snapshot(SessionPhasePublic::Asking);
+        for index in 1..=MAX_SESSION_SNAPSHOT_PARTICIPANTS {
+            oversize_roster.participants.push(ParticipantPublic {
+                participant_id: format!("p{index}"),
+                name: format!("Guest {index}"),
+            });
+        }
+        oversize_roster.participants_count = oversize_roster.participants.len() as u32;
+        assert!(serde_json::to_string(&oversize_roster).is_err());
+
+        let mut invalid_reveal = sample_snapshot(SessionPhasePublic::Revealed);
+        let reveal = invalid_reveal.reveal.as_mut().unwrap();
+        for index in 0..=MAX_SESSION_SNAPSHOT_LEADERBOARD {
+            reveal.leaderboard.push(LeaderboardEntry {
+                participant_id: format!("p{index}"),
+                name: format!("N{index}"),
+                score: index as u32,
+            });
+        }
+        assert!(serde_json::to_string(&invalid_reveal).is_err());
+
+        let mut invalid_heatmap = sample_snapshot(SessionPhasePublic::Revealed);
+        invalid_heatmap
+            .reveal
+            .as_mut()
+            .unwrap()
+            .heatmap
+            .insert("doc1#s3".into(), 1.5);
+        assert!(serde_json::to_string(&invalid_heatmap).is_err());
+
+        let overlong_name = "a".repeat(MAX_SESSION_PARTICIPANT_NAME_CHARS + 1);
+        assert!(
+            serde_json::from_value::<SessionSnapshot>(serde_json::json!({
+                "phase": "asking",
+                "participants": [{"participant_id": "p1", "name": overlong_name}],
+                "participants_count": 1,
+                "question": sample_question().public(),
+                "answered": false
+            }))
+            .is_err()
+        );
+
+        assert!(
+            serde_json::from_value::<SessionSnapshot>(serde_json::json!({
+                "phase": "revealed",
+                "participants": [{"participant_id": "p1", "name": "Alice"}],
+                "participants_count": 1,
+                "question": sample_question().public(),
+                "answered": true,
+                "reveal": {
+                    "question_id": "q1",
+                    "correct_choices": [1],
+                    "leaderboard": [{"participant_id": "p1", "name": "Alice", "score": 1}],
+                    "heatmap": {"doc1#s2": 1.5}
+                }
+            }))
+            .is_err()
+        );
     }
 }

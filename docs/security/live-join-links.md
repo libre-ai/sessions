@@ -23,9 +23,11 @@ continue d’accepter ses tokens historiques via `?token=` dans la query.
 `POST /join/{session_id}/participants` exige `Authorization: Bearer <token>`
 avant le parsing du body. Le body JSON ne contient qu’un `name` borné :
 `trim()` 1..24 caractères, octets bornés, contrôles refusés. La même validation
-s’applique au nom encore transporté par la query du WS legacy. La route répond
-en `no-store`; un bucket dédié borne les tentatives avant l’exécution Biscuit et
-une limite de concurrence extérieure borne auth, body et mutation ensemble.
+s’applique au nom encore transporté par la query du WS legacy, qui refuse avant
+l’upgrade. Les erreurs d’indisponibilité restent non énumérables (`join
+unavailable`, `no-store`) ; un bucket dédié borne les tentatives avant
+l’exécution Biscuit et une limite de concurrence extérieure borne auth, body et
+mutation ensemble.
 
 Les identités participant nouvellement émises utilisent un UUIDv4 et non le
 petit espace des codes humains. Les snapshots personnalisés appliquent leurs invariants à la construction,
@@ -41,5 +43,7 @@ désérialisation et sérialisation. Le roster et le leaderboard sont plafonnés
 - `/ws/{session_id}` garde la query `?token=` pour compat ; ne pas prétendre
   avoir migré le WS.
 - La redemption legacy `/sessions/{session_id}/participants` reste ouverte et
-  transitoire ; la migration canonique n’est pas terminée.
+  transitoire ; la migration canonique n’est pas terminée. Les réponses join
+  unavailable ne doivent pas révéler si le bearer, le token, le scope ou la
+  session manquent.
 - Aucune claim de complétude sur #35 n’est faite ici.

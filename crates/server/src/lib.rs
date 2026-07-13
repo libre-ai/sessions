@@ -594,7 +594,198 @@ mod tests {
         }
     }
 
+    struct FlakyJoinStore {
+        inner: InMemorySessionStore,
+        exists_calls: AtomicUsize,
+    }
+
+    impl FlakyJoinStore {
+        fn new() -> Self {
+            Self {
+                inner: InMemorySessionStore::new(),
+                exists_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::store::SessionStore for FlakyJoinStore {
+        async fn ensure(&self, session_id: &str, host_id: &str) -> crate::store::StoreResult<()> {
+            self.inner.ensure(session_id, host_id).await
+        }
+
+        async fn join(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+            name: &str,
+        ) -> crate::store::StoreResult<u32> {
+            self.inner.join(session_id, participant_id, name).await
+        }
+
+        async fn push_question(
+            &self,
+            session_id: &str,
+            question: &presto_core::protocol::Question,
+            opened_at_ms: u64,
+        ) -> crate::store::StoreResult<()> {
+            self.inner
+                .push_question(session_id, question, opened_at_ms)
+                .await
+        }
+
+        async fn submit_answer(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+            question_id: &str,
+            choices: Vec<u8>,
+            now_ms: u64,
+        ) -> crate::store::StoreResult<()> {
+            self.inner
+                .submit_answer(session_id, participant_id, question_id, choices, now_ms)
+                .await
+        }
+
+        async fn snapshot(
+            &self,
+            session_id: &str,
+        ) -> crate::store::StoreResult<Option<presto_core::protocol::QuestionPublic>> {
+            self.inner.snapshot(session_id).await
+        }
+
+        async fn guest_snapshot(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+        ) -> crate::store::StoreResult<Option<presto_core::protocol::SessionSnapshot>> {
+            self.inner.guest_snapshot(session_id, participant_id).await
+        }
+
+        async fn exists(&self, _session_id: &str) -> crate::store::StoreResult<bool> {
+            Ok(self.exists_calls.fetch_add(1, Ordering::SeqCst) == 0)
+        }
+
+        async fn mastery(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+        ) -> crate::store::StoreResult<Vec<crate::session::SectionMastery>> {
+            self.inner.mastery(session_id, participant_id).await
+        }
+
+        async fn reveal(
+            &self,
+            session_id: &str,
+        ) -> crate::store::StoreResult<crate::session::RevealResult> {
+            self.inner.reveal(session_id).await
+        }
+    }
+
+    struct ErrorJoinStore;
+
+    #[async_trait]
+    impl crate::store::SessionStore for ErrorJoinStore {
+        async fn ensure(&self, _session_id: &str, _host_id: &str) -> crate::store::StoreResult<()> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn join(
+            &self,
+            _session_id: &str,
+            _participant_id: &str,
+            _name: &str,
+        ) -> crate::store::StoreResult<u32> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn push_question(
+            &self,
+            _session_id: &str,
+            _question: &presto_core::protocol::Question,
+            _opened_at_ms: u64,
+        ) -> crate::store::StoreResult<()> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn submit_answer(
+            &self,
+            _session_id: &str,
+            _participant_id: &str,
+            _question_id: &str,
+            _choices: Vec<u8>,
+            _now_ms: u64,
+        ) -> crate::store::StoreResult<()> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn snapshot(
+            &self,
+            _session_id: &str,
+        ) -> crate::store::StoreResult<Option<presto_core::protocol::QuestionPublic>> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn guest_snapshot(
+            &self,
+            _session_id: &str,
+            _participant_id: &str,
+        ) -> crate::store::StoreResult<Option<presto_core::protocol::SessionSnapshot>> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn exists(&self, _session_id: &str) -> crate::store::StoreResult<bool> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn mastery(
+            &self,
+            _session_id: &str,
+            _participant_id: &str,
+        ) -> crate::store::StoreResult<Vec<crate::session::SectionMastery>> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+
+        async fn reveal(
+            &self,
+            _session_id: &str,
+        ) -> crate::store::StoreResult<crate::session::RevealResult> {
+            Err(crate::store::StoreError::Backend(
+                "backend unavailable".into(),
+            ))
+        }
+    }
+
     const TEST_INGEST_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+    async fn join_redemption_response(
+        state: AppState,
+        request: Request<Body>,
+    ) -> (StatusCode, axum::http::HeaderMap, String) {
+        let response = app(state).oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, headers, String::from_utf8(body.to_vec()).unwrap())
+    }
 
     async fn ingest(uri: &str, content_type: &str, body: &'static str) -> StatusCode {
         let mut state = AppState::in_memory(Arc::new(Auth::generate()));
@@ -741,6 +932,7 @@ mod tests {
             .await
             .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_eq!(text, "join unavailable");
         assert!(!text.contains("definitely-wrong"));
     }
 
@@ -817,31 +1009,137 @@ mod tests {
                 std::time::SystemTime::now(),
             )
             .unwrap();
-        let response = app(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/join/{session}/participants"))
-                    .header("authorization", format!("Bearer {token}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"name":"Alice"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let (status, headers, body) = join_redemption_response(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/join/{session}/participants"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"Alice"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(body, "join unavailable");
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
     }
 
     #[tokio::test]
-    async fn join_redemption_returns_not_found_for_missing_session() {
+    async fn join_redemption_returns_the_same_unavailable_response_for_all_unavailable_cases() {
         let auth = Arc::new(Auth::generate());
         let state = AppState::in_memory(auth.clone());
-        let polls = Arc::new(AtomicUsize::new(0));
-        let observed = polls.clone();
-        let body = Body::from_stream(stream::once(async move {
-            observed.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, Infallible>(Bytes::from_static(b"secret body"))
-        }));
+        state.store.ensure("ABCDEF", "host").await.unwrap();
+        let now = std::time::SystemTime::now();
+        let scope = crate::session_identity::SessionScope::for_session("ABCDEF");
+        let other_scope = crate::session_identity::SessionScope::for_session("UVWXYZ");
+        let valid = auth
+            .mint_join_link(&scope, std::time::Duration::from_secs(1800), now)
+            .unwrap();
+        let expired = auth
+            .mint_join_link(&scope, std::time::Duration::from_secs(0), now)
+            .unwrap();
+        let cross_scope = auth
+            .mint_join_link(&other_scope, std::time::Duration::from_secs(1800), now)
+            .unwrap();
+        let mut tampered = valid.clone();
+        tampered.pop();
+        tampered.push(if valid.ends_with('A') { 'B' } else { 'A' });
+
+        let expected = join_redemption_response(
+            state.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/join/ABCDEF/participants")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(expected.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(expected.2, "join unavailable");
+
+        let cases = [
+            (
+                "malformed bearer",
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABCDEF/participants")
+                    .header("authorization", "Bearer ")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "invalid code",
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABC!EF/participants")
+                    .header("authorization", format!("Bearer {valid}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "bad signature",
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABCDEF/participants")
+                    .header("authorization", format!("Bearer {tampered}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "expired",
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABCDEF/participants")
+                    .header("authorization", format!("Bearer {expired}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "cross scope",
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABCDEF/participants")
+                    .header("authorization", format!("Bearer {cross_scope}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "session absent",
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/NOPQRS/participants")
+                    .header(
+                        "authorization",
+                        format!(
+                            "Bearer {}",
+                            auth.mint_join_link(
+                                &crate::session_identity::SessionScope::for_session("NOPQRS"),
+                                std::time::Duration::from_secs(1800),
+                                now
+                            )
+                            .unwrap()
+                        ),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        ];
+
+        for (label, request) in cases {
+            let actual = join_redemption_response(state.clone(), request).await;
+            assert_eq!(actual.0, expected.0, "{label}");
+            assert_eq!(actual.1, expected.1, "{label}");
+            assert_eq!(actual.2, expected.2, "{label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn join_redemption_handler_recheck_stays_non_enumerating() {
+        let auth = Arc::new(Auth::generate());
+        let mut state = AppState::in_memory(auth.clone());
+        state.store = Arc::new(FlakyJoinStore::new());
+        state.store.ensure("ABCDEF", "host").await.unwrap();
         let token = auth
             .mint_join_link(
                 &crate::session_identity::SessionScope::for_session("ABCDEF"),
@@ -849,25 +1147,46 @@ mod tests {
                 std::time::SystemTime::now(),
             )
             .unwrap();
-        let response = app(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/join/ABCDEF/participants")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(body)
-                    .unwrap(),
+        let actual = join_redemption_response(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri("/join/ABCDEF/participants")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"Alice"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(actual.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(actual.2, "join unavailable");
+    }
+
+    #[tokio::test]
+    async fn join_redemption_backend_failures_are_generic() {
+        let auth = Arc::new(Auth::generate());
+        let mut state = AppState::in_memory(auth.clone());
+        state.store = Arc::new(ErrorJoinStore);
+        let token = auth
+            .mint_join_link(
+                &crate::session_identity::SessionScope::for_session("ABCDEF"),
+                std::time::Duration::from_secs(1800),
+                std::time::SystemTime::now(),
             )
-            .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(polls.load(Ordering::SeqCst), 0);
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(!text.contains(token.as_str()));
+        let actual = join_redemption_response(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri("/join/ABCDEF/participants")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(actual.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(actual.2, "join unavailable");
+        assert_eq!(actual.1[header::CACHE_CONTROL], "no-store");
     }
 
     #[tokio::test]

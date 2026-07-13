@@ -188,15 +188,20 @@ async fn participant_name_is_bounded_before_websocket_upgrade() {
             SystemTime::now(),
         )
         .unwrap();
-    let overlong = "a".repeat(25);
-    let url = format!(
-        "ws://{}/ws/sess-name?token={token}&name={overlong}",
-        srv.addr
-    );
-    assert!(
-        connect_async(url).await.is_err(),
-        "an overlong participant name must be refused before upgrade"
-    );
+    for (label, encoded_name) in [
+        ("overlong", "a".repeat(25)),
+        ("control", "%0A".to_string()),
+        ("utf8 bytes", "%F0%9F%98%80".repeat(25)),
+    ] {
+        let url = format!(
+            "ws://{}/ws/sess-name?token={token}&name={encoded_name}",
+            srv.addr
+        );
+        assert!(
+            connect_async(url).await.is_err(),
+            "{label} participant names must be refused before upgrade"
+        );
+    }
 }
 
 #[tokio::test]

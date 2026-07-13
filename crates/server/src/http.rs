@@ -212,18 +212,13 @@ pub(crate) async fn authorize_join_redemption(
     next: Next,
 ) -> Response {
     let Some(token) = bearer_token(request.headers()) else {
-        return unauthorized("missing bearer token");
+        return join_unavailable(StatusCode::UNAUTHORIZED);
     };
     let Some(session_id) = join_path_session_id(request.uri().path()) else {
-        return not_found("invalid join code");
+        return join_unavailable(StatusCode::UNAUTHORIZED);
     };
     if !state.join_redemption_rate.allow() {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            [(header::CACHE_CONTROL, "no-store")],
-            "join rate limited",
-        )
-            .into_response();
+        return join_unavailable(StatusCode::TOO_MANY_REQUESTS);
     }
     let scope = SessionScope::for_session(session_id);
     if state
@@ -231,37 +226,21 @@ pub(crate) async fn authorize_join_redemption(
         .verify_join_link(token, &scope, SystemTime::now())
         .is_err()
     {
-        return unauthorized("invalid join token");
+        return join_unavailable(StatusCode::UNAUTHORIZED);
     }
     match state.store.exists(session_id).await {
         Ok(true) => {}
-        Ok(false) => return not_found("session not found"),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                [(header::CACHE_CONTROL, "no-store")],
-                "join lookup failed",
-            )
-                .into_response();
-        }
+        Ok(false) => return join_unavailable(StatusCode::UNAUTHORIZED),
+        Err(_) => return join_unavailable(StatusCode::SERVICE_UNAVAILABLE),
     }
     next.run(request).await
 }
 
-fn unauthorized(reason: &'static str) -> Response {
+fn join_unavailable(status: StatusCode) -> Response {
     (
-        StatusCode::UNAUTHORIZED,
+        status,
         [(header::CACHE_CONTROL, "no-store")],
-        reason,
-    )
-        .into_response()
-}
-
-fn not_found(reason: &'static str) -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        [(header::CACHE_CONTROL, "no-store")],
-        reason,
+        "join unavailable",
     )
         .into_response()
 }
@@ -272,31 +251,25 @@ pub(crate) async fn redeem_join_link(
     Json(payload): Json<JoinParticipantRequest>,
 ) -> Result<Json<Envelope<JoinedSession>>, (StatusCode, String)> {
     if !validate_session_code(&session_id) {
-        return Err((StatusCode::NOT_FOUND, "session not found".into()));
+        return Err((StatusCode::UNAUTHORIZED, "join unavailable".into()));
     }
     let name = validate_join_name(&payload.name)
         .ok_or((StatusCode::BAD_REQUEST, "invalid name".into()))?;
     let scope = SessionScope::for_session(&session_id);
-    let exists = state.store.exists(&session_id).await.map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "join redemption failed".into(),
-        )
-    })?;
+    let exists = state
+        .store
+        .exists(&session_id)
+        .await
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "join unavailable".into()))?;
     if !exists {
-        return Err((StatusCode::NOT_FOUND, "session not found".into()));
+        return Err((StatusCode::UNAUTHORIZED, "join unavailable".into()));
     }
     let participant_id = format!("p-{}", uuid::Uuid::new_v4().simple());
     state
         .store
         .join(&session_id, &participant_id, &name)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "join redemption failed".into(),
-            )
-        })?;
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "join unavailable".into()))?;
     let participant_token = state
         .auth
         .mint_scoped(
@@ -306,12 +279,7 @@ pub(crate) async fn redeem_join_link(
             TOKEN_TTL,
             SystemTime::now(),
         )
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "join redemption failed".into(),
-            )
-        })?;
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "join unavailable".into()))?;
     let workspace_identity =
         workspace_identity_for_actor(&scope, &participant_id, SessionRole::Participant);
     Ok(Json(Envelope {
