@@ -176,6 +176,30 @@ async fn invalid_token_is_rejected_before_upgrade() {
 }
 
 #[tokio::test]
+async fn participant_name_is_bounded_before_websocket_upgrade() {
+    let srv = spawn_server().await;
+    let token = srv
+        .auth
+        .mint(
+            "sess-name",
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
+        .unwrap();
+    let overlong = "a".repeat(25);
+    let url = format!(
+        "ws://{}/ws/sess-name?token={token}&name={overlong}",
+        srv.addr
+    );
+    assert!(
+        connect_async(url).await.is_err(),
+        "an overlong participant name must be refused before upgrade"
+    );
+}
+
+#[tokio::test]
 async fn live_round_fans_out_host_events_to_participants() {
     let srv = spawn_server().await;
     let host_token = srv

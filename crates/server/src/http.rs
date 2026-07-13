@@ -20,6 +20,9 @@ use presto_core::p0_contract::{
     P0StubWorkflowProof, P0ValidationReport, run_p0_stub_workflow, valid_p0_fixture,
     validate_p0_fixture,
 };
+use presto_core::protocol::{
+    MAX_SESSION_PARTICIPANT_NAME_BYTES, MAX_SESSION_PARTICIPANT_NAME_CHARS,
+};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -36,8 +39,6 @@ pub(crate) const MAX_LEGACY_INGEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_CONCURRENT_LEGACY_INGESTS: usize = 4;
 pub(crate) const MAX_JOIN_REDEMPTION_BODY_BYTES: usize = 256;
 pub(crate) const MAX_CONCURRENT_JOIN_REDEMPTIONS: usize = 8;
-const MAX_JOIN_NAME_CHARS: usize = 24;
-const MAX_JOIN_NAME_BYTES: usize = 96;
 
 fn code(n: usize) -> String {
     (0..n)
@@ -182,11 +183,11 @@ fn validate_session_code(session_id: &str) -> bool {
     session_id.len() == 6 && session_id.bytes().all(|byte| CODE_CHARS.contains(&byte))
 }
 
-fn validate_join_name(name: &str) -> Option<String> {
+pub(crate) fn validate_join_name(name: &str) -> Option<String> {
     let trimmed = name.trim();
     if trimmed.is_empty()
-        || trimmed.chars().count() > MAX_JOIN_NAME_CHARS
-        || trimmed.len() > MAX_JOIN_NAME_BYTES
+        || trimmed.chars().count() > MAX_SESSION_PARTICIPANT_NAME_CHARS
+        || trimmed.len() > MAX_SESSION_PARTICIPANT_NAME_BYTES
         || trimmed.chars().any(|ch| ch.is_control())
     {
         return None;
@@ -205,6 +206,14 @@ pub(crate) async fn authorize_join_redemption(
     let Some(session_id) = join_path_session_id(request.uri().path()) else {
         return not_found("invalid join code");
     };
+    if !state.join_redemption_rate.allow() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::CACHE_CONTROL, "no-store")],
+            "join rate limited",
+        )
+            .into_response();
+    }
     let scope = SessionScope::for_session(session_id);
     if state
         .auth
@@ -224,14 +233,6 @@ pub(crate) async fn authorize_join_redemption(
             )
                 .into_response();
         }
-    }
-    if !state.join_redemption_rate.allow() {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            [(header::CACHE_CONTROL, "no-store")],
-            "join rate limited",
-        )
-            .into_response();
     }
     next.run(request).await
 }

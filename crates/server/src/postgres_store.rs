@@ -15,8 +15,9 @@ use sqlx::Row;
 use sqlx::postgres::PgPool;
 
 use presto_core::protocol::{
-    LeaderboardEntry, MAX_SESSION_SNAPSHOT_PARTICIPANTS, ParticipantPublic, PublicReveal, Question,
-    QuestionPublic, SessionPhasePublic, SessionSnapshot,
+    LeaderboardEntry, MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES, MAX_SESSION_SNAPSHOT_LEADERBOARD,
+    MAX_SESSION_SNAPSHOT_PARTICIPANTS, ParticipantPublic, PublicReveal, Question, QuestionPublic,
+    SessionPhasePublic, SessionSnapshot,
 };
 
 use crate::session::{
@@ -337,8 +338,16 @@ impl SessionStore for PostgresSessionStore {
                 Some(PublicReveal {
                     question_id,
                     correct_choices: result.correct_choices,
-                    leaderboard: result.leaderboard,
-                    heatmap: result.heatmap,
+                    leaderboard: result
+                        .leaderboard
+                        .into_iter()
+                        .take(MAX_SESSION_SNAPSHOT_LEADERBOARD)
+                        .collect(),
+                    heatmap: result
+                        .heatmap
+                        .into_iter()
+                        .take(MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES)
+                        .collect(),
                 })
             }
             _ => None,
@@ -349,8 +358,8 @@ impl SessionStore for PostgresSessionStore {
             .into_iter()
             .take(MAX_SESSION_SNAPSHOT_PARTICIPANTS)
             .collect();
-        Ok(Some(SessionSnapshot {
-            phase: match phase.as_str() {
+        SessionSnapshot::new(
+            match phase.as_str() {
                 "lobby" => SessionPhasePublic::Lobby,
                 "asking" => SessionPhasePublic::Asking,
                 "revealed" => SessionPhasePublic::Revealed,
@@ -361,7 +370,9 @@ impl SessionStore for PostgresSessionStore {
             question,
             answered,
             reveal,
-        }))
+        )
+        .map(Some)
+        .map_err(StoreError::Backend)
     }
 
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {

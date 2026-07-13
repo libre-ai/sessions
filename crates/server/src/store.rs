@@ -186,7 +186,14 @@ impl SessionStore for InMemorySessionStore {
         participant_id: &str,
     ) -> StoreResult<Option<SessionSnapshot>> {
         let session = self.sessions.lock().get(session_id).cloned();
-        Ok(session.map(|session| session.lock().guest_snapshot(participant_id)))
+        match session {
+            Some(session) => session
+                .lock()
+                .guest_snapshot(participant_id)
+                .map(Some)
+                .map_err(StoreError::Backend),
+            None => Ok(None),
+        }
     }
 
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {

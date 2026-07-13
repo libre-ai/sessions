@@ -27,6 +27,7 @@ use presto_core::protocol::{ClientMessage, ServerMessage};
 
 use crate::AppState;
 use crate::auth::Claims;
+use crate::http::validate_join_name;
 
 /// Query string for `GET /ws/{session_id}`: the Biscuit join token (carries the
 /// participant id + capability) plus an optional display name.
@@ -50,7 +51,13 @@ pub async fn ws_handler(
         Ok(claims) => claims,
         Err(_) => return (StatusCode::UNAUTHORIZED, "invalid or expired token").into_response(),
     };
-    let name = params.name.unwrap_or_else(|| claims.participant_id.clone());
+    let name = match params.name {
+        Some(name) => match validate_join_name(&name) {
+            Some(name) => name,
+            None => return (StatusCode::BAD_REQUEST, "invalid participant name").into_response(),
+        },
+        None => claims.participant_id.clone(),
+    };
     ws.on_upgrade(move |socket| handle_socket(socket, session_id, claims, name, state))
 }
 

@@ -190,12 +190,14 @@ pub fn app(state: AppState) -> Router {
             "/join/{session_id}/participants",
             post(http::redeem_join_link)
                 .layer::<_, Infallible>(DefaultBodyLimit::max(http::MAX_JOIN_REDEMPTION_BODY_BYTES))
-                .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
-                    http::MAX_CONCURRENT_JOIN_REDEMPTIONS,
-                ))
+                // Authorization remains outside body extraction, while the
+                // outer shared permit also bounds invalid-token verification.
                 .layer::<_, Infallible>(middleware::from_fn_with_state(
                     state.clone(),
                     http::authorize_join_redemption,
+                ))
+                .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
+                    http::MAX_CONCURRENT_JOIN_REDEMPTIONS,
                 )),
         )
         .route(

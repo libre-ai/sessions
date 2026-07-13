@@ -286,7 +286,7 @@ impl Auth {
             requested_workspace({workspace_id});
             requested_session({session_id});
             operation("participant_join");
-            allow if capability("participant_join"), role("guest_link"), actor("guest-link", "guest_link"), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
+            allow if operation("participant_join"), capability("participant_join"), role("guest_link"), actor("guest-link", "guest_link"), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
             deny if true;
             "#,
             now = now,

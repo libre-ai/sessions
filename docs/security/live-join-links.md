@@ -14,13 +14,20 @@ la forme legacy `join_url=/?s=CODE` intacte pour compat.
 Le token de join-link est une capacité courte durée (actuellement 30 min) sans
 PII : facts obligatoires `organization/workspace/session`, `actor("guest-link",
 "guest_link")`, `role("guest_link")`, `capability("participant_join")`, puis
-`check if time < exp`. Le connect WS legacy continue d’accepter ses tokens
-historiques via `?token=` dans la query.
+`check if time < exp`. L’authorizer exige également l’opération exacte
+`participant_join`, puis termine par `deny if true`. Le connect WS legacy
+continue d’accepter ses tokens historiques via `?token=` dans la query.
 
 `POST /join/{session_id}/participants` exige `Authorization: Bearer <token>`
 avant le parsing du body. Le body JSON ne contient qu’un `name` borné :
-`trim()` 1..24 caractères, octets bornés, contrôles refusés. La route répond en
-`no-store`, avec un bucket de rate-limit et une limite de concurrence dédiés.
+`trim()` 1..24 caractères, octets bornés, contrôles refusés. La même validation
+s’applique au nom encore transporté par la query du WS legacy. La route répond
+en `no-store`; un bucket dédié borne les tentatives avant l’exécution Biscuit et
+une limite de concurrence extérieure borne auth, body et mutation ensemble.
+
+Les snapshots personnalisés appliquent leurs invariants à la construction,
+désérialisation et sérialisation. Le roster et le leaderboard sont plafonnés à
+32 entrées, la heatmap à 64 ; une phase `asking` ne peut sérialiser aucun reveal.
 
 ## Migration
 
