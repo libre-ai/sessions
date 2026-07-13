@@ -1,5 +1,9 @@
 //! Postgres-backed [`SessionStore`]: authoritative session state shared across
 //! instances, so a `reveal` on instance A sees answers submitted on instance B.
+//! Answer submissions lock the session row, validate the exact open question,
+//! and reject malformed choices before any insert; opening a new question clears
+//! the previous round's answers atomically; reveal is transactionally idempotent,
+//! so concurrent calls never double-score.
 //!
 //! Runtime (non-macro) queries, so the crate compiles without a database. The
 //! schema is created on connect.
@@ -87,22 +91,6 @@ impl PostgresSessionStore {
             .map_err(backend)?;
         Ok(Self { pool })
     }
-
-    async fn current_question(&self, session_id: &str) -> StoreResult<Option<Question>> {
-        let row = sqlx::query("SELECT current_question FROM presto_sessions WHERE id = $1")
-            .bind(session_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(backend)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let raw: Option<String> = row.get("current_question");
-        match raw {
-            Some(json) => Ok(Some(serde_json::from_str(&json).map_err(backend)?)),
-            None => Ok(None),
-        }
-    }
 }
 
 #[async_trait]
@@ -147,17 +135,26 @@ impl SessionStore for PostgresSessionStore {
         opened_at_ms: u64,
     ) -> StoreResult<()> {
         let json = serde_json::to_string(question).map_err(backend)?;
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let updated = sqlx::query(
             "UPDATE presto_sessions SET current_question = $1, phase = 'asking', opened_at = $2 \
-             WHERE id = $3",
+             WHERE id = $3 RETURNING id",
         )
         .bind(json)
         // Epoch millis fit i64 for ~292M years; the cast cannot overflow.
         .bind(opened_at_ms as i64)
         .bind(session_id)
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(backend)?;
+        if updated.is_some() {
+            sqlx::query("DELETE FROM presto_answers WHERE session_id = $1")
+                .bind(session_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
+        tx.commit().await.map_err(backend)?;
         Ok(())
     }
 
@@ -165,33 +162,40 @@ impl SessionStore for PostgresSessionStore {
         &self,
         session_id: &str,
         participant_id: &str,
+        question_id: &str,
         choices: Vec<u8>,
         now_ms: u64,
     ) -> StoreResult<()> {
-        let row = sqlx::query("SELECT phase, opened_at FROM presto_sessions WHERE id = $1")
-            .bind(session_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(backend)?;
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let row = sqlx::query(
+            "SELECT phase, opened_at, current_question FROM presto_sessions WHERE id = $1 FOR UPDATE",
+        )
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
         let Some(row) = row else {
-            return Err(StoreError::Session(SessionError::NotAsking));
+            return Err(StoreError::Session(SessionError::AnswerClosed));
         };
         let phase: String = row.get("phase");
-        let opened_at: Option<i64> = row.get("opened_at");
         if phase != "asking" {
-            return Err(StoreError::Session(SessionError::NotAsking));
+            return Err(StoreError::Session(SessionError::AnswerClosed));
         }
-        let (Some(opened_at), Some(question)) =
-            (opened_at, self.current_question(session_id).await?)
-        else {
-            return Err(StoreError::Session(SessionError::NotAsking));
+        let opened_at: Option<i64> = row.get("opened_at");
+        let raw_question: Option<String> = row.get("current_question");
+        let (Some(opened_at), Some(raw_question)) = (opened_at, raw_question) else {
+            return Err(StoreError::Session(SessionError::AnswerClosed));
         };
+        let question: Question = serde_json::from_str(&raw_question).map_err(backend)?;
 
         // Server-side close deadline: timer plus a network-latency grace.
         let opened = opened_at as u64;
         let timer_ms = u64::from(question.timer_sec) * 1000;
         if now_ms > opened + timer_ms + ANSWER_GRACE_MS {
-            return Err(StoreError::Session(SessionError::Closed));
+            return Err(StoreError::Session(SessionError::AnswerClosed));
+        }
+        if question.id != question_id {
+            return Err(StoreError::Session(SessionError::WrongQuestion));
         }
 
         let exists: i64 = sqlx::query_scalar(
@@ -199,46 +203,69 @@ impl SessionStore for PostgresSessionStore {
         )
         .bind(session_id)
         .bind(participant_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;
         if exists == 0 {
-            return Err(StoreError::Session(SessionError::UnknownParticipant));
+            return Err(StoreError::Session(SessionError::InvalidAnswer));
         }
+
+        let already_answered: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM presto_answers WHERE session_id = $1 AND question_id = $2 AND participant_id = $3",
+        )
+        .bind(session_id)
+        .bind(question_id)
+        .bind(participant_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if already_answered > 0 {
+            return Err(StoreError::Session(SessionError::AlreadyAnswered));
+        }
+
+        crate::session::Session::validate_answer_choices(&question, &choices)
+            .map_err(StoreError::from)?;
 
         // Server times the answer; the client value (if any) is ignored.
         let elapsed_ms = u32::try_from(now_ms.saturating_sub(opened)).unwrap_or(u32::MAX);
-        let inserted = sqlx::query(
+        sqlx::query(
             "INSERT INTO presto_answers (session_id, question_id, participant_id, choices, elapsed_ms) \
-             VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (session_id, question_id, participant_id) DO NOTHING",
+             VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(session_id)
-        .bind(&question.id)
+        .bind(question_id)
         .bind(participant_id)
         .bind(encode_choices(&choices))
         // BIGINT column: i64::from is lossless for the full u32 range (no wrap).
         .bind(i64::from(elapsed_ms))
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(backend)?;
-        if inserted.rows_affected() == 0 {
-            return Err(StoreError::Session(SessionError::AlreadyAnswered));
-        }
+        tx.commit().await.map_err(backend)?;
         Ok(())
     }
 
     async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>> {
-        let phase: Option<String> =
-            sqlx::query_scalar("SELECT phase FROM presto_sessions WHERE id = $1")
-                .bind(session_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?;
-        if phase.as_deref() != Some("asking") {
+        let row = sqlx::query("SELECT phase, current_question FROM presto_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let phase: String = row.get("phase");
+        if phase != "asking" {
             return Ok(None);
         }
-        Ok(self.current_question(session_id).await?.map(|q| q.public()))
+        let raw: Option<String> = row.get("current_question");
+        Ok(match raw {
+            Some(json) => {
+                let question: Question = serde_json::from_str(&json).map_err(backend)?;
+                Some(question.public())
+            }
+            None => None,
+        })
     }
 
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {
@@ -275,56 +302,79 @@ impl SessionStore for PostgresSessionStore {
     }
 
     async fn reveal(&self, session_id: &str) -> StoreResult<RevealResult> {
-        let Some(question) = self.current_question(session_id).await? else {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let row = sqlx::query(
+            "SELECT phase, current_question FROM presto_sessions WHERE id = $1 FOR UPDATE",
+        )
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let Some(row) = row else {
             return Err(StoreError::Session(SessionError::NoQuestion));
         };
+        let phase: String = row.get("phase");
+        let raw_question: Option<String> = row.get("current_question");
+        let Some(raw_question) = raw_question else {
+            return Err(StoreError::Session(SessionError::NoQuestion));
+        };
+        let question: Question = serde_json::from_str(&raw_question).map_err(backend)?;
         let correct = question.correct_choices.clone();
 
-        let answers =
-            sqlx::query("SELECT participant_id, choices, elapsed_ms FROM presto_answers WHERE session_id = $1 AND question_id = $2")
-                .bind(session_id)
-                .bind(&question.id)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(backend)?;
+        let answers = sqlx::query(
+            "SELECT participant_id, choices, elapsed_ms FROM presto_answers WHERE session_id = $1 AND question_id = $2",
+        )
+        .bind(session_id)
+        .bind(&question.id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
 
-        let total = answers.len();
-        let mut wrong = 0usize;
-        for a in &answers {
-            let pid: String = a.get("participant_id");
-            let submitted = decode_choices(&a.get::<String, _>("choices"));
-            let elapsed: i64 = a.get("elapsed_ms");
-            let ok = is_correct(&submitted, &correct);
-            if ok {
-                let elapsed_ms = u32::try_from(elapsed).unwrap_or(u32::MAX);
-                let points = i64::from(score(true, elapsed_ms));
-                sqlx::query("UPDATE presto_participants SET score = score + $1 WHERE session_id = $2 AND participant_id = $3")
+        if phase == "asking" {
+            for a in &answers {
+                let pid: String = a.get("participant_id");
+                let submitted = decode_choices(&a.get::<String, _>("choices"));
+                let elapsed: i64 = a.get("elapsed_ms");
+                if is_correct(&submitted, &correct) {
+                    let elapsed_ms = u32::try_from(elapsed).unwrap_or(u32::MAX);
+                    let points = i64::from(score(true, elapsed_ms));
+                    sqlx::query(
+                        "UPDATE presto_participants SET score = score + $1 WHERE session_id = $2 AND participant_id = $3",
+                    )
                     .bind(points)
                     .bind(session_id)
                     .bind(&pid)
-                    .execute(&self.pool)
+                    .execute(&mut *tx)
                     .await
                     .map_err(backend)?;
-            } else {
-                wrong += 1;
+                }
+                let inc = if is_correct(&submitted, &correct) {
+                    1_i64
+                } else {
+                    0_i64
+                };
+                for section in &question.source_section_ids {
+                    sqlx::query(
+                        "INSERT INTO presto_mastery (session_id, participant_id, section_id, correct, total) \
+                         VALUES ($1, $2, $3, $4, 1) \
+                         ON CONFLICT (session_id, participant_id, section_id) \
+                         DO UPDATE SET correct = presto_mastery.correct + $4, total = presto_mastery.total + 1",
+                    )
+                    .bind(session_id)
+                    .bind(&pid)
+                    .bind(section)
+                    .bind(inc)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
             }
-            // Accumulate per-section mastery for spaced-repetition follow-up.
-            let inc = i64::from(ok);
-            for section in &question.source_section_ids {
-                sqlx::query(
-                    "INSERT INTO presto_mastery (session_id, participant_id, section_id, correct, total) \
-                     VALUES ($1, $2, $3, $4, 1) \
-                     ON CONFLICT (session_id, participant_id, section_id) \
-                     DO UPDATE SET correct = presto_mastery.correct + $4, total = presto_mastery.total + 1",
-                )
+
+            sqlx::query("UPDATE presto_sessions SET phase = 'revealed' WHERE id = $1")
                 .bind(session_id)
-                .bind(&pid)
-                .bind(section)
-                .bind(inc)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(backend)?;
-            }
         }
 
         let rows = sqlx::query(
@@ -332,7 +382,7 @@ impl SessionStore for PostgresSessionStore {
              ORDER BY score DESC, participant_id ASC",
         )
         .bind(session_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(backend)?;
         let leaderboard: Vec<LeaderboardEntry> = rows
@@ -344,6 +394,14 @@ impl SessionStore for PostgresSessionStore {
             })
             .collect();
 
+        let total = answers.len();
+        let wrong = answers
+            .iter()
+            .filter(|a| {
+                let submitted = decode_choices(&a.get::<String, _>("choices"));
+                !is_correct(&submitted, &correct)
+            })
+            .count();
         let confusion = if total > 0 {
             wrong as f32 / total as f32
         } else {
@@ -355,11 +413,7 @@ impl SessionStore for PostgresSessionStore {
             .map(|s| (s.clone(), confusion))
             .collect();
 
-        sqlx::query("UPDATE presto_sessions SET phase = 'revealed' WHERE id = $1")
-            .bind(session_id)
-            .execute(&self.pool)
-            .await
-            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
 
         Ok(RevealResult {
             correct_choices: correct,

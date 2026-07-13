@@ -8,7 +8,10 @@
 //!   cargo test --test postgres_store -- --ignored --nocapture
 //! ```
 
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokio::sync::{Barrier, Mutex as AsyncMutex};
 
 use presto_core::protocol::Question;
 use presto_server::postgres_store::PostgresSessionStore;
@@ -28,6 +31,15 @@ fn question() -> Question {
     }
 }
 
+static DB_TEST_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+
+async fn db_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    DB_TEST_LOCK
+        .get_or_init(|| AsyncMutex::new(()))
+        .lock()
+        .await
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL; see module docs"]
 async fn postgres_enforces_deadline_and_snapshots_open_question() {
@@ -35,6 +47,7 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
         eprintln!("skipping: set DATABASE_URL to run");
         return;
     };
+    let _guard = db_test_lock().await;
     let store = PostgresSessionStore::connect(&url).await.unwrap();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -57,22 +70,136 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
     assert_eq!(snap.unwrap().id, "q1");
 
     // Past the timer + grace: the server closes the question to answers.
-    let closed = store.submit_answer(&s, "p2", vec![1], 31_501).await;
+    let closed = store.submit_answer(&s, "p2", "q1", vec![1], 31_501).await;
     assert!(matches!(
         closed,
-        Err(StoreError::Session(SessionError::Closed))
+        Err(StoreError::Session(SessionError::AnswerClosed))
     ));
 
     // Within the window: accepted (server-timed).
-    store.submit_answer(&s, "p1", vec![1], 1_000).await.unwrap();
+    store
+        .submit_answer(&s, "p1", "q1", vec![1], 1_000)
+        .await
+        .unwrap();
 
-    // After reveal, the snapshot is empty again.
-    store.reveal(&s).await.unwrap();
+    let first = store.reveal(&s).await.unwrap();
+    assert_eq!(store.reveal(&s).await.unwrap(), first);
     assert!(store.snapshot(&s).await.unwrap().is_none());
 
-    // Reveal accumulated per-section mastery: p1 answered doc#p0 correctly (1/1).
+    // Reveal accumulated per-section mastery exactly once: p1 answered doc#p0 correctly (1/1).
     let mastery = store.mastery(&s, "p1").await.unwrap();
     let doc = mastery.iter().find(|m| m.section_id == "doc#p0").unwrap();
     assert_eq!((doc.correct, doc.total), (1, 1));
     eprintln!("postgres deadline + snapshot + mastery behave correctly ✅");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires DATABASE_URL; see module docs"]
+async fn postgres_reuses_question_ids_without_replaying_old_answers() {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("skipping: set DATABASE_URL to run");
+        return;
+    };
+    let _guard = db_test_lock().await;
+    let store = PostgresSessionStore::connect(&url).await.unwrap();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let s = format!("pgt-reuse-{nanos}");
+
+    store.ensure(&s, "host").await.unwrap();
+    store.join(&s, "p1", "Alice").await.unwrap();
+    store.join(&s, "p2", "Bob").await.unwrap();
+
+    store.push_question(&s, &question(), 0).await.unwrap();
+    store
+        .submit_answer(&s, "p1", "q1", vec![1], 30_000)
+        .await
+        .unwrap();
+    store
+        .submit_answer(&s, "p2", "q1", vec![0], 30_000)
+        .await
+        .unwrap();
+    let first = store.reveal(&s).await.unwrap();
+    assert_eq!(first.leaderboard[0].participant_id, "p1");
+    assert_eq!(first.leaderboard[0].score, 500);
+    assert_eq!(first.leaderboard[1].score, 0);
+
+    // Re-open the same deterministic question id: the previous answers must not
+    // survive, and the new round must start from a clean slate.
+    store.push_question(&s, &question(), 0).await.unwrap();
+    assert!(store.snapshot(&s).await.unwrap().is_some());
+    store
+        .submit_answer(&s, "p1", "q1", vec![0], 30_000)
+        .await
+        .unwrap();
+    store
+        .submit_answer(&s, "p2", "q1", vec![1], 30_000)
+        .await
+        .unwrap();
+    let second = store.reveal(&s).await.unwrap();
+    assert_eq!(second.leaderboard[0].score, 500);
+    assert_eq!(second.leaderboard[1].score, 500);
+    assert_eq!(store.reveal(&s).await.unwrap(), second);
+
+    let p1_mastery = store.mastery(&s, "p1").await.unwrap();
+    let doc = p1_mastery
+        .iter()
+        .find(|m| m.section_id == "doc#p0")
+        .unwrap();
+    assert_eq!((doc.correct, doc.total), (1, 2));
+    eprintln!("postgres question reuse resets answers without replaying old score ✅");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires DATABASE_URL; see module docs"]
+async fn postgres_reveal_is_single_score_under_concurrency() {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("skipping: set DATABASE_URL to run");
+        return;
+    };
+    let _guard = db_test_lock().await;
+    let store = Arc::new(PostgresSessionStore::connect(&url).await.unwrap());
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let s = format!("pgt-reveal-{nanos}");
+
+    store.ensure(&s, "host").await.unwrap();
+    store.join(&s, "p1", "Alice").await.unwrap();
+    store.join(&s, "p2", "Bob").await.unwrap();
+    store.push_question(&s, &question(), 0).await.unwrap();
+    store
+        .submit_answer(&s, "p1", "q1", vec![1], 30_000)
+        .await
+        .unwrap();
+    store
+        .submit_answer(&s, "p2", "q1", vec![0], 30_000)
+        .await
+        .unwrap();
+
+    let start = Arc::new(Barrier::new(9));
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let store = store.clone();
+        let start = start.clone();
+        let session_id = s.clone();
+        handles.push(tokio::spawn(async move {
+            start.wait().await;
+            store.reveal(&session_id).await.unwrap()
+        }));
+    }
+    start.wait().await;
+
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await.unwrap());
+    }
+    assert!(results.iter().all(|r| r == &results[0]));
+    assert_eq!(results[0].leaderboard[0].score, 500);
+    assert_eq!(results[0].leaderboard[1].score, 0);
+    assert_eq!(store.reveal(&s).await.unwrap(), results[0]);
+    eprintln!("postgres concurrent reveal stays single-score ✅");
 }

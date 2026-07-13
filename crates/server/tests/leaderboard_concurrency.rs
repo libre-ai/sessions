@@ -42,7 +42,7 @@ async fn run_round() -> Vec<(String, u32)> {
         };
         handles.push(tokio::spawn(async move {
             store
-                .submit_answer(session, &pid, choices, 100)
+                .submit_answer(session, &pid, "q1", choices, 100)
                 .await
                 .unwrap();
         }));
@@ -95,4 +95,39 @@ async fn leaderboard_deterministic_under_concurrent_submissions() {
         PARTICIPANTS / 2,
         "exactly the even ids should score"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reveal_is_idempotent_under_concurrent_calls() {
+    let store = Arc::new(InMemorySessionStore::new());
+    let session = "s-reveal";
+    store.ensure(session, "host").await.unwrap();
+    store.join(session, "p1", "Alice").await.unwrap();
+    store.join(session, "p2", "Bob").await.unwrap();
+
+    let question = sample_quiz().into_iter().next().unwrap();
+    let correct = question.correct_choices.clone();
+    let wrong = vec![(0u8..4).find(|c| !correct.contains(c)).unwrap()];
+    store.push_question(session, &question, 0).await.unwrap();
+    store
+        .submit_answer(session, "p1", "q1", correct.clone(), 100)
+        .await
+        .unwrap();
+    store
+        .submit_answer(session, "p2", "q1", wrong.clone(), 100)
+        .await
+        .unwrap();
+
+    let baseline = store.reveal(session).await.unwrap();
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let store = store.clone();
+        handles.push(tokio::spawn(
+            async move { store.reveal(session).await.unwrap() },
+        ));
+    }
+    for handle in handles {
+        assert_eq!(handle.await.unwrap(), baseline);
+    }
+    assert_eq!(store.reveal(session).await.unwrap(), baseline);
 }

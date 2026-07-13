@@ -3,9 +3,11 @@
 //! RateLimiter) wrap this in later slices; keeping the rules pure makes them
 //! exhaustively unit-testable.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use presto_core::protocol::{LeaderboardEntry, ParticipantId, Question, QuestionPublic};
+use presto_core::protocol::{
+    LeaderboardEntry, ParticipantId, Question, QuestionKind, QuestionPublic,
+};
 
 /// Grace added to a question's timer before the server closes it to answers, to
 /// allow for network latency on an answer sent just before the deadline.
@@ -36,12 +38,25 @@ pub struct Answer {
 /// the WS/Biscuit layer, not here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionError {
-    NotAsking,
+    WrongQuestion,
+    InvalidAnswer,
     AlreadyAnswered,
-    UnknownParticipant,
+    /// The question's timer (plus grace) has elapsed, or the session is not
+    /// currently accepting answers.
+    AnswerClosed,
     NoQuestion,
-    /// The question's timer (plus grace) has elapsed; answers are closed.
-    Closed,
+}
+
+impl SessionError {
+    pub fn client_reason(self) -> &'static str {
+        match self {
+            SessionError::WrongQuestion => "wrong_question",
+            SessionError::InvalidAnswer => "invalid_answer",
+            SessionError::AlreadyAnswered => "already_answered",
+            SessionError::AnswerClosed => "answer_closed",
+            SessionError::NoQuestion => "answer_closed",
+        }
+    }
 }
 
 /// The outcome of a reveal: the correct choice(s), the sorted leaderboard, and a
@@ -76,6 +91,9 @@ pub struct Session {
     pub answers: BTreeMap<ParticipantId, Answer>,
     /// Accumulated per-participant, per-section (correct, total) across questions.
     pub mastery: BTreeMap<ParticipantId, BTreeMap<String, (u32, u32)>>,
+    /// Cached reveal result for the current question; repeated reveals return
+    /// the same immutable result without rescoring.
+    pub revealed: Option<RevealResult>,
 }
 
 impl Session {
@@ -89,6 +107,7 @@ impl Session {
             participants: BTreeMap::new(),
             answers: BTreeMap::new(),
             mastery: BTreeMap::new(),
+            revealed: None,
         }
     }
 
@@ -107,6 +126,7 @@ impl Session {
         self.current = Some(question);
         self.opened_at_ms = Some(opened_at_ms);
         self.answers.clear();
+        self.revealed = None;
         self.phase = Phase::Asking;
     }
 
@@ -120,32 +140,59 @@ impl Session {
         }
     }
 
+    /// Validate the submitted choices against the question shape and bounds.
+    pub fn validate_answer_choices(
+        question: &Question,
+        choices: &[u8],
+    ) -> Result<(), SessionError> {
+        match question.kind {
+            QuestionKind::Single if choices.len() != 1 => return Err(SessionError::InvalidAnswer),
+            QuestionKind::Multi if choices.is_empty() => return Err(SessionError::InvalidAnswer),
+            _ => {}
+        }
+
+        let mut seen = BTreeSet::new();
+        for &choice in choices {
+            if usize::from(choice) >= question.choices.len() {
+                return Err(SessionError::InvalidAnswer);
+            }
+            if !seen.insert(choice) {
+                return Err(SessionError::InvalidAnswer);
+            }
+        }
+        Ok(())
+    }
+
     /// Record a participant's answer (once, while `Asking`, before the deadline).
     /// `now_ms` is the server clock; elapsed time is computed here, never trusted
     /// from the client.
     pub fn submit_answer(
         &mut self,
+        question_id: &str,
         participant_id: &str,
         choices: Vec<u8>,
         now_ms: u64,
     ) -> Result<(), SessionError> {
         if self.phase != Phase::Asking {
-            return Err(SessionError::NotAsking);
+            return Err(SessionError::AnswerClosed);
+        }
+        let question = self.current.as_ref().ok_or(SessionError::NoQuestion)?;
+        let opened = self.opened_at_ms.ok_or(SessionError::AnswerClosed)?;
+        let timer_ms = u64::from(question.timer_sec) * 1000;
+        if now_ms > opened + timer_ms + ANSWER_GRACE_MS {
+            return Err(SessionError::AnswerClosed);
+        }
+        if question.id != question_id {
+            return Err(SessionError::WrongQuestion);
         }
         if !self.participants.contains_key(participant_id) {
-            return Err(SessionError::UnknownParticipant);
+            return Err(SessionError::InvalidAnswer);
         }
         if self.answers.contains_key(participant_id) {
             return Err(SessionError::AlreadyAnswered);
         }
-        let opened = self.opened_at_ms.ok_or(SessionError::NotAsking)?;
-        let timer_ms = self
-            .current
-            .as_ref()
-            .map_or(0, |q| u64::from(q.timer_sec) * 1000);
-        if now_ms > opened + timer_ms + ANSWER_GRACE_MS {
-            return Err(SessionError::Closed);
-        }
+        Self::validate_answer_choices(question, &choices)?;
+
         let elapsed_ms = u32::try_from(now_ms.saturating_sub(opened)).unwrap_or(u32::MAX);
         self.answers.insert(
             participant_id.to_string(),
@@ -157,8 +204,13 @@ impl Session {
         Ok(())
     }
 
-    /// Score the round, build the leaderboard + heatmap, enter `Revealed`.
+    /// Score the round, build the leaderboard + heatmap, and cache the result.
+    /// Repeated calls return the same immutable result without rescoring.
     pub fn reveal(&mut self) -> Result<RevealResult, SessionError> {
+        if let Some(result) = self.revealed.clone() {
+            return Ok(result);
+        }
+
         // Extract what we need from the question before mutating participants,
         // so the immutable borrow of `self.current` is released first.
         let (correct, sections) = {
@@ -220,11 +272,13 @@ impl Session {
         let heatmap = sections.into_iter().map(|s| (s, confusion)).collect();
 
         self.phase = Phase::Revealed;
-        Ok(RevealResult {
+        let result = RevealResult {
             correct_choices: correct,
             leaderboard,
             heatmap,
-        })
+        };
+        self.revealed = Some(result.clone());
+        Ok(result)
     }
 
     /// A participant's accumulated per-section mastery (for spaced repetition).
@@ -304,12 +358,36 @@ mod tests {
     }
 
     #[test]
-    fn cannot_answer_before_a_question_is_pushed() {
+    fn answer_submission_requires_the_open_question_and_open_window() {
         let mut s = Session::new("s1", "host");
         s.join("p1", "Alice");
+
+        // No question yet.
         assert_eq!(
-            s.submit_answer("p1", vec![1], 100),
-            Err(SessionError::NotAsking)
+            s.submit_answer("q1", "p1", vec![1], 100),
+            Err(SessionError::AnswerClosed)
+        );
+
+        s.push_question(question(), 0);
+        assert_eq!(
+            s.submit_answer("other", "p1", vec![1], 100),
+            Err(SessionError::WrongQuestion)
+        );
+        assert_eq!(
+            s.submit_answer("q1", "ghost", vec![1], 100),
+            Err(SessionError::InvalidAnswer)
+        );
+        assert_eq!(
+            s.submit_answer("q1", "p1", vec![3], 100),
+            Err(SessionError::InvalidAnswer)
+        );
+        assert_eq!(
+            s.submit_answer("q1", "p1", vec![1, 1], 100),
+            Err(SessionError::InvalidAnswer)
+        );
+        assert_eq!(
+            s.submit_answer("q1", "p1", vec![1], 31_501),
+            Err(SessionError::AnswerClosed)
         );
     }
 
@@ -318,14 +396,10 @@ mod tests {
         let mut s = Session::new("s1", "host");
         s.join("p1", "Alice");
         s.push_question(question(), 0);
-        assert!(s.submit_answer("p1", vec![1], 100).is_ok());
+        assert!(s.submit_answer("q1", "p1", vec![1], 100).is_ok());
         assert_eq!(
-            s.submit_answer("p1", vec![0], 200),
+            s.submit_answer("q1", "p1", vec![0], 200),
             Err(SessionError::AlreadyAnswered)
-        );
-        assert_eq!(
-            s.submit_answer("ghost", vec![1], 100),
-            Err(SessionError::UnknownParticipant)
         );
     }
 
@@ -342,12 +416,12 @@ mod tests {
         s.join("p2", "Bob");
         s.push_question(question(), 0); // timer_sec = 30 → close at 30_000 + grace
         // Within the timer + grace window: accepted, server-timed.
-        assert!(s.submit_answer("p1", vec![1], 31_000).is_ok());
+        assert!(s.submit_answer("q1", "p1", vec![1], 31_000).is_ok());
         assert_eq!(s.answers["p1"].elapsed_ms, 31_000);
         // Past timer + grace (30_000 + 1_500): rejected.
         assert_eq!(
-            s.submit_answer("p2", vec![1], 31_501),
-            Err(SessionError::Closed)
+            s.submit_answer("q1", "p2", vec![1], 31_501),
+            Err(SessionError::AnswerClosed)
         );
     }
 
@@ -369,9 +443,9 @@ mod tests {
         s.join("p3", "Carol");
         s.push_question(question(), 0);
 
-        s.submit_answer("p1", vec![1], 1_000).unwrap(); // correct, fast
-        s.submit_answer("p2", vec![1], 20_000).unwrap(); // correct, slow
-        s.submit_answer("p3", vec![0], 2_000).unwrap(); // wrong
+        s.submit_answer("q1", "p1", vec![1], 1_000).unwrap(); // correct, fast
+        s.submit_answer("q1", "p2", vec![1], 20_000).unwrap(); // correct, slow
+        s.submit_answer("q1", "p3", vec![0], 2_000).unwrap(); // wrong
 
         let result = s.reveal().unwrap();
         assert_eq!(s.phase, Phase::Revealed);
@@ -388,10 +462,14 @@ mod tests {
         let confusion = result.heatmap["doc1#s2"];
         assert!((confusion - 1.0 / 3.0).abs() < 1e-6);
 
+        // Repeated reveal returns the same immutable result.
+        assert_eq!(s.reveal().unwrap(), result);
+
         // A new question resets answers and re-enters Asking.
         s.push_question(question(), 0);
         assert_eq!(s.phase, Phase::Asking);
         assert!(s.answers.is_empty());
+        assert!(s.revealed.is_none());
     }
 
     #[test]
@@ -419,8 +497,20 @@ mod tests {
             timer_sec: 30,
         };
         s.push_question(q, 0);
-        s.submit_answer("p1", vec![2, 0], 1_000).unwrap(); // correct (set match)
-        s.submit_answer("p2", vec![0], 1_000).unwrap(); // wrong (incomplete)
+        assert_eq!(
+            s.submit_answer("m", "p1", vec![], 1_000),
+            Err(SessionError::InvalidAnswer)
+        );
+        assert_eq!(
+            s.submit_answer("m", "p1", vec![2, 2], 1_000),
+            Err(SessionError::InvalidAnswer)
+        );
+        assert_eq!(
+            s.submit_answer("m", "p1", vec![4], 1_000),
+            Err(SessionError::InvalidAnswer)
+        );
+        s.submit_answer("m", "p1", vec![2, 0], 1_000).unwrap(); // correct (set match)
+        s.submit_answer("m", "p2", vec![0], 1_000).unwrap(); // wrong (incomplete)
         let r = s.reveal().unwrap();
         assert_eq!(r.correct_choices, vec![0, 2]);
         let p1 = r
@@ -445,14 +535,14 @@ mod tests {
         let mut q = question();
         q.source_section_ids = vec!["A".into()];
         s.push_question(q, 0);
-        s.submit_answer("p1", vec![1], 100).unwrap(); // correct on A
+        s.submit_answer("q1", "p1", vec![1], 100).unwrap(); // correct on A
         s.reveal().unwrap();
 
         let mut q = question();
         q.id = "q2".into();
         q.source_section_ids = vec!["B".into()];
         s.push_question(q, 0);
-        s.submit_answer("p1", vec![0], 100).unwrap(); // wrong on B
+        s.submit_answer("q2", "p1", vec![0], 100).unwrap(); // wrong on B
         s.reveal().unwrap();
 
         let m = s.mastery("p1");

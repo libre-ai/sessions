@@ -180,8 +180,9 @@ pub enum ClientMessage {
         name: String,
     },
     /// Answer the open question with the selected choice indices (one for a
-    /// single-choice question, several for multi-select). The server times the
-    /// answer — clients do not supply elapsed time.
+    /// single-choice question, several for multi-select). `question_id` must
+    /// match the exact open question; the server times the answer — clients do
+    /// not supply elapsed time.
     SubmitAnswer {
         question_id: QuestionId,
         choices: Vec<u8>,
