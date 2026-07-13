@@ -257,6 +257,20 @@ fn build_session_rate() -> Arc<TokenBucket> {
     Arc::new(TokenBucket::new(burst, per_sec))
 }
 
+/// The private join-link redemption limiter: separate bucket, defaults 60 burst
+/// and 2 redemptions/sec; tune via `JOIN_RATE_BURST` and `JOIN_RATE_PER_SEC`.
+fn build_join_redemption_rate() -> Arc<TokenBucket> {
+    let burst = std::env::var("JOIN_RATE_BURST")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60.0);
+    let per_sec = std::env::var("JOIN_RATE_PER_SEC")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2.0);
+    Arc::new(TokenBucket::new(burst, per_sec))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -314,6 +328,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ingestor,
         legacy_ingest_token: Some(legacy_ingest_token),
         session_rate: build_session_rate(),
+        join_redemption_rate: build_join_redemption_rate(),
     };
 
     // Clever Cloud injects `PORT`; default to 8080 for local runs.

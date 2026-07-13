@@ -147,8 +147,15 @@ async fn http_session_api_drives_a_full_round() {
             .contains(&session_id),
         "join_url carries the session code"
     );
+    assert!(
+        created["data"]["secure_join_url"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("/join/{session_id}#token=")),
+        "secure_join_url carries the token in the fragment"
+    );
 
-    // A participant joins and gets a token.
+    // A participant joins and gets a token via the legacy endpoint.
     let joined: Value = http
         .post(format!("{base}/sessions/{session_id}/participants"))
         .send()
@@ -221,5 +228,47 @@ async fn http_session_api_drives_a_full_round() {
             .unwrap()
             .iter()
             .any(|e| e["name"] == "Alice")
+    );
+}
+
+#[tokio::test]
+async fn secure_join_link_redemption_mints_a_participant_and_trims_the_name() {
+    let addr = spawn().await;
+    let base = format!("http://{addr}");
+    let http = reqwest::Client::new();
+
+    let created: Value = http
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let session_id = created["data"]["session_id"].as_str().unwrap().to_string();
+    let secure_join_url = created["data"]["secure_join_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let token = secure_join_url
+        .split("#token=")
+        .nth(1)
+        .expect("secure join token")
+        .to_string();
+
+    let joined: Value = http
+        .post(format!("{base}/join/{session_id}/participants"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({"name":"  Alice  "}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(joined["data"]["name"], "Alice");
+    assert_eq!(
+        joined["data"]["workspace_identity"]["role_assignments"][0]["role"],
+        "participant"
     );
 }

@@ -71,7 +71,7 @@ impl Capability {
     }
 }
 
-/// The verified claims extracted from a join token.
+/// The verified claims extracted from a connect token.
 #[derive(Debug, Clone)]
 pub struct Claims {
     pub tenant_id: String,
@@ -96,6 +96,25 @@ impl Claims {
             self.participant_id.clone(),
             self.capability.role(),
         )
+    }
+}
+
+/// Verified claims from a guest join-link token: scope only, no participant
+/// identity or PII.
+#[derive(Debug, Clone)]
+pub struct JoinLinkClaims {
+    pub tenant_id: String,
+    pub workspace_id: String,
+    pub session_id: String,
+}
+
+impl JoinLinkClaims {
+    pub fn scope(&self) -> SessionScope {
+        SessionScope {
+            tenant_id: self.tenant_id.clone(),
+            workspace_id: self.workspace_id.clone(),
+            session_id: self.session_id.clone(),
+        }
     }
 }
 
@@ -169,6 +188,37 @@ impl Auth {
         self.mint_scoped(&scope, participant_id, capability, ttl, now)
     }
 
+    /// Mint a short-lived join-link token with no participant identity or PII.
+    pub fn mint_join_link(
+        &self,
+        scope: &SessionScope,
+        ttl: Duration,
+        now: SystemTime,
+    ) -> Result<String, AuthError> {
+        scope.validate().map_err(AuthError)?;
+        let expiration = now + ttl;
+        let builder = biscuit!(
+            r#"
+            organization({tenant_id});
+            workspace({workspace_id});
+            session({session_id});
+            actor("guest-link", "guest_link");
+            role("guest_link");
+            capability("participant_join");
+            check if time($t), $t < {expiration};
+            "#,
+            tenant_id = scope.tenant_id.as_str(),
+            workspace_id = scope.workspace_id.as_str(),
+            session_id = scope.session_id.as_str(),
+            expiration = expiration,
+        );
+        builder
+            .build(&self.keypair)
+            .map_err(|e| AuthError(format!("build: {e}")))?
+            .to_base64()
+            .map_err(|e| AuthError(format!("encode: {e}")))
+    }
+
     /// Mint a join token for an explicit tenant/workspace/session scope.
     pub fn mint_scoped(
         &self,
@@ -217,6 +267,47 @@ impl Auth {
     ) -> Result<Claims, AuthError> {
         let scope = SessionScope::for_session(session_id);
         self.verify_scoped(token_b64, &scope, now)
+    }
+
+    /// Verify a guest join-link token against the requested session scope.
+    pub fn verify_join_link(
+        &self,
+        token_b64: &str,
+        scope: &SessionScope,
+        now: SystemTime,
+    ) -> Result<JoinLinkClaims, AuthError> {
+        scope.validate().map_err(AuthError)?;
+        let token = Biscuit::from_base64(token_b64, self.keypair.public())
+            .map_err(|e| AuthError(format!("decode: {e}")))?;
+        let mut authorizer = authorizer!(
+            r#"
+            time({now});
+            requested_organization({tenant_id});
+            requested_workspace({workspace_id});
+            requested_session({session_id});
+            operation("participant_join");
+            allow if capability("participant_join"), role("guest_link"), actor("guest-link", "guest_link"), organization($o), requested_organization($o), workspace($w), requested_workspace($w), session($s), requested_session($s);
+            deny if true;
+            "#,
+            now = now,
+            tenant_id = scope.tenant_id.as_str(),
+            workspace_id = scope.workspace_id.as_str(),
+            session_id = scope.session_id.as_str(),
+        )
+        .set_limits(authorizer_limits())
+        .build(&token)
+        .map_err(|e| AuthError(format!("build: {e}")))?;
+        authorizer
+            .authorize()
+            .map_err(|e| AuthError(format!("denied: {e}")))?;
+        let (tenant_id, workspace_id, token_session_id): (String, String, String) = authorizer
+            .query_exactly_one("data($o, $w, $s) <- organization($o), workspace($w), session($s)")
+            .map_err(|e| AuthError(format!("claims: {e}")))?;
+        Ok(JoinLinkClaims {
+            tenant_id,
+            workspace_id,
+            session_id: token_session_id,
+        })
     }
 
     /// Verify a token against an explicit tenant/workspace/session scope.
@@ -415,6 +506,69 @@ mod tests {
         assert_eq!(pclaims.capability, Capability::Participant);
         assert_eq!(pclaims.role_assignment().role, "participant");
         assert!(!pclaims.capability.is_host());
+    }
+
+    #[test]
+    fn join_link_token_roundtrips_scope_and_rejects_connect_verification() {
+        let auth = Auth::generate();
+        let t = now();
+        let scope = SessionScope::try_new("tenant-A", "workspace-A", "s1").unwrap();
+        let token = auth
+            .mint_join_link(&scope, Duration::from_secs(1800), t)
+            .unwrap();
+        let claims = auth.verify_join_link(&token, &scope, t).unwrap();
+        assert_eq!(claims.tenant_id, "tenant-A");
+        assert_eq!(claims.workspace_id, "workspace-A");
+        assert_eq!(claims.session_id, "s1");
+        let later = t + Duration::from_secs(3600);
+        assert!(auth.verify_join_link(&token, &scope, later).is_err());
+        assert!(auth.verify(&token, "s1", t).is_err());
+    }
+
+    #[test]
+    fn join_link_token_rejects_cross_session_tenant_and_workspace() {
+        let auth = Auth::generate();
+        let t = now();
+        let scope = SessionScope::try_new("tenant-A", "workspace-A", "s1").unwrap();
+        let token = auth
+            .mint_join_link(&scope, Duration::from_secs(1800), t)
+            .unwrap();
+
+        let wrong_session = SessionScope::try_new("tenant-A", "workspace-A", "s2").unwrap();
+        assert!(auth.verify_join_link(&token, &wrong_session, t).is_err());
+
+        let wrong_tenant = SessionScope::try_new("tenant-B", "workspace-A", "s1").unwrap();
+        assert!(auth.verify_join_link(&token, &wrong_tenant, t).is_err());
+
+        let wrong_workspace = SessionScope::try_new("tenant-A", "workspace-B", "s1").unwrap();
+        assert!(auth.verify_join_link(&token, &wrong_workspace, t).is_err());
+    }
+
+    #[test]
+    fn host_and_participant_tokens_are_rejected_by_join_link_verification() {
+        let auth = Auth::generate();
+        let t = now();
+        let scope = SessionScope::try_new("tenant-A", "workspace-A", "s1").unwrap();
+        let host = auth
+            .mint_scoped(
+                &scope,
+                "host-1",
+                Capability::Host,
+                Duration::from_secs(3600),
+                t,
+            )
+            .unwrap();
+        let participant = auth
+            .mint_scoped(
+                &scope,
+                "p1",
+                Capability::Participant,
+                Duration::from_secs(3600),
+                t,
+            )
+            .unwrap();
+        assert!(auth.verify_join_link(&host, &scope, t).is_err());
+        assert!(auth.verify_join_link(&participant, &scope, t).is_err());
     }
 
     #[test]

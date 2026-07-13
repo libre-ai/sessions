@@ -113,15 +113,42 @@ async fn handle_socket(
         }
     }
 
-    if let Ok(Some(question)) = state.store.snapshot(&session_id).await
-        && socket
-            .send(Message::Text(to_text(&ServerMessage::QuestionOpened {
-                question,
+    if let Ok(Some(snapshot)) = state
+        .store
+        .guest_snapshot(&session_id, &claims.participant_id)
+        .await
+    {
+        if socket
+            .send(Message::Text(to_text(&ServerMessage::Snapshot {
+                snapshot: snapshot.clone(),
             })))
             .await
             .is_err()
-    {
-        return;
+        {
+            return;
+        }
+        if let Some(question) = snapshot.question.clone()
+            && socket
+                .send(Message::Text(to_text(&ServerMessage::QuestionOpened {
+                    question,
+                })))
+                .await
+                .is_err()
+        {
+            return;
+        }
+        if let Some(reveal) = snapshot.reveal.clone()
+            && socket
+                .send(Message::Text(to_text(&ServerMessage::AnswersRevealed {
+                    correct_choices: reveal.correct_choices,
+                    leaderboard: reveal.leaderboard,
+                    heatmap: reveal.heatmap,
+                })))
+                .await
+                .is_err()
+        {
+            return;
+        }
     }
     if !drain_pending(&mut socket, &mut rx).await {
         return;
@@ -214,9 +241,12 @@ async fn apply(text: &str, claims: &Claims, state: &AppState, session_id: &str) 
             .submit_answer(session_id, pid, &question_id, choices, now_ms())
             .await
         {
-            Ok(()) => broadcast(ServerMessage::AnswerReceived {
-                participant_id: pid.clone(),
-            }),
+            Ok(()) => Applied {
+                broadcasts: vec![ServerMessage::AnswerReceived {
+                    participant_id: pid.clone(),
+                }],
+                replies: vec![ServerMessage::AnswerAccepted { question_id }],
+            },
             Err(e) => reply(ServerMessage::Error {
                 reason: e.client_reason().into(),
             }),

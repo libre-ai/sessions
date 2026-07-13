@@ -91,6 +91,8 @@ pub struct AppState {
     pub legacy_ingest_token: Option<Arc<str>>,
     /// Guards the open `POST /sessions` endpoint against creation spam.
     pub session_rate: Arc<TokenBucket>,
+    /// Guards the private join-link redemption endpoint against abuse.
+    pub join_redemption_rate: Arc<TokenBucket>,
 }
 
 impl AppState {
@@ -117,6 +119,8 @@ impl AppState {
             legacy_ingest_token: None,
             // Generous burst, ~1 new session/sec sustained; tune via env in main.
             session_rate: Arc::new(TokenBucket::new(30.0, 1.0)),
+            // Join redemptions are separate from session creation and can be tuned independently.
+            join_redemption_rate: Arc::new(TokenBucket::new(60.0, 2.0)),
         }
     }
 }
@@ -183,6 +187,18 @@ pub fn app(state: AppState) -> Router {
             post(http::join_session),
         )
         .route(
+            "/join/{session_id}/participants",
+            post(http::redeem_join_link)
+                .layer::<_, Infallible>(DefaultBodyLimit::max(http::MAX_JOIN_REDEMPTION_BODY_BYTES))
+                .layer::<_, Infallible>(ConcurrencyLimitLayer::new(
+                    http::MAX_CONCURRENT_JOIN_REDEMPTIONS,
+                ))
+                .layer::<_, Infallible>(middleware::from_fn_with_state(
+                    state.clone(),
+                    http::authorize_join_redemption,
+                )),
+        )
+        .route(
             "/corpus/documents",
             post(http::ingest_document)
                 .layer::<_, Infallible>(DefaultBodyLimit::max(http::MAX_LEGACY_INGEST_BODY_BYTES))
@@ -208,7 +224,7 @@ pub fn app(state: AppState) -> Router {
 /// from becoming cacheable when future routes are added.
 async fn force_private_no_store(request: Request<Body>, next: Next) -> Response {
     let path = request.uri().path();
-    let private_path = ["/auth", "/api", "/corpus", "/sessions", "/ws"]
+    let private_path = ["/auth", "/api", "/corpus", "/join", "/sessions", "/ws"]
         .iter()
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")));
     let mut response = next.run(request).await;
@@ -257,12 +273,17 @@ async fn health() -> &'static str {
 mod tests {
     use super::*;
     use std::convert::Infallible;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
 
+    use async_trait::async_trait;
     use axum::body::{Body, Bytes};
     use axum::http::{Request, StatusCode};
     use futures_util::stream;
+    use tokio::sync::Notify;
     use tower::ServiceExt;
+
+    use crate::store::{InMemorySessionStore, SessionStore};
 
     #[test]
     fn grounded_projection_is_confined_to_the_authority_module() {
@@ -438,6 +459,7 @@ mod tests {
             ("GET", "/auth/login"),
             ("GET", "/api/me"),
             ("POST", "/corpus/documents"),
+            ("POST", "/join/ABCDEF/participants"),
             ("POST", "/sessions"),
             ("GET", "/ws/missing"),
         ] {
@@ -472,6 +494,102 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    struct BlockingJoinStore {
+        inner: InMemorySessionStore,
+        started: Arc<AtomicUsize>,
+        released: Arc<AtomicBool>,
+        release: Arc<Notify>,
+    }
+
+    impl BlockingJoinStore {
+        fn new(started: Arc<AtomicUsize>, released: Arc<AtomicBool>, release: Arc<Notify>) -> Self {
+            Self {
+                inner: InMemorySessionStore::new(),
+                started,
+                released,
+                release,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::store::SessionStore for BlockingJoinStore {
+        async fn ensure(&self, session_id: &str, host_id: &str) -> crate::store::StoreResult<()> {
+            self.inner.ensure(session_id, host_id).await
+        }
+
+        async fn join(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+            name: &str,
+        ) -> crate::store::StoreResult<u32> {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            while !self.released.load(Ordering::SeqCst) {
+                self.release.notified().await;
+            }
+            self.inner.join(session_id, participant_id, name).await
+        }
+
+        async fn push_question(
+            &self,
+            session_id: &str,
+            question: &presto_core::protocol::Question,
+            opened_at_ms: u64,
+        ) -> crate::store::StoreResult<()> {
+            self.inner
+                .push_question(session_id, question, opened_at_ms)
+                .await
+        }
+
+        async fn submit_answer(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+            question_id: &str,
+            choices: Vec<u8>,
+            now_ms: u64,
+        ) -> crate::store::StoreResult<()> {
+            self.inner
+                .submit_answer(session_id, participant_id, question_id, choices, now_ms)
+                .await
+        }
+
+        async fn snapshot(
+            &self,
+            session_id: &str,
+        ) -> crate::store::StoreResult<Option<presto_core::protocol::QuestionPublic>> {
+            self.inner.snapshot(session_id).await
+        }
+
+        async fn guest_snapshot(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+        ) -> crate::store::StoreResult<Option<presto_core::protocol::SessionSnapshot>> {
+            self.inner.guest_snapshot(session_id, participant_id).await
+        }
+
+        async fn exists(&self, session_id: &str) -> crate::store::StoreResult<bool> {
+            self.inner.exists(session_id).await
+        }
+
+        async fn mastery(
+            &self,
+            session_id: &str,
+            participant_id: &str,
+        ) -> crate::store::StoreResult<Vec<crate::session::SectionMastery>> {
+            self.inner.mastery(session_id, participant_id).await
+        }
+
+        async fn reveal(
+            &self,
+            session_id: &str,
+        ) -> crate::store::StoreResult<crate::session::RevealResult> {
+            self.inner.reveal(session_id).await
+        }
     }
 
     const TEST_INGEST_TOKEN: &str = "0123456789abcdef0123456789abcdef";
@@ -593,6 +711,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn join_redemption_fails_closed_before_polling_body() {
+        let auth = Arc::new(Auth::generate());
+        let state = AppState::in_memory(auth);
+        state.store.ensure("ABCDEF", "host").await.unwrap();
+        let polls = Arc::new(AtomicUsize::new(0));
+        let observed = polls.clone();
+        let body = Body::from_stream(stream::once(async move {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>(Bytes::from_static(b"secret body"))
+        }));
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABCDEF/participants")
+                    .header("authorization", "Bearer definitely-wrong")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!text.contains("definitely-wrong"));
+    }
+
+    #[tokio::test]
     async fn legacy_ingest_body_is_bounded_after_authentication() {
         let mut state = AppState::in_memory(Arc::new(Auth::generate()));
         state.legacy_ingest_token = Some(Arc::from(TEST_INGEST_TOKEN));
@@ -649,6 +799,160 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn join_redemption_is_rate_limited() {
+        let auth = Arc::new(Auth::generate());
+        let mut state = AppState::in_memory(auth.clone());
+        state.join_redemption_rate = Arc::new(ratelimit::TokenBucket::new(0.0, 0.0));
+        let session = "ABCDEF";
+        state.store.ensure(session, "host").await.unwrap();
+        let token = auth
+            .mint_join_link(
+                &crate::session_identity::SessionScope::for_session(session),
+                std::time::Duration::from_secs(1800),
+                std::time::SystemTime::now(),
+            )
+            .unwrap();
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/join/{session}/participants"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Alice"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn join_redemption_returns_not_found_for_missing_session() {
+        let auth = Arc::new(Auth::generate());
+        let state = AppState::in_memory(auth.clone());
+        let polls = Arc::new(AtomicUsize::new(0));
+        let observed = polls.clone();
+        let body = Body::from_stream(stream::once(async move {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>(Bytes::from_static(b"secret body"))
+        }));
+        let token = auth
+            .mint_join_link(
+                &crate::session_identity::SessionScope::for_session("ABCDEF"),
+                std::time::Duration::from_secs(1800),
+                std::time::SystemTime::now(),
+            )
+            .unwrap();
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/join/ABCDEF/participants")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!text.contains(token.as_str()));
+    }
+
+    #[tokio::test]
+    async fn join_redemption_applies_backpressure_at_the_concurrency_limit() {
+        let auth = Arc::new(Auth::generate());
+        let started = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(Notify::new());
+        let blocking = Arc::new(BlockingJoinStore::new(
+            started.clone(),
+            released.clone(),
+            release.clone(),
+        ));
+        blocking.inner.ensure("ABCDEF", "host").await.unwrap();
+
+        let mut state = AppState::in_memory(auth.clone());
+        state.store = blocking.clone();
+        state.join_redemption_rate = Arc::new(crate::ratelimit::TokenBucket::new(1000.0, 1000.0));
+        let router = app(state);
+        let token = auth
+            .mint_join_link(
+                &crate::session_identity::SessionScope::for_session("ABCDEF"),
+                std::time::Duration::from_secs(1800),
+                std::time::SystemTime::now(),
+            )
+            .unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let router = router.clone();
+            let token = token.clone();
+            handles.push(tokio::spawn(async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/join/ABCDEF/participants")
+                            .header("authorization", format!("Bearer {token}"))
+                            .header("content-type", "application/json")
+                            .body(Body::from(format!(r#"{{"name":"p{i}"}}"#)))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }));
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while started.load(Ordering::SeqCst) < 8 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let ninth_router = router.clone();
+        let ninth_token = token.clone();
+        let ninth = tokio::spawn(async move {
+            ninth_router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/join/ABCDEF/participants")
+                        .header("authorization", format!("Bearer {ninth_token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"name":"p9"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(started.load(Ordering::SeqCst), 8);
+        assert!(
+            !ninth.is_finished(),
+            "the 9th request must wait for a permit"
+        );
+
+        released.store(true, Ordering::SeqCst);
+        release.notify_waiters();
+        assert_eq!(ninth.await.unwrap(), StatusCode::OK);
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), StatusCode::OK);
+        }
     }
 
     #[tokio::test]

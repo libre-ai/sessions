@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use presto_core::protocol::{
-    LeaderboardEntry, ParticipantId, Question, QuestionKind, QuestionPublic,
+    LeaderboardEntry, MAX_SESSION_SNAPSHOT_PARTICIPANTS, ParticipantId, ParticipantPublic,
+    PublicReveal, Question, QuestionKind, QuestionPublic, SessionPhasePublic, SessionSnapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +139,50 @@ impl Session {
             self.current.as_ref().map(Question::public)
         } else {
             None
+        }
+    }
+
+    /// Public reconnect snapshot tailored to one participant.
+    pub fn guest_snapshot(&self, participant_id: &str) -> SessionSnapshot {
+        let participants_count = self.participants.len() as u32;
+        let participants = self
+            .participants
+            .iter()
+            .take(MAX_SESSION_SNAPSHOT_PARTICIPANTS)
+            .map(|(participant_id, participant)| ParticipantPublic {
+                participant_id: participant_id.clone(),
+                name: participant.name.clone(),
+            })
+            .collect();
+        let question = self
+            .current
+            .as_ref()
+            .filter(|_| matches!(self.phase, Phase::Asking | Phase::Revealed))
+            .map(Question::public);
+        let reveal = self.public_reveal();
+        SessionSnapshot {
+            phase: self.phase.into(),
+            participants,
+            participants_count,
+            question,
+            answered: self.answers.contains_key(participant_id),
+            reveal,
+        }
+    }
+
+    fn public_reveal(&self) -> Option<PublicReveal> {
+        match self.phase {
+            Phase::Revealed => {
+                let question_id = self.current.as_ref()?.id.clone();
+                let result = self.revealed.as_ref()?;
+                Some(PublicReveal {
+                    question_id,
+                    correct_choices: result.correct_choices.clone(),
+                    leaderboard: result.leaderboard.clone(),
+                    heatmap: result.heatmap.clone(),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -297,6 +342,16 @@ impl Session {
                     })
             })
             .collect()
+    }
+}
+
+impl From<Phase> for SessionPhasePublic {
+    fn from(value: Phase) -> Self {
+        match value {
+            Phase::Lobby => SessionPhasePublic::Lobby,
+            Phase::Asking => SessionPhasePublic::Asking,
+            Phase::Revealed => SessionPhasePublic::Revealed,
+        }
     }
 }
 

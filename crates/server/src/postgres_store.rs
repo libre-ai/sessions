@@ -14,7 +14,10 @@ use async_trait::async_trait;
 use sqlx::Row;
 use sqlx::postgres::PgPool;
 
-use presto_core::protocol::{LeaderboardEntry, Question, QuestionPublic};
+use presto_core::protocol::{
+    LeaderboardEntry, MAX_SESSION_SNAPSHOT_PARTICIPANTS, ParticipantPublic, PublicReveal, Question,
+    QuestionPublic, SessionPhasePublic, SessionSnapshot,
+};
 
 use crate::session::{
     ANSWER_GRACE_MS, RevealResult, SectionMastery, SessionError, is_correct, score,
@@ -268,6 +271,97 @@ impl SessionStore for PostgresSessionStore {
             }
             None => None,
         })
+    }
+
+    async fn guest_snapshot(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<SessionSnapshot>> {
+        let row = sqlx::query(
+            "SELECT phase, current_question, last_reveal, \
+                COUNT(p.participant_id) AS participant_count, \
+                COALESCE((SELECT json_agg(json_build_object('participant_id', participant_id, 'name', name) ORDER BY participant_id) FROM (SELECT participant_id, name FROM presto_participants WHERE session_id = $1 ORDER BY participant_id LIMIT 32) limited)::text, '[]') AS participants, \
+                EXISTS(SELECT 1 FROM presto_answers a WHERE a.session_id = $1 AND a.participant_id = $2 AND a.question_id = (current_question::jsonb->>'id')) AS answered \
+             FROM presto_sessions s \
+             LEFT JOIN presto_participants p ON p.session_id = s.id \
+             WHERE s.id = $1 \
+             GROUP BY s.phase, s.current_question, s.last_reveal",
+        )
+        .bind(session_id)
+        .bind(participant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let phase: String = row.get("phase");
+        let raw_question: Option<String> = row.get("current_question");
+        let raw_last_reveal: Option<String> = row.get("last_reveal");
+        let participants_count: i64 = row.get("participant_count");
+        let participants_json: String = row.get("participants");
+        let answered: bool = row.get("answered");
+        let participants: Vec<ParticipantPublic> =
+            serde_json::from_str(&participants_json).map_err(backend)?;
+        let parsed_question: Option<Question> = match raw_question.as_ref() {
+            Some(json) => Some(serde_json::from_str(json).map_err(backend)?),
+            None => None,
+        };
+        let question = match phase.as_str() {
+            "lobby" => None,
+            "asking" | "revealed" => match parsed_question.as_ref() {
+                Some(question) => Some(question.public()),
+                None => {
+                    return Err(StoreError::Backend(
+                        "missing current question for active session".into(),
+                    ));
+                }
+            },
+            _ => return Err(StoreError::Backend(format!("unknown phase: {phase}"))),
+        };
+        let reveal = match phase.as_str() {
+            "revealed" => {
+                let raw_last_reveal = raw_last_reveal.ok_or_else(|| {
+                    StoreError::Backend("missing cached reveal for revealed session".into())
+                })?;
+                let result: crate::session::RevealResult =
+                    serde_json::from_str(&raw_last_reveal).map_err(backend)?;
+                let question_id = parsed_question
+                    .as_ref()
+                    .map(|question| question.id.clone())
+                    .ok_or_else(|| {
+                        StoreError::Backend("missing question id for revealed session".into())
+                    })?;
+                Some(PublicReveal {
+                    question_id,
+                    correct_choices: result.correct_choices,
+                    leaderboard: result.leaderboard,
+                    heatmap: result.heatmap,
+                })
+            }
+            _ => None,
+        };
+
+        let participants_count = u32::try_from(participants_count).unwrap_or(u32::MAX);
+        let participants = participants
+            .into_iter()
+            .take(MAX_SESSION_SNAPSHOT_PARTICIPANTS)
+            .collect();
+        Ok(Some(SessionSnapshot {
+            phase: match phase.as_str() {
+                "lobby" => SessionPhasePublic::Lobby,
+                "asking" => SessionPhasePublic::Asking,
+                "revealed" => SessionPhasePublic::Revealed,
+                _ => unreachable!(),
+            },
+            participants,
+            participants_count,
+            question,
+            answered,
+            reveal,
+        }))
     }
 
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {
