@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use presto_core::protocol::{
     LeaderboardEntry, ParticipantId, Question, QuestionKind, QuestionPublic,
 };
+use serde::{Deserialize, Serialize};
 
 /// Grace added to a question's timer before the server closes it to answers, to
 /// allow for network latency on an answer sent just before the deadline.
@@ -61,7 +62,7 @@ impl SessionError {
 
 /// The outcome of a reveal: the correct choice(s), the sorted leaderboard, and a
 /// per-source-section confusion heatmap.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RevealResult {
     pub correct_choices: Vec<u8>,
     pub leaderboard: Vec<LeaderboardEntry>,

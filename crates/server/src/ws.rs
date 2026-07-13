@@ -17,8 +17,6 @@
 
 use std::time::SystemTime;
 
-use tokio::task::yield_now;
-
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -65,20 +63,13 @@ fn to_text(msg: &ServerMessage) -> Utf8Bytes {
 async fn drain_pending(
     socket: &mut WebSocket,
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>,
-) -> (bool, bool) {
-    let mut saw_transition = false;
+) -> bool {
     while let Ok(msg) = rx.try_recv() {
-        if matches!(
-            msg,
-            ServerMessage::QuestionOpened { .. } | ServerMessage::AnswersRevealed { .. }
-        ) {
-            saw_transition = true;
-        }
         if socket.send(Message::Text(to_text(&msg))).await.is_err() {
-            return (false, saw_transition);
+            return false;
         }
     }
-    (true, saw_transition)
+    true
 }
 
 async fn handle_socket(
@@ -94,10 +85,11 @@ async fn handle_socket(
     } else {
         String::new()
     };
+    let mut rx = state.fanout.subscribe(&session_id).await;
+
     if state.store.ensure(&session_id, &host_id).await.is_err() {
         return; // backend unavailable
     }
-    let mut rx = state.fanout.subscribe(&session_id).await;
 
     if !is_host {
         match state
@@ -121,44 +113,18 @@ async fn handle_socket(
         }
     }
 
-    // Late join / reconnect: drain any already-published messages first, then
-    // snapshot the open question only if the session is still asking.
-    let (ok, mut saw_transition) = drain_pending(&mut socket, &mut rx).await;
-    if !ok {
+    if let Ok(Some(question)) = state.store.snapshot(&session_id).await
+        && socket
+            .send(Message::Text(to_text(&ServerMessage::QuestionOpened {
+                question,
+            })))
+            .await
+            .is_err()
+    {
         return;
     }
-    if !saw_transition && let Ok(Some(question)) = state.store.snapshot(&session_id).await {
-        yield_now().await;
-        let (ok, saw_after_snapshot) = drain_pending(&mut socket, &mut rx).await;
-        if !ok {
-            return;
-        }
-        saw_transition |= saw_after_snapshot;
-        if !saw_transition {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            let (ok, saw_after_wait) = drain_pending(&mut socket, &mut rx).await;
-            if !ok {
-                return;
-            }
-            saw_transition |= saw_after_wait;
-        }
-        if !saw_transition
-            && state
-                .store
-                .snapshot(&session_id)
-                .await
-                .ok()
-                .flatten()
-                .is_some()
-            && socket
-                .send(Message::Text(to_text(&ServerMessage::QuestionOpened {
-                    question,
-                })))
-                .await
-                .is_err()
-        {
-            return;
-        }
+    if !drain_pending(&mut socket, &mut rx).await {
+        return;
     }
 
     loop {

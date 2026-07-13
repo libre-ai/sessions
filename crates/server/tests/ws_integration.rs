@@ -372,7 +372,7 @@ async fn answer_errors_use_stable_codes_without_backend_leakage() {
 }
 
 #[tokio::test]
-async fn late_joiner_does_not_emit_a_stale_question_when_reveal_wins_the_race() {
+async fn late_joiner_sees_the_snapshot_before_the_in_flight_reveal_transition() {
     let auth = Arc::new(Auth::generate());
     let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
     let resume = Arc::new(tokio::sync::Notify::new());
@@ -410,6 +410,16 @@ async fn late_joiner_does_not_emit_a_stale_question_when_reveal_wins_the_race() 
             SystemTime::now(),
         )
         .unwrap();
+    let host_token = srv
+        .auth
+        .mint(
+            "sess-race",
+            "host",
+            Capability::Host,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
+        .unwrap();
     let base = format!("ws://{}/ws/sess-race", srv.addr);
 
     let (mut p1, _) = connect_async(format!("{base}?token={p_token}"))
@@ -420,26 +430,24 @@ async fn late_joiner_does_not_emit_a_stale_question_when_reveal_wins_the_race() 
         .unwrap()
         .unwrap();
 
-    store.reveal("sess-race").await.unwrap();
+    let (mut host, _) = connect_async(format!("{base}?token={host_token}"))
+        .await
+        .unwrap();
+    host.send(Message::text(r#"{"type":"reveal"}"#.to_string()))
+        .await
+        .unwrap();
+
     resume.notify_one();
 
-    let stale = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            match p1.next().await {
-                Some(Ok(Message::Text(t))) => {
-                    let v: Value = serde_json::from_str(t.as_str()).unwrap();
-                    if v["type"] == "question_opened" {
-                        panic!("stale question_opened leaked after reveal");
-                    }
-                }
-                Some(Ok(_)) => continue,
-                Some(Err(_)) | None => return,
-            }
-        }
-    })
-    .await;
-    assert!(
-        stale.is_err(),
-        "question_opened should not reappear after reveal"
-    );
+    let first = tokio::time::timeout(Duration::from_secs(3), p1.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let first: Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
+    assert_eq!(first["type"], "question_opened");
+    assert_eq!(first["question"]["id"], "q1");
+
+    let rev = recv_until(&mut p1, "answers_revealed").await;
+    assert_eq!(rev["correct_choices"], serde_json::json!([1]));
 }

@@ -203,3 +203,62 @@ async fn postgres_reveal_is_single_score_under_concurrency() {
     assert_eq!(store.reveal(&s).await.unwrap(), results[0]);
     eprintln!("postgres concurrent reveal stays single-score ✅");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires DATABASE_URL; see module docs"]
+async fn postgres_reveal_returns_the_cached_result_after_a_late_join() {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("skipping: set DATABASE_URL to run");
+        return;
+    };
+    let _guard = db_test_lock().await;
+    let store = Arc::new(PostgresSessionStore::connect(&url).await.unwrap());
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let s = format!("pgt-cached-{nanos}");
+
+    store.ensure(&s, "host").await.unwrap();
+    store.join(&s, "p1", "Alice").await.unwrap();
+    store.join(&s, "p2", "Bob").await.unwrap();
+    store.push_question(&s, &question(), 0).await.unwrap();
+    store
+        .submit_answer(&s, "p1", "q1", vec![1], 30_000)
+        .await
+        .unwrap();
+    store
+        .submit_answer(&s, "p2", "q1", vec![0], 30_000)
+        .await
+        .unwrap();
+
+    let first = store.reveal(&s).await.unwrap();
+    store.join(&s, "p3", "Cara").await.unwrap();
+
+    let start = Arc::new(Barrier::new(9));
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let store = store.clone();
+        let start = start.clone();
+        let session_id = s.clone();
+        handles.push(tokio::spawn(async move {
+            start.wait().await;
+            store.reveal(&session_id).await.unwrap()
+        }));
+    }
+    start.wait().await;
+
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await.unwrap());
+    }
+    assert!(results.iter().all(|r| r == &first));
+    assert!(
+        !results[0]
+            .leaderboard
+            .iter()
+            .any(|entry| entry.participant_id == "p3")
+    );
+    assert_eq!(store.reveal(&s).await.unwrap(), first);
+    eprintln!("postgres cached reveal stays exact after late join ✅");
+}
