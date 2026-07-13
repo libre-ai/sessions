@@ -1,8 +1,9 @@
 //! Postgres-backed [`SessionStore`]: authoritative session state shared across
 //! instances, so a `reveal` on instance A sees answers submitted on instance B.
 //! Answer submissions lock the session row, validate the exact open question,
-//! and reject malformed choices before any insert; reveal is transactionally
-//! idempotent, so concurrent calls never double-score.
+//! and reject malformed choices before any insert; opening a new question clears
+//! the previous round's answers atomically; reveal is transactionally idempotent,
+//! so concurrent calls never double-score.
 //!
 //! Runtime (non-macro) queries, so the crate compiles without a database. The
 //! schema is created on connect.
@@ -90,22 +91,6 @@ impl PostgresSessionStore {
             .map_err(backend)?;
         Ok(Self { pool })
     }
-
-    async fn current_question(&self, session_id: &str) -> StoreResult<Option<Question>> {
-        let row = sqlx::query("SELECT current_question FROM presto_sessions WHERE id = $1")
-            .bind(session_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(backend)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let raw: Option<String> = row.get("current_question");
-        match raw {
-            Some(json) => Ok(Some(serde_json::from_str(&json).map_err(backend)?)),
-            None => Ok(None),
-        }
-    }
 }
 
 #[async_trait]
@@ -150,17 +135,26 @@ impl SessionStore for PostgresSessionStore {
         opened_at_ms: u64,
     ) -> StoreResult<()> {
         let json = serde_json::to_string(question).map_err(backend)?;
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let updated = sqlx::query(
             "UPDATE presto_sessions SET current_question = $1, phase = 'asking', opened_at = $2 \
-             WHERE id = $3",
+             WHERE id = $3 RETURNING id",
         )
         .bind(json)
         // Epoch millis fit i64 for ~292M years; the cast cannot overflow.
         .bind(opened_at_ms as i64)
         .bind(session_id)
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(backend)?;
+        if updated.is_some() {
+            sqlx::query("DELETE FROM presto_answers WHERE session_id = $1")
+                .bind(session_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
+        tx.commit().await.map_err(backend)?;
         Ok(())
     }
 
@@ -252,16 +246,26 @@ impl SessionStore for PostgresSessionStore {
     }
 
     async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>> {
-        let phase: Option<String> =
-            sqlx::query_scalar("SELECT phase FROM presto_sessions WHERE id = $1")
-                .bind(session_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?;
-        if phase.as_deref() != Some("asking") {
+        let row = sqlx::query("SELECT phase, current_question FROM presto_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let phase: String = row.get("phase");
+        if phase != "asking" {
             return Ok(None);
         }
-        Ok(self.current_question(session_id).await?.map(|q| q.public()))
+        let raw: Option<String> = row.get("current_question");
+        Ok(match raw {
+            Some(json) => {
+                let question: Question = serde_json::from_str(&json).map_err(backend)?;
+                Some(question.public())
+            }
+            None => None,
+        })
     }
 
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {
