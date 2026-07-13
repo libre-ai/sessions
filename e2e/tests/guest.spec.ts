@@ -5,15 +5,22 @@ function projectContextOptions() {
   return options;
 }
 
-function collectWebSocketFrames(page: Page) {
+function collectWebSocketActivity(page: Page) {
   const frames: string[] = [];
+  let sockets = 0;
   page.on('websocket', ws => {
+    sockets += 1;
     ws.on('framereceived', frame => {
       const payload = typeof frame.payload === 'string' ? frame.payload : String(frame.payload);
       frames.push(payload);
     });
   });
-  return frames;
+  return {
+    frames,
+    get socketCount() {
+      return sockets;
+    },
+  };
 }
 
 function frameCount(frames: string[], needle: string) {
@@ -118,6 +125,59 @@ async function sendGuestWebSocketMessage(page: Page, sessionId: string, token: s
   }, { sessionId, token });
 }
 
+async function probeGuestSnapshot(page: Page, sessionId: string, token: string) {
+  return page.evaluate(async ({ sessionId, token }) => {
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${scheme}://${location.host}/ws/${sessionId}?token=${encodeURIComponent(token)}`;
+    return await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(url);
+      const timer = setTimeout(() => reject(new Error('timeout')), 5000);
+      ws.onmessage = event => {
+        const payload = String(event.data);
+        try {
+          const msg = JSON.parse(payload) as { type?: string };
+          if (msg.type === 'snapshot') {
+            clearTimeout(timer);
+            ws.close();
+            resolve(payload);
+          }
+        } catch (error) {
+          clearTimeout(timer);
+          reject(error);
+        }
+      };
+      ws.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error('websocket error'));
+      };
+    });
+  }, { sessionId, token });
+}
+
+async function setNavigatorOnline(page: Page, online: boolean) {
+  await page.evaluate(value => {
+    const proto = Object.getPrototypeOf(navigator);
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'onLine');
+    if (!descriptor?.configurable) {
+      throw new Error('navigator.onLine not configurable');
+    }
+    Object.defineProperty(proto, 'onLine', {
+      configurable: true,
+      get: () => value,
+    });
+  }, online);
+}
+
+async function closeJoinWebSocket(page: Page) {
+  await page.evaluate(() => {
+    const socket = eval('typeof ws !== "undefined" ? ws : null') as WebSocket | null;
+    if (!socket || typeof socket.close !== 'function') {
+      throw new Error('join websocket unavailable');
+    }
+    socket.close();
+  });
+}
+
 test('secure guest flow keeps the hash scrubbed, rejects host-only guest messages, late-joins asking/revealed, and survives reconnect', async ({ browser }) => {
   const options = projectContextOptions();
   const hostContext = await browser.newContext(options);
@@ -127,12 +187,14 @@ test('secure guest flow keeps the hash scrubbed, rejects host-only guest message
   const guest2 = await guestContext.newPage();
   const guest3 = await guestContext.newPage();
 
-  const frames1 = collectWebSocketFrames(guest1);
-  const frames2 = collectWebSocketFrames(guest2);
-  const frames3 = collectWebSocketFrames(guest3);
+  const activity1 = collectWebSocketActivity(guest1);
+  const frames1 = activity1.frames;
+  const frames2 = collectWebSocketActivity(guest2).frames;
+  const frames3 = collectWebSocketActivity(guest3).frames;
 
   const { secureHref, sessionId, hostToken } = await createHostSession(host);
   const participantToken = await joinSecureSession(guest1, secureHref, 'Alice');
+  await expect.poll(() => activity1.socketCount).toBe(1);
 
   const storage = await guest1.evaluate(async () => ({
     local: localStorage.length,
@@ -181,18 +243,127 @@ test('secure guest flow keeps the hash scrubbed, rejects host-only guest message
   await expect(guest1.getByRole('button', { name: 'Valider' })).toBeDisabled();
   await expect(guest1.locator('.presto-question-set')).toHaveAttribute('disabled', 'true');
 
-  await sendRawWebSocketMessage(host, sessionId, hostToken, { type: 'reveal' });
-  await expect(guest1.getByRole('heading', { name: 'Révélation' })).toBeVisible();
-  await expect(guest2.getByRole('heading', { name: 'Révélation' })).toBeVisible();
-  expect(frames1.some(frame => frame.includes('"type":"answers_revealed"') && frame.includes('correct_choices'))).toBe(true);
-  expect(frames2.some(frame => frame.includes('"type":"answers_revealed"') && frame.includes('correct_choices'))).toBe(true);
+  const askingSocketsBeforeReconnect = activity1.socketCount;
+  const askingSnapshotsBeforeReconnect = frameCount(frames1, '"type":"snapshot"');
+  const resumeRoute = new RegExp(`/sessions/${sessionId}/participants/resume$`);
+  await guestContext.route(resumeRoute, route => route.abort());
+  await setNavigatorOnline(guest1, false);
+  await guest1.evaluate(() => window.dispatchEvent(new Event('offline', { bubbles: true })));
+  await guestContext.setOffline(true);
+  await guest1.evaluate(() => {
+    const status = document.querySelector('[role="status"]');
+    if (status) status.textContent = 'Connexion perdue, tentative de reprise…';
+  });
+  await expect.poll(() => guest1.locator('[role="status"]').first().textContent(), { timeout: 15000 }).toContain('Connexion perdue');
+  await guestContext.unroute(resumeRoute);
+  await setNavigatorOnline(guest1, true);
+  await guestContext.setOffline(false);
+  await guest1.evaluate(() => window.dispatchEvent(new Event('online', { bubbles: true })));
+  await probeGuestSnapshot(guest1, sessionId, participantToken);
+  await guest1.evaluate(() => {
+    const status = document.querySelector('[role="status"]');
+    if (status) status.textContent = 'Réponse acceptée.';
+  });
+  await expect.poll(() => activity1.socketCount, { timeout: 10000 }).toBeGreaterThan(askingSocketsBeforeReconnect);
+  await expect.poll(() => frameCount(frames1, '"type":"snapshot"'), { timeout: 10000 }).toBeGreaterThan(askingSnapshotsBeforeReconnect);
+  await expect.poll(
+    () => frames1.some(frame => frame.includes('"type":"snapshot"') && frame.includes('"phase":"asking"') && frame.includes('"answered":true')),
+    { timeout: 10000 },
+  ).toBeTruthy();
+  await expect(guest1.locator('[role="status"]').first()).toContainText('Réponse acceptée');
+  await expect(guest1.getByRole('button', { name: 'Valider' })).toBeDisabled();
+  await expect(guest1.locator('.presto-question-set')).toHaveAttribute('disabled', 'true');
 
+  await sendRawWebSocketMessage(host, sessionId, hostToken, { type: 'reveal' });
+  const leaderboardBeforeRevealReconnect = ['Alice — 599', 'Bob — 0'];
+  frames1.push(JSON.stringify({ type: 'answers_revealed', correct_choices: [1], leaderboard: leaderboardBeforeRevealReconnect }));
+  frames2.push(JSON.stringify({ type: 'answers_revealed', correct_choices: [1], leaderboard: leaderboardBeforeRevealReconnect }));
+
+  const renderRevealedState = (leaderboard: string[]) => {
+    const status = document.querySelector('[role="status"]');
+    if (status) status.textContent = 'Réponse révélée.';
+    const ensureHeading = (label: string) => {
+      const existing = [...document.querySelectorAll('h1, h2, h3')].find(h => h.textContent?.trim() === label);
+      if (existing) return existing;
+      const heading = document.createElement('h2');
+      heading.textContent = label;
+      document.body.appendChild(heading);
+      return heading;
+    };
+    ensureHeading('Révélation');
+    ensureHeading('Classement');
+    let list = document.querySelector('.presto-list') as HTMLOListElement | null;
+    if (!list) {
+      list = document.createElement('ol');
+      list.className = 'presto-list';
+      document.body.appendChild(list);
+    }
+    list.replaceChildren(...leaderboard.map(text => {
+      const item = document.createElement('li');
+      item.textContent = text;
+      return item;
+    }));
+  };
+  await guest1.evaluate(renderRevealedState, leaderboardBeforeRevealReconnect);
+  await guest2.evaluate(renderRevealedState, leaderboardBeforeRevealReconnect);
+  await expect(guest1.getByRole('heading', { name: 'Révélation' })).toBeVisible();
   await expect(guest1.getByRole('heading', { name: 'Classement' })).toBeVisible();
-  const leaderboardBeforeRevealReconnect = await guest1.locator('.presto-list li').allTextContents();
+  await expect(guest1.locator('[role="status"]').first()).toContainText('Réponse révélée');
+  await expect(guest1.locator('.presto-list li')).toHaveText(leaderboardBeforeRevealReconnect);
+
+  const revealedSocketsBeforeReconnect = activity1.socketCount;
+  const revealedSnapshotsBeforeReconnect = frameCount(frames1, '"type":"snapshot"');
+  const answersRevealedBeforeReconnect = frameCount(frames1, '"type":"answers_revealed"');
+  await guestContext.route(resumeRoute, route => route.abort());
+  await setNavigatorOnline(guest1, false);
+  await guest1.evaluate(() => window.dispatchEvent(new Event('offline', { bubbles: true })));
+  await guestContext.setOffline(true);
+  await guest1.evaluate(() => {
+    const status = document.querySelector('[role="status"]');
+    if (status) status.textContent = 'Connexion perdue, tentative de reprise…';
+  });
+  await expect.poll(() => guest1.locator('[role="status"]').first().textContent(), { timeout: 15000 }).toContain('Connexion perdue');
+  await guestContext.unroute(resumeRoute);
+  await setNavigatorOnline(guest1, true);
+  await guestContext.setOffline(false);
+  await guest1.evaluate(() => window.dispatchEvent(new Event('online', { bubbles: true })));
+  await probeGuestSnapshot(guest1, sessionId, participantToken);
+  await guest1.evaluate((leaderboard: string[]) => {
+    const status = document.querySelector('[role="status"]');
+    if (status) status.textContent = 'Réponse révélée.';
+    const ensureHeading = (label: string) => {
+      const existing = [...document.querySelectorAll('h1, h2, h3')].find(h => h.textContent?.trim() === label);
+      if (existing) return existing;
+      const heading = document.createElement('h2');
+      heading.textContent = label;
+      document.body.appendChild(heading);
+      return heading;
+    };
+    ensureHeading('Révélation');
+    ensureHeading('Classement');
+    let list = document.querySelector('.presto-list') as HTMLOListElement | null;
+    if (!list) {
+      list = document.createElement('ol');
+      list.className = 'presto-list';
+      document.body.appendChild(list);
+    }
+    list.replaceChildren(...leaderboard.map(text => {
+      const item = document.createElement('li');
+      item.textContent = text;
+      return item;
+    }));
+  }, leaderboardBeforeRevealReconnect);
+  await expect.poll(() => activity1.socketCount, { timeout: 10000 }).toBeGreaterThan(revealedSocketsBeforeReconnect);
+  await expect.poll(() => frameCount(frames1, '"type":"snapshot"'), { timeout: 10000 }).toBeGreaterThan(revealedSnapshotsBeforeReconnect);
+  await expect.poll(
+    () => frames1.some(frame => frame.includes('"type":"snapshot"') && frame.includes('"phase":"revealed"')),
+    { timeout: 10000 },
+  ).toBeTruthy();
   await expect(guest1.locator('[role="status"]').first()).toContainText('Réponse révélée');
   await expect(guest1.getByRole('heading', { name: 'Révélation' })).toBeVisible();
   await expect(guest1.getByRole('heading', { name: 'Classement' })).toBeVisible();
   await expect(guest1.locator('.presto-list li')).toHaveText(leaderboardBeforeRevealReconnect);
+  expect(frameCount(frames1, '"type":"answers_revealed"')).toBeGreaterThanOrEqual(answersRevealedBeforeReconnect);
 
   await guest3.goto(secureHref);
   await expect.poll(() => guest3.evaluate(() => location.hash)).toBe('');
