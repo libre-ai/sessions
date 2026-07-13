@@ -6,7 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use presto_core::protocol::{
-    LeaderboardEntry, ParticipantId, Question, QuestionKind, QuestionPublic,
+    LeaderboardEntry, MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES, MAX_SESSION_SNAPSHOT_LEADERBOARD,
+    MAX_SESSION_SNAPSHOT_PARTICIPANTS, ParticipantId, ParticipantPublic, PublicReveal, Question,
+    QuestionKind, QuestionPublic, SessionPhasePublic, SessionSnapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +140,60 @@ impl Session {
             self.current.as_ref().map(Question::public)
         } else {
             None
+        }
+    }
+
+    /// Public reconnect snapshot tailored to one participant.
+    pub fn guest_snapshot(&self, participant_id: &str) -> Result<SessionSnapshot, String> {
+        let participants_count = self.participants.len() as u32;
+        let participants = self
+            .participants
+            .iter()
+            .take(MAX_SESSION_SNAPSHOT_PARTICIPANTS)
+            .map(|(participant_id, participant)| ParticipantPublic {
+                participant_id: participant_id.clone(),
+                name: participant.name.clone(),
+            })
+            .collect();
+        let question = self
+            .current
+            .as_ref()
+            .filter(|_| matches!(self.phase, Phase::Asking | Phase::Revealed))
+            .map(Question::public);
+        let reveal = self.public_reveal();
+        SessionSnapshot::new(
+            self.phase.into(),
+            participants,
+            participants_count,
+            question,
+            self.answers.contains_key(participant_id),
+            reveal,
+        )
+    }
+
+    fn public_reveal(&self) -> Option<PublicReveal> {
+        match self.phase {
+            Phase::Revealed => {
+                let question_id = self.current.as_ref()?.id.clone();
+                let result = self.revealed.as_ref()?;
+                Some(PublicReveal {
+                    question_id,
+                    correct_choices: result.correct_choices.clone(),
+                    leaderboard: result
+                        .leaderboard
+                        .iter()
+                        .take(MAX_SESSION_SNAPSHOT_LEADERBOARD)
+                        .cloned()
+                        .collect(),
+                    heatmap: result
+                        .heatmap
+                        .iter()
+                        .take(MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES)
+                        .map(|(section, ratio)| (section.clone(), *ratio))
+                        .collect(),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -300,6 +356,16 @@ impl Session {
     }
 }
 
+impl From<Phase> for SessionPhasePublic {
+    fn from(value: Phase) -> Self {
+        match value {
+            Phase::Lobby => SessionPhasePublic::Lobby,
+            Phase::Asking => SessionPhasePublic::Asking,
+            Phase::Revealed => SessionPhasePublic::Revealed,
+        }
+    }
+}
+
 /// Whether a submitted set of choice indices exactly matches the correct set
 /// (order- and duplicate-insensitive). Works for single- and multi-select.
 pub fn is_correct(submitted: &[u8], correct: &[u8]) -> bool {
@@ -356,6 +422,34 @@ mod tests {
         assert_eq!(s.join("p2", "Bob"), 2);
         assert_eq!(s.join("p1", "Alice again"), 2); // rejoin: no new participant
         assert_eq!(s.participants["p1"].name, "Alice"); // original name preserved
+    }
+
+    #[test]
+    fn personalized_snapshot_bounds_roster_leaderboard_and_heatmap() {
+        let mut session = Session::new("s1", "host");
+        for index in 0..40 {
+            let participant = format!("p{index:02}");
+            session.join(&participant, format!("Guest {index:02}"));
+        }
+        let mut current = question();
+        current.source_section_ids = (0..80).map(|index| format!("section-{index:02}")).collect();
+        session.push_question(current, 0);
+        for index in 0..40 {
+            let participant = format!("p{index:02}");
+            session
+                .submit_answer("q1", &participant, vec![1], 100)
+                .unwrap();
+        }
+        session.reveal().unwrap();
+
+        let snapshot = session.guest_snapshot("p00").unwrap();
+        assert_eq!(
+            snapshot.participants.len(),
+            MAX_SESSION_SNAPSHOT_PARTICIPANTS
+        );
+        let reveal = snapshot.reveal.unwrap();
+        assert_eq!(reveal.leaderboard.len(), MAX_SESSION_SNAPSHOT_LEADERBOARD);
+        assert_eq!(reveal.heatmap.len(), MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES);
     }
 
     #[test]

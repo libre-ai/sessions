@@ -14,7 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
-use presto_core::protocol::{Question, QuestionPublic};
+use presto_core::protocol::{Question, QuestionPublic, SessionSnapshot};
 
 use crate::session::{RevealResult, SectionMastery, Session, SessionError};
 
@@ -84,6 +84,13 @@ pub trait SessionStore: Send + Sync {
     /// The currently open question (public projection), for a participant joining
     /// or reconnecting mid-question.
     async fn snapshot(&self, session_id: &str) -> StoreResult<Option<QuestionPublic>>;
+    /// A personalized reconnect snapshot, including the current participant's
+    /// answered state and the cached reveal when the round is already closed.
+    async fn guest_snapshot(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<SessionSnapshot>>;
     /// Whether the session exists (so a participant token is only minted for a
     /// real session).
     async fn exists(&self, session_id: &str) -> StoreResult<bool>;
@@ -173,6 +180,22 @@ impl SessionStore for InMemorySessionStore {
         Ok(self.get_or_create(session_id, "").lock().open_question())
     }
 
+    async fn guest_snapshot(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<SessionSnapshot>> {
+        let session = self.sessions.lock().get(session_id).cloned();
+        match session {
+            Some(session) => session
+                .lock()
+                .guest_snapshot(participant_id)
+                .map(Some)
+                .map_err(StoreError::Backend),
+            None => Ok(None),
+        }
+    }
+
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {
         Ok(self.sessions.lock().contains_key(session_id))
     }
@@ -220,6 +243,14 @@ mod tests {
         store.push_question("s1", &question(), 0).await.unwrap();
         // The open question is available as a snapshot for late joiners.
         assert!(store.snapshot("s1").await.unwrap().is_some());
+        let asking = store.guest_snapshot("s1", "p1").await.unwrap().unwrap();
+        assert_eq!(
+            asking.phase,
+            presto_core::protocol::SessionPhasePublic::Asking
+        );
+        assert!(asking.question.is_some());
+        assert!(asking.reveal.is_none());
+        assert!(!asking.answered);
         store
             .submit_answer("s1", "p1", "q1", vec![1], 1000)
             .await
@@ -237,7 +268,16 @@ mod tests {
         assert!(reveal.leaderboard[0].score >= 500);
         // Repeated reveal is immutable.
         assert_eq!(store.reveal("s1").await.unwrap(), reveal);
-        // After reveal, there is no open question to snapshot.
+        // After reveal, legacy snapshot is closed but the personalized snapshot
+        // still carries the cached reveal for reconnects.
         assert!(store.snapshot("s1").await.unwrap().is_none());
+        let revealed = store.guest_snapshot("s1", "p1").await.unwrap().unwrap();
+        assert_eq!(
+            revealed.phase,
+            presto_core::protocol::SessionPhasePublic::Revealed
+        );
+        assert!(revealed.question.is_some());
+        assert!(revealed.reveal.is_some());
+        assert!(revealed.answered);
     }
 }

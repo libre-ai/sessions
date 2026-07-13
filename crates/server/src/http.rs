@@ -20,6 +20,9 @@ use presto_core::p0_contract::{
     P0StubWorkflowProof, P0ValidationReport, run_p0_stub_workflow, valid_p0_fixture,
     validate_p0_fixture,
 };
+use presto_core::protocol::{
+    MAX_SESSION_PARTICIPANT_NAME_BYTES, MAX_SESSION_PARTICIPANT_NAME_CHARS,
+};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -29,10 +32,15 @@ use crate::quiz::IngestRejection;
 use crate::session_identity::{SessionRole, SessionScope, workspace_identity_for_actor};
 
 const TOKEN_TTL: Duration = Duration::from_secs(6 * 3600);
+const JOIN_LINK_TTL: Duration = Duration::from_secs(30 * 60);
 /// Unambiguous alphabet (no 0/O/1/I) for human-typable codes.
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const LEGACY_SESSION_CODE_LEN: usize = 6;
+const CURRENT_SESSION_CODE_LEN: usize = 12;
 pub(crate) const MAX_LEGACY_INGEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_CONCURRENT_LEGACY_INGESTS: usize = 4;
+pub(crate) const MAX_JOIN_REDEMPTION_BODY_BYTES: usize = 256;
+pub(crate) const MAX_CONCURRENT_JOIN_REDEMPTIONS: usize = 8;
 
 fn code(n: usize) -> String {
     (0..n)
@@ -52,6 +60,7 @@ pub(crate) struct CreatedSession {
     session_id: String,
     host_token: String,
     join_url: String,
+    secure_join_url: String,
     workspace_identity: WorkspaceIdentity,
 }
 
@@ -63,7 +72,7 @@ pub(crate) async fn create_session(
     if !state.session_rate.allow() {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
-    let session_id = code(6);
+    let session_id = code(CURRENT_SESSION_CODE_LEN);
     let scope = SessionScope::for_session(&session_id);
     let host_id = format!("host-{}", code(4));
     state
@@ -81,8 +90,13 @@ pub(crate) async fn create_session(
             SystemTime::now(),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let join_token = state
+        .auth
+        .mint_join_link(&scope, JOIN_LINK_TTL, SystemTime::now())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let workspace_identity = workspace_identity_for_actor(&scope, &host_id, SessionRole::Host);
     let join_url = format!("/?s={session_id}");
+    let secure_join_url = format!("/join/{session_id}#token={join_token}");
     Ok(Json(Envelope {
         data: CreatedSession {
             tenant_id: scope.tenant_id,
@@ -90,6 +104,7 @@ pub(crate) async fn create_session(
             session_id,
             host_token,
             join_url,
+            secure_join_url,
             workspace_identity,
         },
     }))
@@ -101,6 +116,8 @@ pub(crate) struct JoinedSession {
     workspace_id: String,
     participant_id: String,
     participant_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     workspace_identity: WorkspaceIdentity,
 }
 
@@ -120,7 +137,7 @@ pub(crate) async fn join_session(
         return Err(StatusCode::NOT_FOUND);
     }
     let scope = SessionScope::for_session(&session_id);
-    let participant_id = format!("p-{}", code(6));
+    let participant_id = format!("p-{}", uuid::Uuid::new_v4().simple());
     let participant_token = state
         .auth
         .mint_scoped(
@@ -139,6 +156,171 @@ pub(crate) async fn join_session(
             workspace_id: scope.workspace_id,
             participant_id,
             participant_token,
+            name: None,
+            workspace_identity,
+        },
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct JoinParticipantRequest {
+    name: String,
+}
+
+fn join_path_session_id(path: &str) -> Option<&str> {
+    path.strip_prefix("/join/")
+        .and_then(|rest| rest.strip_suffix("/participants"))
+        .filter(|session_id| validate_session_code(session_id))
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    value
+        .to_str()
+        .ok()
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
+}
+
+fn validate_session_code(session_id: &str) -> bool {
+    matches!(
+        session_id.len(),
+        LEGACY_SESSION_CODE_LEN | CURRENT_SESSION_CODE_LEN
+    ) && session_id.bytes().all(|byte| CODE_CHARS.contains(&byte))
+}
+
+pub(crate) fn validate_join_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_SESSION_PARTICIPANT_NAME_CHARS
+        || trimmed.len() > MAX_SESSION_PARTICIPANT_NAME_BYTES
+        || trimmed.chars().any(|ch| ch.is_control())
+    {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+pub(crate) async fn authorize_join_redemption(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Some(token) = bearer_token(request.headers()) else {
+        return unauthorized("missing bearer token");
+    };
+    let Some(session_id) = join_path_session_id(request.uri().path()) else {
+        return not_found("invalid join code");
+    };
+    if !state.join_redemption_rate.allow() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::CACHE_CONTROL, "no-store")],
+            "join rate limited",
+        )
+            .into_response();
+    }
+    let scope = SessionScope::for_session(session_id);
+    if state
+        .auth
+        .verify_join_link(token, &scope, SystemTime::now())
+        .is_err()
+    {
+        return unauthorized("invalid join token");
+    }
+    match state.store.exists(session_id).await {
+        Ok(true) => {}
+        Ok(false) => return not_found("session not found"),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CACHE_CONTROL, "no-store")],
+                "join lookup failed",
+            )
+                .into_response();
+        }
+    }
+    next.run(request).await
+}
+
+fn unauthorized(reason: &'static str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::CACHE_CONTROL, "no-store")],
+        reason,
+    )
+        .into_response()
+}
+
+fn not_found(reason: &'static str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [(header::CACHE_CONTROL, "no-store")],
+        reason,
+    )
+        .into_response()
+}
+
+pub(crate) async fn redeem_join_link(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(payload): Json<JoinParticipantRequest>,
+) -> Result<Json<Envelope<JoinedSession>>, (StatusCode, String)> {
+    if !validate_session_code(&session_id) {
+        return Err((StatusCode::NOT_FOUND, "session not found".into()));
+    }
+    let name = validate_join_name(&payload.name)
+        .ok_or((StatusCode::BAD_REQUEST, "invalid name".into()))?;
+    let scope = SessionScope::for_session(&session_id);
+    let exists = state.store.exists(&session_id).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "join redemption failed".into(),
+        )
+    })?;
+    if !exists {
+        return Err((StatusCode::NOT_FOUND, "session not found".into()));
+    }
+    let participant_id = format!("p-{}", uuid::Uuid::new_v4().simple());
+    state
+        .store
+        .join(&session_id, &participant_id, &name)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "join redemption failed".into(),
+            )
+        })?;
+    let participant_token = state
+        .auth
+        .mint_scoped(
+            &scope,
+            &participant_id,
+            Capability::Participant,
+            TOKEN_TTL,
+            SystemTime::now(),
+        )
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "join redemption failed".into(),
+            )
+        })?;
+    let workspace_identity =
+        workspace_identity_for_actor(&scope, &participant_id, SessionRole::Participant);
+    Ok(Json(Envelope {
+        data: JoinedSession {
+            tenant_id: scope.tenant_id,
+            workspace_id: scope.workspace_id,
+            participant_id,
+            participant_token,
+            name: Some(name),
             workspace_identity,
         },
     }))
@@ -422,6 +604,28 @@ pub(crate) async fn app_js() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn join_boundary_rejects_ambiguous_bearers_and_invalid_codes() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-one"),
+        );
+        assert_eq!(bearer_token(&headers), Some("token-one"));
+        headers.append(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-two"),
+        );
+        assert_eq!(bearer_token(&headers), None);
+
+        assert!(validate_session_code("ABCDEF"));
+        assert!(validate_session_code("ABCDEFGHJKLM"));
+        assert!(!validate_session_code("ABCDE"));
+        assert!(!validate_session_code("ABCDEFG"));
+        assert!(!validate_session_code("ABCDEFGHJKLMN"));
+        assert!(!validate_session_code("ABC0EF"));
+    }
 
     #[test]
     fn legacy_ingest_token_requires_strong_header_safe_entropy() {

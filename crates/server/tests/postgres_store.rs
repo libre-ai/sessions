@@ -63,11 +63,15 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
 
     // Lobby: nothing open to snapshot.
     assert!(store.snapshot(&s).await.unwrap().is_none());
+    assert!(store.guest_snapshot(&s, "p1").await.unwrap().is_some());
 
     // Open at t=0; the question becomes snapshot-able for late joiners.
     store.push_question(&s, &question(), 0).await.unwrap();
     let snap = store.snapshot(&s).await.unwrap();
     assert_eq!(snap.unwrap().id, "q1");
+    let asking = store.guest_snapshot(&s, "p1").await.unwrap().unwrap();
+    assert!(asking.question.is_some());
+    assert!(asking.reveal.is_none());
 
     // Past the timer + grace: the server closes the question to answers.
     let closed = store.submit_answer(&s, "p2", "q1", vec![1], 31_501).await;
@@ -85,6 +89,9 @@ async fn postgres_enforces_deadline_and_snapshots_open_question() {
     let first = store.reveal(&s).await.unwrap();
     assert_eq!(store.reveal(&s).await.unwrap(), first);
     assert!(store.snapshot(&s).await.unwrap().is_none());
+    let revealed = store.guest_snapshot(&s, "p1").await.unwrap().unwrap();
+    assert!(revealed.reveal.is_some());
+    assert!(revealed.question.is_some());
 
     // Reveal accumulated per-section mastery exactly once: p1 answered doc#p0 correctly (1/1).
     let mastery = store.mastery(&s, "p1").await.unwrap();

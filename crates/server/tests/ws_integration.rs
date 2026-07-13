@@ -133,6 +133,21 @@ impl SessionStore for BlockingSnapshotStore {
         snap
     }
 
+    async fn guest_snapshot(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<presto_core::protocol::SessionSnapshot>> {
+        let snap = self.inner.guest_snapshot(session_id, participant_id).await;
+        if !self.paused_once.swap(true, Ordering::SeqCst) {
+            if let Some(tx) = self.entered.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            self.resume.notified().await;
+        }
+        snap
+    }
+
     async fn exists(&self, session_id: &str) -> StoreResult<bool> {
         self.inner.exists(session_id).await
     }
@@ -157,6 +172,30 @@ async fn invalid_token_is_rejected_before_upgrade() {
     assert!(
         connect_async(url).await.is_err(),
         "an unauthenticated upgrade must be refused"
+    );
+}
+
+#[tokio::test]
+async fn participant_name_is_bounded_before_websocket_upgrade() {
+    let srv = spawn_server().await;
+    let token = srv
+        .auth
+        .mint(
+            "sess-name",
+            "p1",
+            Capability::Participant,
+            Duration::from_secs(3600),
+            SystemTime::now(),
+        )
+        .unwrap();
+    let overlong = "a".repeat(25);
+    let url = format!(
+        "ws://{}/ws/sess-name?token={token}&name={overlong}",
+        srv.addr
+    );
+    assert!(
+        connect_async(url).await.is_err(),
+        "an overlong participant name must be refused before upgrade"
     );
 }
 
@@ -208,12 +247,15 @@ async fn live_round_fans_out_host_events_to_participants() {
         "the answer leaked to a participant"
     );
 
-    // p1 answers correctly; the host sees an answer_received.
+    // p1 answers correctly; the host sees an answer_received and the
+    // submitter gets an answer_accepted with the exact question id.
     send(
         &mut p1,
         r#"{"type":"submit_answer","question_id":"q1","choices":[1]}"#,
     )
     .await;
+    let accepted = recv_until(&mut p1, "answer_accepted").await;
+    assert_eq!(accepted["question_id"], "q1");
     let ack = recv_until(&mut host, "answer_received").await;
     assert_eq!(ack["participant_id"], "p1");
 
@@ -262,11 +304,17 @@ async fn late_joiner_receives_the_open_question() {
     .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // A participant joining mid-question receives the open question immediately
-    // (snapshot on connect), rather than waiting for the next broadcast.
+    // A participant joining mid-question receives the personalized snapshot
+    // immediately, then the legacy question_opened message for compatibility.
     let (mut p1, _) = connect_async(format!("{base}?token={p_token}"))
         .await
         .unwrap();
+    let first = p1.next().await.unwrap().unwrap();
+    let first: Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
+    assert_eq!(first["type"], "snapshot");
+    assert_eq!(first["snapshot"]["phase"], "asking");
+    assert_eq!(first["snapshot"]["question"]["id"], "q1");
+    assert!(first["snapshot"]["reveal"].is_null());
     let q = recv_until(&mut p1, "question_opened").await;
     assert_eq!(q["question"]["id"], "q1");
     assert!(
@@ -445,8 +493,12 @@ async fn late_joiner_sees_the_snapshot_before_the_in_flight_reveal_transition() 
         .unwrap()
         .unwrap();
     let first: Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
-    assert_eq!(first["type"], "question_opened");
-    assert_eq!(first["question"]["id"], "q1");
+    assert_eq!(first["type"], "snapshot");
+    assert_eq!(first["snapshot"]["phase"], "asking");
+    assert_eq!(first["snapshot"]["question"]["id"], "q1");
+
+    let opened = recv_until(&mut p1, "question_opened").await;
+    assert_eq!(opened["question"]["id"], "q1");
 
     let rev = recv_until(&mut p1, "answers_revealed").await;
     assert_eq!(rev["correct_choices"], serde_json::json!([1]));

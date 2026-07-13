@@ -4,9 +4,9 @@
 //! [`Question`] (with the correct answer); participants only ever receive the
 //! [`QuestionPublic`] projection.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 pub type SessionId = String;
 pub type ParticipantId = String;
@@ -15,6 +15,14 @@ pub type QuestionId = String;
 fn default_timer() -> u32 {
     30
 }
+
+/// Upper bound on the public participant roster shipped in a reconnect snapshot.
+pub const MAX_SESSION_SNAPSHOT_PARTICIPANTS: usize = 32;
+/// The reveal projection is bounded independently from the full legacy broadcast.
+pub const MAX_SESSION_SNAPSHOT_LEADERBOARD: usize = 32;
+pub const MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES: usize = 64;
+pub const MAX_SESSION_PARTICIPANT_NAME_CHARS: usize = 24;
+pub const MAX_SESSION_PARTICIPANT_NAME_BYTES: usize = 96;
 
 /// Public citation-validation state for a live question.
 ///
@@ -172,6 +180,211 @@ pub struct LeaderboardEntry {
     pub score: u32,
 }
 
+/// A public participant row embedded in a reconnect snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParticipantPublic {
+    pub participant_id: ParticipantId,
+    pub name: String,
+}
+
+/// The session phase projected to public reconnect snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionPhasePublic {
+    Lobby,
+    Asking,
+    Revealed,
+}
+
+/// The public reveal payload (no private source state).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicReveal {
+    pub question_id: QuestionId,
+    pub correct_choices: Vec<u8>,
+    pub leaderboard: Vec<LeaderboardEntry>,
+    pub heatmap: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(try_from = "SessionSnapshotRepr")]
+pub struct SessionSnapshot {
+    pub phase: SessionPhasePublic,
+    pub participants: Vec<ParticipantPublic>,
+    pub participants_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<QuestionPublic>,
+    pub answered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal: Option<PublicReveal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionSnapshotRepr {
+    phase: SessionPhasePublic,
+    participants: Vec<ParticipantPublic>,
+    participants_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    question: Option<QuestionPublic>,
+    answered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reveal: Option<PublicReveal>,
+}
+
+impl SessionSnapshotRepr {
+    fn validate(&self) -> Result<(), String> {
+        if self.participants.len() > MAX_SESSION_SNAPSHOT_PARTICIPANTS {
+            return Err("participants roster exceeds public snapshot limit".into());
+        }
+        if self.participants_count < self.participants.len() as u32 {
+            return Err("participants_count is smaller than the public roster".into());
+        }
+        for participant in &self.participants {
+            validate_public_participant(&participant.participant_id, &participant.name)?;
+        }
+        match self.phase {
+            SessionPhasePublic::Lobby => {
+                if self.question.is_some() || self.reveal.is_some() || self.answered {
+                    return Err("lobby snapshot must stay empty and unanswered".into());
+                }
+            }
+            SessionPhasePublic::Asking => {
+                if self.question.is_none() || self.reveal.is_some() {
+                    return Err("asking snapshot must expose a question and hide reveal".into());
+                }
+            }
+            SessionPhasePublic::Revealed => {
+                let question = self
+                    .question
+                    .as_ref()
+                    .ok_or("revealed snapshot must include question and reveal")?;
+                let reveal = self
+                    .reveal
+                    .as_ref()
+                    .ok_or("revealed snapshot must include question and reveal")?;
+                if reveal.question_id != question.id {
+                    return Err("reveal question does not match snapshot question".into());
+                }
+                let valid_choice_count = match question.kind {
+                    QuestionKind::Single => reveal.correct_choices.len() == 1,
+                    QuestionKind::Multi => !reveal.correct_choices.is_empty(),
+                };
+                let unique_choices = reveal
+                    .correct_choices
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                if !valid_choice_count
+                    || unique_choices.len() != reveal.correct_choices.len()
+                    || reveal
+                        .correct_choices
+                        .iter()
+                        .any(|choice| usize::from(*choice) >= question.choices.len())
+                {
+                    return Err("reveal choices do not match snapshot question".into());
+                }
+                if reveal.leaderboard.len() > MAX_SESSION_SNAPSHOT_LEADERBOARD {
+                    return Err("leaderboard exceeds public snapshot limit".into());
+                }
+                for entry in &reveal.leaderboard {
+                    validate_public_participant(&entry.participant_id, &entry.name)?;
+                }
+                if reveal.heatmap.len() > MAX_SESSION_SNAPSHOT_HEATMAP_ENTRIES
+                    || reveal
+                        .heatmap
+                        .values()
+                        .any(|ratio| !ratio.is_finite() || !(0.0..=1.0).contains(ratio))
+                {
+                    return Err("heatmap exceeds public snapshot limits".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SessionSnapshot {
+    pub fn new(
+        phase: SessionPhasePublic,
+        participants: Vec<ParticipantPublic>,
+        participants_count: u32,
+        question: Option<QuestionPublic>,
+        answered: bool,
+        reveal: Option<PublicReveal>,
+    ) -> Result<Self, String> {
+        SessionSnapshotRepr {
+            phase,
+            participants,
+            participants_count,
+            question,
+            answered,
+            reveal,
+        }
+        .try_into()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        SessionSnapshotRepr::from(self).validate()
+    }
+}
+
+impl From<&SessionSnapshot> for SessionSnapshotRepr {
+    fn from(value: &SessionSnapshot) -> Self {
+        Self {
+            phase: value.phase,
+            participants: value.participants.clone(),
+            participants_count: value.participants_count,
+            question: value.question.clone(),
+            answered: value.answered,
+            reveal: value.reveal.clone(),
+        }
+    }
+}
+
+impl Serialize for SessionSnapshot {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let representation = SessionSnapshotRepr::from(self);
+        representation
+            .validate()
+            .map_err(serde::ser::Error::custom)?;
+        representation.serialize(serializer)
+    }
+}
+
+impl TryFrom<SessionSnapshotRepr> for SessionSnapshot {
+    type Error = String;
+
+    fn try_from(value: SessionSnapshotRepr) -> Result<Self, Self::Error> {
+        value.validate()?;
+        Ok(Self {
+            phase: value.phase,
+            participants: value.participants,
+            participants_count: value.participants_count,
+            question: value.question,
+            answered: value.answered,
+            reveal: value.reveal,
+        })
+    }
+}
+
+fn validate_public_participant(participant_id: &str, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if participant_id.is_empty()
+        || participant_id.len() > 128
+        || participant_id.chars().any(char::is_control)
+        || name.is_empty()
+        || name.chars().count() > MAX_SESSION_PARTICIPANT_NAME_CHARS
+        || name.len() > MAX_SESSION_PARTICIPANT_NAME_BYTES
+        || name.chars().any(char::is_control)
+    {
+        return Err("participant projection exceeds public snapshot limits".into());
+    }
+    Ok(())
+}
+
 /// Messages a client sends to the server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -217,11 +430,17 @@ pub enum ServerMessage {
         participant_id: ParticipantId,
         participants: u32,
     },
+    Snapshot {
+        snapshot: SessionSnapshot,
+    },
     QuestionOpened {
         question: QuestionPublic,
     },
     AnswerReceived {
         participant_id: ParticipantId,
+    },
+    AnswerAccepted {
+        question_id: QuestionId,
     },
     AnswersRevealed {
         correct_choices: Vec<u8>,
@@ -258,6 +477,35 @@ mod tests {
             source_section_ids: vec!["doc1#s2".into()],
             citation_validation: Some(CitationValidation::verified(1)),
             timer_sec: 20,
+        }
+    }
+
+    fn sample_snapshot(phase: SessionPhasePublic) -> SessionSnapshot {
+        let participants = vec![ParticipantPublic {
+            participant_id: "p1".into(),
+            name: "Alice".into(),
+        }];
+        let question = Some(sample_question().public());
+        let reveal = Some(PublicReveal {
+            question_id: "q1".into(),
+            correct_choices: vec![1],
+            leaderboard: vec![LeaderboardEntry {
+                participant_id: "p1".into(),
+                name: "Alice".into(),
+                score: 600,
+            }],
+            heatmap: BTreeMap::from([(String::from("doc1#s2"), 0.0)]),
+        });
+        match phase {
+            SessionPhasePublic::Lobby => {
+                SessionSnapshot::new(phase, participants, 1, None, false, None).unwrap()
+            }
+            SessionPhasePublic::Asking => {
+                SessionSnapshot::new(phase, participants, 1, question, false, None).unwrap()
+            }
+            SessionPhasePublic::Revealed => {
+                SessionSnapshot::new(phase, participants, 1, question, true, reveal).unwrap()
+            }
         }
     }
 
@@ -301,6 +549,22 @@ mod tests {
         assert!(json.contains("\"type\":\"question_opened\""));
         let back: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(back, msg);
+
+        let accepted = ServerMessage::AnswerAccepted {
+            question_id: "q1".into(),
+        };
+        let json = serde_json::to_string(&accepted).unwrap();
+        assert!(json.contains("\"type\":\"answer_accepted\""));
+        let back: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, accepted);
+
+        let snapshot = ServerMessage::Snapshot {
+            snapshot: sample_snapshot(SessionPhasePublic::Asking),
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(json.contains("\"type\":\"snapshot\""));
+        let back: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snapshot);
     }
 
     #[test]
@@ -326,5 +590,43 @@ mod tests {
             public.grounding.validation_status,
             CitationValidationStatus::NotValidated
         );
+    }
+
+    #[test]
+    fn snapshot_secret_data_is_phase_gated() {
+        let lobby = serde_json::to_string(&sample_snapshot(SessionPhasePublic::Lobby)).unwrap();
+        let asking = serde_json::to_string(&sample_snapshot(SessionPhasePublic::Asking)).unwrap();
+        let revealed =
+            serde_json::to_string(&sample_snapshot(SessionPhasePublic::Revealed)).unwrap();
+
+        assert!(!lobby.contains("correct_choices"));
+        assert!(!asking.contains("correct_choices"));
+        assert!(revealed.contains("correct_choices"));
+        assert!(!revealed.contains("answer_accepted"));
+    }
+
+    #[test]
+    fn snapshot_invariants_are_rejected_on_deserialize() {
+        assert!(serde_json::from_str::<SessionSnapshot>(
+            r#"{"phase":"lobby","participants":[],"participants_count":0,"answered":false,"reveal":{"question_id":"q1","correct_choices":[],"leaderboard":[],"heatmap":{}}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<SessionSnapshot>(
+            r#"{"phase":"asking","participants":[],"participants_count":0,"question":{"id":"q1","text":"t","kind":"single","choices":["a"],"timer_sec":30,"grounding":{"grounded":false,"citation_count":0,"validation_status":"not_validated","source_refs_exposed":false}},"answered":false,"reveal":{"question_id":"q1","correct_choices":[],"leaderboard":[],"heatmap":{}}}"#
+        )
+        .is_err());
+
+        let mut invalid = sample_snapshot(SessionPhasePublic::Asking);
+        invalid.reveal = Some(PublicReveal {
+            question_id: "q1".into(),
+            correct_choices: vec![0],
+            leaderboard: Vec::new(),
+            heatmap: BTreeMap::new(),
+        });
+        assert!(serde_json::to_string(&invalid).is_err());
+
+        let mut mismatched = sample_snapshot(SessionPhasePublic::Revealed);
+        mismatched.reveal.as_mut().unwrap().question_id = "other".into();
+        assert!(serde_json::to_string(&mismatched).is_err());
     }
 }
