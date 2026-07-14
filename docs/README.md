@@ -29,6 +29,7 @@ invariants, and an explicit cross-spec ledger.
 | [`security/live-join-links.md`](security/live-join-links.md)                                                                 | Fragment join-link migration, no-PII Biscuit redemptions and legacy WS compat       | Migration wedge |
 | [`pwa-testing.md`](pwa-testing.md)                                                                                           | PWA shell-only cache, automated/mobile Android+iOS test procedure and availability limits | Implemented test proof |
 | [`evidence/stack-traversal-2026-07-13.md`](evidence/stack-traversal-2026-07-13.md)                                           | Redacted Proof Kit, DB, artifact and Agent Factory local traversal with explicit limits   | Local evidence |
+| [`product-readiness.md`](product-readiness.md)                                                                             | Canonical product-readiness cockpit: maturity, evidence and promotion gates              | Canonical |
 
 SP-A/B/C are written as a coherent family (SP-A is the substrate; SP-B classifies
 over it; SP-C consumes both). The evolution spec critiques the **built** product
@@ -36,7 +37,7 @@ over it; SP-C consumes both). The evolution spec critiques the **built** product
 work _alongside_ the spec roadmap below.
 
 > **Implementation status (2026-06-29).** The `Status` column above is each
-> _spec document's_ status, not the code's. The stable backend/RAG/live-session
+> _spec document's_ status, not the code's. For product maturity, see [`product-readiness.md`](product-readiness.md). The stable backend/RAG/live-session
 > baseline includes **SP-A inc-1/2** (OIDC validation, space-scoped Biscuit tokens,
 > anti-enumeration, MembershipStore + revocation recheck) and **SP-B inc-1/3**
 > (signed integrity hashes, signed PII verdict, retrieval space/clearance scoping,

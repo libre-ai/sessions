@@ -15,11 +15,12 @@ Source-grounded learning and facilitation sessions with citations, roles and bou
 | | |
 | --- | --- |
 | Maturity | **Contract-first** |
-| Works today | deterministic Rust contracts, fixtures and server stubs |
-| Not available yet | complete UI, durable storage, provider policy and production citation validation |
+| Evidence posture | executable local MVP evidence / not hosted |
+| Works today | owner+guest Dioxus/WASM; create/join/answer/reveal/leaderboard/late join/reconnect; in-process OIDC protocol tests; bounded process-local corpus; retrieve → generate → verify → approve + citations; shell-only PWA; reproducible bundles; CI/security green |
+| Not yet proven | real Keycloak, Clever HTTPS/WSS, proxy logs, physical phone, live DB/Redis, load, production |
 | Historical IDs | `rumble-lm-*` and `presto-*` identifiers are retained where they are code contracts |
 
-Runtime scaffolding is evidence of boundaries, not a finished product claim.
+Runtime scaffolding is evidence of boundaries, not a finished product claim. See [`docs/product-readiness.md`](docs/product-readiness.md) for the canonical cockpit.
 
 ## Contract proof
 
@@ -70,7 +71,7 @@ Sessions owns the learner, facilitator and participant workflow. It may hand off
 
 ## Next milestone
 
-Connect the P0 stub to a minimal grounded session with real citation outputs, explicit retention defaults and a documented BYOK/provider policy—without overstating readiness.
+Promote the executable local MVP evidence to hosted proof: close #109 in staging, then finalize retention/BYOK and persistence/multi-instance. See [`docs/product-readiness.md`](docs/product-readiness.md).
 
 ## Contributing
 
