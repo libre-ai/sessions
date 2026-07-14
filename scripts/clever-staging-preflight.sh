@@ -63,32 +63,42 @@ def normalize_git_url(raw):
         fail('invalid cc-staging remote URL')
     if '://' in raw:
         split = urlsplit(raw)
-        if split.scheme not in {'https', 'ssh'}:
+        if split.scheme not in {'https', 'ssh', 'git+ssh'}:
             fail('invalid cc-staging remote URL')
-        if not split.netloc or split.query or split.fragment:
+        if not split.netloc or not split.path or split.query or split.fragment:
+            fail('invalid cc-staging remote URL')
+        if split.scheme == 'https' and (split.username is not None or split.password is not None):
             fail('invalid cc-staging remote URL')
         path = split.path.rstrip('/')
+        if not path:
+            fail('invalid cc-staging remote URL')
         if path.endswith('.git'):
             path = path[:-4]
-        return urlunsplit((split.scheme, split.netloc, path, '', ''))
+        scheme = 'ssh' if split.scheme in {'ssh', 'git+ssh'} else 'https'
+        return urlunsplit((scheme, split.netloc, path, '', ''))
     match = re.fullmatch(r'(?:(?P<user>[^@/]+)@)?(?P<host>[^:/]+):(?P<path>.+)', raw)
     if not match:
         fail('invalid cc-staging remote URL')
     path = match.group('path').rstrip('/')
+    if not path:
+        fail('invalid cc-staging remote URL')
     if path.endswith('.git'):
         path = path[:-4]
     user = match.group('user')
     host = match.group('host')
+    if not host:
+        fail('invalid cc-staging remote URL')
     netloc = f'{user}@{host}' if user else host
     return f'ssh://{netloc}/{path}'
 
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-if not isinstance(payload, dict) or set(payload) != {'apps'}:
+if not isinstance(payload, dict) or set(payload) - {'apps', 'default'} or 'apps' not in payload:
     fail('invalid .clever.json')
 apps = payload.get('apps')
 if not isinstance(apps, list):
     fail('invalid .clever.json')
+app_ids = set()
 staging = []
 for app in apps:
     if not isinstance(app, dict) or set(app) != REQUIRED_APP_KEYS:
@@ -96,10 +106,17 @@ for app in apps:
     for key in REQUIRED_APP_KEYS:
         if not isinstance(app[key], str) or not app[key]:
             fail('invalid .clever.json')
+    app_ids.add(app['app_id'])
     if app['alias'] == 'staging':
         staging.append(app)
 if len(staging) != 1:
     fail('expected exactly one staging alias in .clever.json')
+if 'default' in payload:
+    default = payload['default']
+    if not isinstance(default, str) or not default:
+        fail('invalid .clever.json')
+    if default not in app_ids:
+        fail('invalid .clever.json')
 actual = normalize_git_url(sys.argv[2])
 expected = {
     normalize_git_url(staging[0]['deploy_url']),

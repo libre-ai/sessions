@@ -3,10 +3,19 @@
     {
       "app_id": "app_01j0staging00000000000001",
       "org_id": "orga_01j0staging0000000000001",
-      "deploy_url": "https://staging.example.cleverapps.io/",
-      "git_ssh_url": "ssh://git@push.clever-cloud.com/orga_01j0staging0000000000001/app_01j0staging00000000000001.git",
+      "deploy_url": "https://push.clever-cloud.com/orga_01j0staging0000000000001/app_01j0staging00000000000001.git",
+      "git_ssh_url": "git+ssh://git@push.clever-cloud.com/orga_01j0staging0000000000001/app_01j0staging00000000000001.git",
       "name": "sessions-staging",
       "alias": "staging"
+    },
+    {
+      "app_id": "app_01j0prod0000000000000002",
+      "org_id": "orga_01j0prod0000000000002",
+      "deploy_url": "https://push.clever-cloud.com/orga_01j0prod0000000000002/app_01j0prod0000000000000002.git",
+      "git_ssh_url": "git+ssh://git@push.clever-cloud.com/orga_01j0prod0000000000002/app_01j0prod0000000000000002.git",
+      "name": "sessions-production",
+      "alias": "production"
     }
-  ]
+  ],
+  "default": "app_01j0prod0000000000000002"
 }
