@@ -78,15 +78,15 @@ Not yet proven in a real environment:
 ## Promotion gates
 
 - **P0** — executable local MVP evidence: already met locally/CI; keep the evidence green.
-- **P1** — hosted staging #109: real Keycloak, Clever HTTPS/WSS, proxy logs, physical phone, live DB/Redis.
-- **P2** — persistence / multi-instance pilot: shared persistence, revocation fanout, and multi-instance behavior.
+- **P1** — hosted staging #109 using topology A: real Keycloak, Clever HTTPS/WSS, proxy-log policy proof, physical-phone smoke, exactly one instance, and no `DATABASE_URL` or `REDIS_URL`.
+- **P2** — persistence / multi-instance pilot: select the supported topology, then prove shared persistence, revocation fanout, restart behavior, and multi-instance behavior.
 
 ## Release stages
 
 | Capability | Status | Implementation | Evidence | Real-environment proof | Remaining gate |
 | --- | --- | --- | --- | --- | --- |
 | P0 — executable local MVP evidence | proven local+CI | owner+guest Dioxus/WASM; create/join/answer/reveal/leaderboard/late join/reconnect; in-process OIDC protocol tests; bounded process-local corpus; retrieve → generate → verify → approve + citations; shell-only PWA; reproducible bundles; CI/security green | recent local verification; docs above | not hosted | none; already met |
-| P1 — hosted staging #109 | blocked | real Keycloak; Clever HTTPS/WSS; proxy logs; physical phone; live DB/Redis | staging doc and cockpit | not proven | close #109 |
-| P2 — persistence / multi-instance pilot | later | shared persistence; revocation fanout; multi-instance behavior | none yet | not proven | finish the persistence adapter and prove the pilot |
+| P1 — hosted staging #109 | blocked | topology A: real Keycloak; Clever HTTPS/WSS; proxy-log policy proof; physical phone; exactly one instance; no `DATABASE_URL` or `REDIS_URL` | `docs/deploy/clever-cloud.md`; staging cockpit | not proven | close #109 without claiming persistence or restart recovery |
+| P2 — persistence / multi-instance pilot | later | supported topology selection; shared persistence; revocation fanout; restart and multi-instance behavior | none yet | not proven | finish the persistence adapter and prove the pilot |
 
 This cockpit tracks evidence, not issue count. It is the canonical source for maturity.
