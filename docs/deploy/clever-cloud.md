@@ -1,108 +1,89 @@
-# Deploying Presto-Matic on Clever Cloud (sovereign, multi-instance)
+# Déploiement Presto-Matic sur Clever Cloud
 
-The binary already selects its store/fanout/auth from the environment (see
-`crates/server/src/main.rs`), so a multi-instance deployment is configuration —
-no code change. This guide covers the Clever-specific bits.
+Ce dépôt supporte deux topologies **incompatibles**. Choisissez-en une seule.
 
-## Prerequisites
+## Topologie A — owner RC single-instance
 
-- A Clever Cloud account and the [`clever` CLI](https://www.clever-cloud.com/developers/doc/cli/)
-  (`clever login`).
-- A **production** PostgreSQL plan (pgvector is **not** available on DEV plans).
+Usage : staging #109.
 
-## 1. Create the app (Rust)
+- OIDC réel configuré (`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_REDIRECT_URI`)
+- `OWNER_AUTH_SINGLE_INSTANCE=1`
+- `BISCUIT_PRIVATE_KEY` partagé
+- `INGEST_TOKEN` présent
+- **exactement 1 instance**
+- **sans** `DATABASE_URL`
+- **sans** `REDIS_URL`
+- pas d’auto-récupération au redémarrage : owner, corpus et état live sont perdus
+
+Clever AI est **désactivé / non configuré** pour ce staging : aucun `CLEVER_AI_*`, aucun `LOCAL_AI_*`.
+
+## Topologie B — anonymous live multi-instance
+
+Usage : sessions live anonymes uniquement.
+
+- owner auth désactivé (pas de tuple OIDC)
+- `DATABASE_URL` requis
+- `REDIS_URL` requis
+- `BISCUIT_PRIVATE_KEY` requis
+- `INGEST_TOKEN` requis
+- plusieurs instances autorisées
+- **ne prétend pas supporter owner**
+
+## Pré-build
+
+Le hook pré-build est obligatoire : il installe/pin le Dioxus CLI 0.7.9, construit **les deux bundles canoniques** depuis le checkout déployé (`owner-app` et `join-app`) puis les vérifie avant la compilation Rust.
 
 ```bash
-clever create --type rust presto-matic --region par
-# Select the workspace binary and cache deps for faster builds:
 clever env set CC_RUST_BIN presto-server
 clever env set CC_CACHE_DEPENDENCIES true
 clever env set CC_PRE_BUILD_HOOK './scripts/clever-pre-build.sh'
 ```
 
-Le hook fail-closed installe Dioxus CLI 0.7.9, construit le bundle owner depuis le checkout déployé et vérifie son paquet SHA-256 avant le build Rust. Les assets sont générés et ne sont volontairement pas suivis par Git. Ne retirez pas ce hook : le build serveur doit embarquer le bundle qu’il vient de produire, jamais un bundle committé obsolète.
+## Déploiement staging
 
-Clever builds ensuite avec `cargo build --release --locked` (so `Cargo.lock` must be
-committed — it is) and expects the app to listen on `0.0.0.0:8080`. `main.rs`
-defaults `PORT` to 8080, so no extra config is needed.
-
-## 2. Add-ons
-
-### PostgreSQL + pgvector
+L’utilisateur seul exécute la poussée git suivante :
 
 ```bash
-clever addon create postgresql-addon --plan <production-plan> pm-postgres --region par
-clever service link-addon pm-postgres
+DOXALLIA_ALLOW_MAIN_PUSH=1 git -C "$(git rev-parse --show-toplevel)" push cc-staging origin/main:master
 ```
 
-Then **open a Ticket Center request to enable the `pgvector` extension** on this
-add-on (it is provided on demand, not self-serve, and not on DEV plans). The app
-runs `CREATE EXTENSION IF NOT EXISTS vector;` on connect, which only succeeds
-once support has enabled it.
+- ne pas utiliser `clever deploy`
+- prod est hors scope ici
 
-### Redis
+## Variables pour A
 
 ```bash
-clever addon create redis-addon --plan <plan> pm-redis --region par
-clever service link-addon pm-redis
+clever env set OIDC_ISSUER "<https issuer>"
+clever env set OIDC_CLIENT_ID "<client id>"
+clever env set OIDC_REDIRECT_URI "https://<app>/auth/callback"
+clever env set OWNER_AUTH_SINGLE_INSTANCE "1"
+clever env set BISCUIT_PRIVATE_KEY "<opaque hex key>"
+clever env set INGEST_TOKEN "<strong printable ASCII token>"
 ```
 
-## 3. Environment
+Ne définissez pas `DATABASE_URL` ni `REDIS_URL` sur A.
 
-Set the runtime variables below. The two add-on URIs come from each add-on's
-dashboard / `clever env` after linking (Clever injects add-on variables under its
-own names; copy the connection URIs into the names the app reads):
+## Variables pour B
 
 ```bash
-# Shared session state + fanout (required for multi-instance):
-clever env set DATABASE_URL "<postgresql connection uri>"
-clever env set REDIS_URL    "<redis connection uri>"
-
-# Shared Biscuit key — MUST be identical across instances. Generate one:
-#   cargo run -p presto-server -- keygen
-clever env set BISCUIT_PRIVATE_KEY "<hex from keygen>"
-
-# Mandatory legacy ingestion bearer; generate with `openssl rand -hex 32`.
-# Producers of POST /corpus/documents must send it; never commit/log it.
-clever env set INGEST_TOKEN "<strong random token, at least 32 bytes>"
-
-# Hosted AI is Clever AI only. Values stay unset until the private contract,
-# region, retention and endpoint reference have been approved.
-clever env set CLEVER_AI_ENABLED "1"
-clever env set CLEVER_AI_BASE_URL "<approved Clever AI HTTPS origin>"
-clever env set CLEVER_AI_API_KEY "<secret managed outside Git>"
-clever env set CLEVER_AI_CONTRACT_REF "<versioned non-secret contract reference>"
-clever env set CLEVER_AI_EMBED_MODEL "<approved embedding model>"
-clever env set CLEVER_AI_CHAT_MODEL "<approved chat model>"
+clever env set DATABASE_URL "<postgresql uri>"
+clever env set REDIS_URL "<redis uri>"
+clever env set BISCUIT_PRIVATE_KEY "<opaque hex key>"
+clever env set INGEST_TOKEN "<strong printable ASCII token>"
 ```
 
-> This is a configuration reference, not a provisioning instruction. Direct
-> third-party hosted fallbacks are rejected by the provider policy.
+Ne configurez pas le tuple OIDC pour B ; l’owner reste hors contrat.
 
-## 4. Deploy + scale
-
-```bash
-git push clever feat/p7-clever-deploy:master   # or your default branch
-clever scale --min-instances 2 --max-instances 2   # exercise Redis fanout + shared state
-```
-
-With Postgres + Redis + a shared Biscuit key set, two instances share session
-state (Postgres), fan out live events (Redis), and accept each other's tokens
-(shared key) — the multi-instance path proven by the gated integration tests.
-
-## 5. Smoke test
+## Smoke
 
 ```bash
 scripts/clever-smoke.sh https://<your-app>.cleverapps.io
 ```
 
-Checks `/health` and that `POST /sessions` returns a host token (which exercises
-the Postgres write + Biscuit mint in production).
+Le smoke vérifie `/health` puis `POST /sessions` sans afficher de JSON, de `host_token`, de join token ni de fragment d’URL.
 
 ## Notes
 
-- Serve over **HTTPS/WSS** (Clever terminates TLS): the WS join token rides the
-  query string (browsers cannot set WS headers); TLS keeps it encrypted in
-  transit. Do not enable access logging of WS URLs with query strings.
-- `POST /sessions` is currently open (anyone can host). Add a rate-limit / host
-  identity (OIDC/Keycloak) before a public launch.
+- servir en **HTTPS/WSS** ; `/ws/{session_id}` transporte le token dans la query string, donc ne jamais logger les queries `/ws`
+- les secrets ne doivent jamais être copiés dans des exemples réalistes
+- `POST /sessions` crée une session éphémère : le token et le lien de join ne doivent pas être persistés côté client
