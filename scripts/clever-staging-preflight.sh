@@ -92,52 +92,13 @@ fi
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
+from urllib.parse import urlsplit
 
-raw = Path(sys.argv[1]).read_text(encoding='utf-8')
-try:
-    payload = json.loads(raw)
-except json.JSONDecodeError as exc:
-    raise SystemExit(f'invalid clever env JSON: {exc}')
+MAX_CLIENT_ID_LENGTH = 256
 
-if isinstance(payload, dict):
-    items = payload.items()
-elif isinstance(payload, list):
-    items = []
-    for item in payload:
-        if not isinstance(item, dict):
-            raise SystemExit('invalid clever env entry')
-        name = item.get('name') or item.get('key')
-        if not isinstance(name, str):
-            raise SystemExit('invalid clever env entry name')
-        items.append((name, item.get('value')))
-else:
-    raise SystemExit('unsupported clever env JSON shape')
-
-env = {name: value for name, value in items if isinstance(name, str)}
-
-required_exact = {
-    'CC_RUST_BIN': 'presto-server',
-    'CC_CACHE_DEPENDENCIES': 'true',
-    'CC_PRE_BUILD_HOOK': './scripts/clever-pre-build.sh',
-    'OWNER_AUTH_SINGLE_INSTANCE': '1',
-}
-for name, expected in required_exact.items():
-    if env.get(name) != expected:
-        raise SystemExit(f'bad required env: {name}')
-
-required_present = [
-    'OIDC_ISSUER',
-    'OIDC_CLIENT_ID',
-    'OIDC_REDIRECT_URI',
-    'BISCUIT_PRIVATE_KEY',
-    'INGEST_TOKEN',
-]
-for name in required_present:
-    if name not in env or not isinstance(env[name], str) or not env[name]:
-        raise SystemExit(f'missing required env: {name}')
-
-forbidden = [
+FORBIDDEN = {
     'DATABASE_URL',
     'REDIS_URL',
     'CLEVER_AI_ENABLED',
@@ -151,23 +112,167 @@ forbidden = [
     'LOCAL_AI_API_KEY',
     'LOCAL_AI_EMBED_MODEL',
     'LOCAL_AI_CHAT_MODEL',
+}
+REQUIRED_EXACT = {
+    'CC_RUST_BIN': 'presto-server',
+    'CC_CACHE_DEPENDENCIES': 'true',
+    'CC_PRE_BUILD_HOOK': './scripts/clever-pre-build.sh',
+    'OWNER_AUTH_SINGLE_INSTANCE': '1',
+}
+REQUIRED_PRESENT = [
+    'OIDC_ISSUER',
+    'OIDC_CLIENT_ID',
+    'OIDC_REDIRECT_URI',
+    'BISCUIT_PRIVATE_KEY',
+    'INGEST_TOKEN',
 ]
-for name in forbidden:
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def load_payload(path):
+    raw = Path(path).read_text(encoding='utf-8')
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f'invalid clever env JSON: {exc.msg}')
+
+
+def parse_entry(entry):
+    if not isinstance(entry, dict):
+        fail('invalid clever env entry')
+    name = entry.get('name')
+    key = entry.get('key')
+    if isinstance(name, str) and isinstance(key, str) and name != key:
+        fail('invalid clever env entry')
+    if isinstance(name, str):
+        actual_name = name
+    elif isinstance(key, str):
+        actual_name = key
+    else:
+        fail('invalid clever env entry')
+    value = entry.get('value')
+    if not isinstance(value, str):
+        fail('invalid clever env entry')
+    return actual_name, value
+
+
+def add_env(env, name, value):
+    existing = env.get(name)
+    if existing is None:
+        env[name] = value
+    elif existing != value:
+        fail(f'ambiguous clever env collision for {name}')
+
+
+def parse_source(source, source_kind):
+    if not isinstance(source, dict):
+        fail(f'invalid clever {source_kind}')
+    addon_id = source.get('addonId')
+    addon_name = source.get('addonName')
+    if not isinstance(addon_id, str) or not isinstance(addon_name, str):
+        fail(f'invalid clever {source_kind}')
+    entries = source.get('env')
+    if not isinstance(entries, list):
+        fail(f'invalid clever {source_kind}')
+    return [parse_entry(entry) for entry in entries]
+
+
+def parse_payload(payload):
+    env = {}
+    if isinstance(payload, list):
+        for entry in payload:
+            add_env(env, *parse_entry(entry))
+        return env
+    if not isinstance(payload, dict):
+        fail('unsupported clever env JSON shape')
+
+    canonical_keys = {'env', 'fromAddons', 'fromDependencies'}
+    payload_keys = set(payload)
+    if payload_keys <= canonical_keys and 'env' in payload:
+        entries = payload.get('env')
+        if not isinstance(entries, list):
+            fail('invalid clever env JSON shape')
+        for entry in entries:
+            add_env(env, *parse_entry(entry))
+
+        from_addons = payload.get('fromAddons', [])
+        if not isinstance(from_addons, list):
+            fail('invalid clever env JSON shape')
+        for source in from_addons:
+            for name, value in parse_source(source, 'addon source'):
+                add_env(env, name, value)
+
+        from_dependencies = payload.get('fromDependencies', [])
+        if not isinstance(from_dependencies, list):
+            fail('invalid clever env JSON shape')
+        for source in from_dependencies:
+            for name, value in parse_source(source, 'dependency source'):
+                add_env(env, name, value)
+        return env
+
+    if payload_keys.isdisjoint(canonical_keys) and all(isinstance(value, str) for value in payload.values()):
+        for name, value in payload.items():
+            add_env(env, name, value)
+        return env
+
+    fail('unsupported clever env JSON shape')
+
+
+def validate_url(name, value, required_path=None):
+    split = urlsplit(value)
+    if split.scheme != 'https':
+        fail(f'invalid {name}')
+    if not split.hostname:
+        fail(f'invalid {name}')
+    if split.username is not None or split.password is not None:
+        fail(f'invalid {name}')
+    try:
+        port = split.port
+    except ValueError:
+        fail(f'invalid {name}')
+    if port is not None and not (1 <= port <= 65535):
+        fail(f'invalid {name}')
+    if split.query or split.fragment:
+        fail(f'invalid {name}')
+    if required_path is not None and split.path != required_path:
+        fail(f'invalid {name}')
+
+
+def validate_client_id(value):
+    if not (0 < len(value) <= MAX_CLIENT_ID_LENGTH):
+        fail('invalid OIDC_CLIENT_ID')
+    if any(ch.isspace() or unicodedata.category(ch).startswith('C') for ch in value):
+        fail('invalid OIDC_CLIENT_ID')
+
+
+raw_payload = load_payload(sys.argv[1])
+env = parse_payload(raw_payload)
+
+for name, expected in REQUIRED_EXACT.items():
+    if env.get(name) != expected:
+        fail(f'bad required env: {name}')
+
+for name in REQUIRED_PRESENT:
+    if name not in env or not isinstance(env[name], str) or not env[name]:
+        fail(f'missing required env: {name}')
+
+for name in FORBIDDEN:
     if name in env:
-        raise SystemExit(f'forbidden env present: {name}')
+        fail(f'forbidden env present: {name}')
 
 if not re.fullmatch(r'[0-9a-fA-F]{64}', env['BISCUIT_PRIVATE_KEY']):
-    raise SystemExit('invalid BISCUIT_PRIVATE_KEY format')
+    fail('invalid BISCUIT_PRIVATE_KEY format')
 
 ingest = env['INGEST_TOKEN']
 if not (32 <= len(ingest) <= 512) or any(ord(ch) < 0x21 or ord(ch) > 0x7e for ch in ingest):
-    raise SystemExit('invalid INGEST_TOKEN format')
+    fail('invalid INGEST_TOKEN format')
 
-if not env['OIDC_ISSUER'].startswith('https://'):
-    raise SystemExit('OIDC_ISSUER must be https')
-redirect = env['OIDC_REDIRECT_URI']
-if not redirect.startswith('https://') or not redirect.endswith('/auth/callback'):
-    raise SystemExit('OIDC_REDIRECT_URI must be an https callback')
+validate_url('OIDC_ISSUER', env['OIDC_ISSUER'])
+validate_url('OIDC_REDIRECT_URI', env['OIDC_REDIRECT_URI'], required_path='/auth/callback')
+validate_client_id(env['OIDC_CLIENT_ID'])
 PY
 
 printf 'staging preflight passed\n'
