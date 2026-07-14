@@ -16,6 +16,7 @@ use serde_json::json;
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static JOIN_CONNECTION: RefCell<Option<JoinTransport>> = const { RefCell::new(None) };
+    static JOIN_LISTENERS: RefCell<Option<JoinListeners>> = const { RefCell::new(None) };
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +24,12 @@ struct JoinCredentials {
     session_id: String,
     participant_token: String,
     participant_id: ParticipantId,
+}
+
+#[cfg(target_arch = "wasm32")]
+struct JoinListeners {
+    _offline: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
+    _online: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -56,6 +63,7 @@ pub fn App() -> Element {
     let mut join_token = use_signal(|| None::<String>);
     let mut reconnect_attempts = use_signal(|| 0_u8);
     let connection_epoch = use_signal(|| 0_u64);
+    let heartbeat_seen = use_signal(|| 0_u64);
     let mut participant_credentials = use_signal(|| None::<JoinCredentials>);
     let initial_join = use_signal(read_join_link_and_scrub);
 
@@ -79,9 +87,14 @@ pub fn App() -> Element {
         let Some(window) = web_sys::window() else {
             return;
         };
+        let already_bound = JOIN_LISTENERS.with(|slot| slot.borrow().is_some());
+        if already_bound {
+            return;
+        }
         let state_for_offline = state;
         let reconnect_attempts_for_offline = reconnect_attempts;
         let connection_epoch_for_offline = connection_epoch;
+        let heartbeat_seen_for_offline = heartbeat_seen;
         let participant_credentials_for_offline = participant_credentials;
         let offline = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
             move |_| {
@@ -89,41 +102,44 @@ pub fn App() -> Element {
                     state_for_offline,
                     reconnect_attempts_for_offline,
                     connection_epoch_for_offline,
+                    heartbeat_seen_for_offline,
                     participant_credentials_for_offline,
                 );
             },
         ));
         let _ =
             window.add_event_listener_with_callback("offline", offline.as_ref().unchecked_ref());
-        std::mem::forget(offline);
 
-        let poll = wasm_bindgen::closure::Closure::<dyn FnMut()>::wrap(Box::new(move || {
-            let Some(window) = web_sys::window() else {
-                return;
-            };
-            if window.navigator().on_line() {
-                return;
-            }
-            if let Some(credentials) = participant_credentials.read().clone() {
-                let current = state.read().clone();
-                if matches!(
-                    current,
-                    GuestJoinState::Disconnected { .. }
-                        | GuestJoinState::Expired { .. }
-                        | GuestJoinState::Failed { .. }
-                ) {
-                    return;
+        let state_for_online = state;
+        let reconnect_attempts_for_online = reconnect_attempts;
+        let connection_epoch_for_online = connection_epoch;
+        let heartbeat_seen_for_online = heartbeat_seen;
+        let participant_credentials_for_online = participant_credentials;
+        let online = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
+            move |_| {
+                if let Some(credentials) = participant_credentials_for_online.read().clone() {
+                    let current = state_for_online.read().clone();
+                    if !matches!(current, GuestJoinState::Disconnected { .. }) {
+                        return;
+                    }
+                    schedule_reconnect(
+                        credentials,
+                        state_for_online,
+                        reconnect_attempts_for_online,
+                        connection_epoch_for_online,
+                        heartbeat_seen_for_online,
+                    );
                 }
-                clear_join_connection();
-                state.set(current.apply_event(GuestJoinEvent::Disconnected));
-                schedule_reconnect(credentials, state, reconnect_attempts, connection_epoch);
-            }
-        }));
-        let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
-            poll.as_ref().unchecked_ref(),
-            250,
-        );
-        std::mem::forget(poll);
+            },
+        ));
+        let _ = window.add_event_listener_with_callback("online", online.as_ref().unchecked_ref());
+
+        JOIN_LISTENERS.with(|slot| {
+            *slot.borrow_mut() = Some(JoinListeners {
+                _offline: offline,
+                _online: online,
+            });
+        });
     });
 
     let current = state.read().clone();
@@ -184,6 +200,7 @@ pub fn App() -> Element {
                                             state,
                                             reconnect_attempts,
                                             connection_epoch,
+                                            heartbeat_seen,
                                             epoch,
                                         );
                                     }
@@ -261,6 +278,17 @@ pub fn App() -> Element {
                             if current.is_locked() {
                                 Toast { message: "Réponse enregistrée".to_string() }
                             }
+                            button {
+                                class: "presto-button presto-button--secondary",
+                                onclick: move |_| request_join_reconnect(
+                                    state,
+                                    reconnect_attempts,
+                                    connection_epoch,
+                                    heartbeat_seen,
+                                    participant_credentials,
+                                ),
+                                "Reprendre la connexion"
+                            }
                         }
                     },
                     GuestJoinState::Revealed { question, reveal, .. } => rsx! {
@@ -270,6 +298,17 @@ pub fn App() -> Element {
                                 None => rsx! { Card { title: "Révélation".to_string(), body: "Réponse révélée.".to_string() } },
                             }
                             JoinLeaderboard { entries: reveal.leaderboard.clone() }
+                            button {
+                                class: "presto-button presto-button--secondary",
+                                onclick: move |_| request_join_reconnect(
+                                    state,
+                                    reconnect_attempts,
+                                    connection_epoch,
+                                    heartbeat_seen,
+                                    participant_credentials,
+                                ),
+                                "Reprendre la connexion"
+                            }
                         }
                     },
                     GuestJoinState::Disconnected { .. } => rsx! {
@@ -298,23 +337,78 @@ pub fn App() -> Element {
 
 #[cfg(target_arch = "wasm32")]
 fn trigger_join_disconnect(
-    mut state: Signal<GuestJoinState>,
+    state: Signal<GuestJoinState>,
     reconnect_attempts: Signal<u8>,
     connection_epoch: Signal<u64>,
+    heartbeat_seen: Signal<u64>,
     participant_credentials: Signal<Option<JoinCredentials>>,
 ) {
     if let Some(credentials) = participant_credentials.read().clone() {
-        let current = state.read().clone();
-        if matches!(
-            current,
-            GuestJoinState::Expired { .. } | GuestJoinState::Failed { .. }
-        ) {
-            return;
-        }
-        clear_join_connection();
-        state.set(current.apply_event(GuestJoinEvent::Disconnected));
-        schedule_reconnect(credentials, state, reconnect_attempts, connection_epoch);
+        mark_join_disconnected(
+            credentials,
+            state,
+            reconnect_attempts,
+            connection_epoch,
+            heartbeat_seen,
+            true,
+        );
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn request_join_reconnect(
+    state: Signal<GuestJoinState>,
+    reconnect_attempts: Signal<u8>,
+    connection_epoch: Signal<u64>,
+    heartbeat_seen: Signal<u64>,
+    participant_credentials: Signal<Option<JoinCredentials>>,
+) {
+    if let Some(credentials) = participant_credentials.read().clone() {
+        mark_join_disconnected(
+            credentials,
+            state,
+            reconnect_attempts,
+            connection_epoch,
+            heartbeat_seen,
+            true,
+        );
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn mark_join_disconnected(
+    credentials: JoinCredentials,
+    mut state: Signal<GuestJoinState>,
+    reconnect_attempts: Signal<u8>,
+    connection_epoch: Signal<u64>,
+    heartbeat_seen: Signal<u64>,
+    should_schedule_reconnect: bool,
+) {
+    let current = state.read().clone();
+    let was_disconnected = match current {
+        GuestJoinState::Expired { .. } | GuestJoinState::Failed { .. } => return,
+        GuestJoinState::Disconnected { .. } => true,
+        other => {
+            // Publish the state before dropping the active `onclose` closure;
+            // otherwise a callback can destroy itself before the signal write.
+            state.set(other.apply_event(GuestJoinEvent::Disconnected));
+            false
+        }
+    };
+    if should_schedule_reconnect {
+        schedule_reconnect(
+            credentials,
+            state,
+            reconnect_attempts,
+            connection_epoch,
+            heartbeat_seen,
+        );
+    } else if !was_disconnected {
+        // Invalidate the closed connection immediately so its heartbeat cannot
+        // race and cancel the later `online` resume attempt.
+        next_connection_epoch(connection_epoch);
+    }
+    clear_join_connection();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -454,6 +548,7 @@ fn connect_session(
     mut state: Signal<GuestJoinState>,
     mut reconnect_attempts: Signal<u8>,
     connection_epoch: Signal<u64>,
+    heartbeat_seen: Signal<u64>,
     epoch: u64,
 ) {
     use wasm_bindgen::{JsCast, closure::Closure};
@@ -476,13 +571,19 @@ fn connect_session(
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
     let epoch_for_open = epoch;
+    let mut state_for_open = state;
     let onopen = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |_| {
         if *connection_epoch.read() == epoch_for_open {
             reconnect_attempts.set(0);
+            let current = state_for_open.read().clone();
+            if matches!(current, GuestJoinState::Disconnected { .. }) {
+                state_for_open.set(current.apply_event(GuestJoinEvent::Reconnected));
+            }
         }
     }));
 
     let mut state_for_message = state;
+    let mut heartbeat_seen_for_message = heartbeat_seen;
     let epoch_for_message = epoch;
     let onmessage = Closure::<dyn FnMut(web_sys::MessageEvent)>::wrap(Box::new(
         move |event: web_sys::MessageEvent| {
@@ -495,6 +596,11 @@ fn connect_session(
             let Ok(message) = serde_json::from_str::<ServerMessage>(&text) else {
                 return;
             };
+            if matches!(message, ServerMessage::Pong) {
+                let next = heartbeat_seen_for_message.read().wrapping_add(1);
+                heartbeat_seen_for_message.set(next);
+                return;
+            }
             if let Some(event) = GuestJoinEvent::from_server_message(message) {
                 let current = state_for_message.read().clone();
                 let mut next = current.clone().apply_event(event.clone());
@@ -508,51 +614,41 @@ fn connect_session(
         },
     ));
 
-    let mut state_for_error = state;
+    let state_for_error = state;
     let attempts_for_error = reconnect_attempts;
     let epoch_for_error = connection_epoch;
+    let heartbeat_seen_for_error = heartbeat_seen;
     let credentials_for_error = credentials.clone();
     let onerror = Closure::<dyn FnMut(web_sys::ErrorEvent)>::wrap(Box::new(move |_| {
         if *epoch_for_error.read() != epoch {
             return;
         }
-        let current = state_for_error.read().clone();
-        if matches!(
-            current,
-            GuestJoinState::Expired { .. } | GuestJoinState::Failed { .. }
-        ) {
-            return;
-        }
-        state_for_error.set(current.clone().apply_event(GuestJoinEvent::Disconnected));
-        schedule_reconnect(
+        mark_join_disconnected(
             credentials_for_error.clone(),
             state_for_error,
             attempts_for_error,
             epoch_for_error,
+            heartbeat_seen_for_error,
+            true,
         );
     }));
 
-    let mut state_for_close = state;
+    let state_for_close = state;
     let attempts_for_close = reconnect_attempts;
     let epoch_for_close = connection_epoch;
+    let heartbeat_seen_for_close = heartbeat_seen;
     let credentials_for_close = credentials.clone();
     let onclose = Closure::<dyn FnMut(web_sys::CloseEvent)>::wrap(Box::new(move |_| {
         if *epoch_for_close.read() != epoch {
             return;
         }
-        let current = state_for_close.read().clone();
-        if matches!(
-            current,
-            GuestJoinState::Expired { .. } | GuestJoinState::Failed { .. }
-        ) {
-            return;
-        }
-        state_for_close.set(current.clone().apply_event(GuestJoinEvent::Disconnected));
-        schedule_reconnect(
+        mark_join_disconnected(
             credentials_for_close.clone(),
             state_for_close,
             attempts_for_close,
             epoch_for_close,
+            heartbeat_seen_for_close,
+            true,
         );
     }));
 
@@ -568,6 +664,47 @@ fn connect_session(
     let _ = ws.set_onerror(Some(transport._onerror.as_ref().unchecked_ref()));
     let _ = ws.set_onclose(Some(transport._onclose.as_ref().unchecked_ref()));
 
+    let heartbeat_seen_for_loop = heartbeat_seen;
+    let credentials_for_heartbeat = credentials.clone();
+    let state_for_heartbeat = state;
+    let attempts_for_heartbeat = reconnect_attempts;
+    let epoch_for_heartbeat = connection_epoch;
+    spawn(async move {
+        loop {
+            gloo_timers::future::TimeoutFuture::new(5_000).await;
+            if *epoch_for_heartbeat.read() != epoch {
+                return;
+            }
+            let pong_before = *heartbeat_seen_for_loop.read();
+            if !send_join_message(&ClientMessage::Ping) {
+                mark_join_disconnected(
+                    credentials_for_heartbeat.clone(),
+                    state_for_heartbeat,
+                    attempts_for_heartbeat,
+                    epoch_for_heartbeat,
+                    heartbeat_seen_for_loop,
+                    true,
+                );
+                return;
+            }
+            gloo_timers::future::TimeoutFuture::new(3_000).await;
+            if *epoch_for_heartbeat.read() != epoch {
+                return;
+            }
+            if *heartbeat_seen_for_loop.read() == pong_before {
+                mark_join_disconnected(
+                    credentials_for_heartbeat.clone(),
+                    state_for_heartbeat,
+                    attempts_for_heartbeat,
+                    epoch_for_heartbeat,
+                    heartbeat_seen_for_loop,
+                    true,
+                );
+                return;
+            }
+        }
+    });
+
     JOIN_CONNECTION.with(|slot| *slot.borrow_mut() = Some(transport));
 }
 
@@ -577,6 +714,7 @@ fn schedule_reconnect(
     mut state: Signal<GuestJoinState>,
     mut reconnect_attempts: Signal<u8>,
     connection_epoch: Signal<u64>,
+    heartbeat_seen: Signal<u64>,
 ) {
     let attempt = reconnect_attempts.read().saturating_add(1);
     reconnect_attempts.set(attempt);
@@ -586,31 +724,66 @@ fn schedule_reconnect(
         });
         return;
     }
-    let delay_ms = 250_u32
+    let delay_ms = 1_000_u32
         .saturating_mul(1 << (attempt.saturating_sub(1) as u32))
         .min(4_000);
     let epoch = next_connection_epoch(connection_epoch);
+    let credentials_for_timer = credentials.clone();
+    let mut state_for_timer = state;
+    let reconnect_attempts_for_timer = reconnect_attempts;
+    let connection_epoch_for_timer = connection_epoch;
+    let heartbeat_seen_for_timer = heartbeat_seen;
     spawn(async move {
         gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-        if *connection_epoch.read() != epoch {
-            return;
+        loop {
+            if *connection_epoch_for_timer.read() != epoch {
+                return;
+            }
+            let offline = web_sys::window()
+                .map(|window| !window.navigator().on_line())
+                .unwrap_or(true);
+            if !offline {
+                break;
+            }
+            // Waiting for browser connectivity does not consume another auth
+            // retry; the `online` listener may still accelerate by changing the
+            // epoch and starting a fresh attempt.
+            gloo_timers::future::TimeoutFuture::new(250).await;
         }
-        match validate_join_resume(&credentials.session_id, &credentials.participant_token).await {
+        match validate_join_resume(
+            &credentials_for_timer.session_id,
+            &credentials_for_timer.participant_token,
+        )
+        .await
+        {
             Ok(()) => {
-                if *connection_epoch.read() == epoch {
+                if *connection_epoch_for_timer.read() == epoch {
                     connect_session(
-                        credentials,
-                        state,
-                        reconnect_attempts,
-                        connection_epoch,
+                        credentials_for_timer,
+                        state_for_timer,
+                        reconnect_attempts_for_timer,
+                        connection_epoch_for_timer,
+                        heartbeat_seen_for_timer,
                         epoch,
                     );
                 }
             }
-            Err(JoinError::Expired(reason)) => state.set(GuestJoinState::Expired { reason }),
-            Err(JoinError::InvalidLink(reason)) => state.set(GuestJoinState::invalid(reason)),
-            Err(JoinError::Busy(_)) | Err(JoinError::Network(_)) => {
-                schedule_reconnect(credentials, state, reconnect_attempts, connection_epoch)
+            Err(JoinError::Expired(reason)) => {
+                state_for_timer.set(GuestJoinState::Expired { reason })
+            }
+            Err(JoinError::InvalidLink(reason)) => {
+                state_for_timer.set(GuestJoinState::invalid(reason))
+            }
+            Err(JoinError::Busy(_) | JoinError::Network(_)) => {
+                if *connection_epoch_for_timer.read() == epoch {
+                    schedule_reconnect(
+                        credentials_for_timer,
+                        state_for_timer,
+                        reconnect_attempts_for_timer,
+                        connection_epoch_for_timer,
+                        heartbeat_seen_for_timer,
+                    );
+                }
             }
         }
     });

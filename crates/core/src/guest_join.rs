@@ -377,9 +377,7 @@ impl GuestJoinState {
             GuestJoinEvent::ToggleChoice { choice } => self.toggle_choice(choice),
             GuestJoinEvent::SubmitAnswer => self.submit_answer(),
             GuestJoinEvent::AnswerAccepted { question_id } => self.answer_accepted(question_id),
-            GuestJoinEvent::Disconnected => Self::Disconnected {
-                resume: Box::new(self),
-            },
+            GuestJoinEvent::Disconnected => self.disconnected(),
             GuestJoinEvent::Reconnected => match self {
                 Self::Disconnected { resume } => *resume,
                 other => other,
@@ -925,8 +923,11 @@ impl GuestJoinState {
     }
 
     pub fn disconnected(self) -> Self {
-        Self::Disconnected {
-            resume: Box::new(self),
+        match self {
+            Self::Disconnected { resume } => Self::Disconnected { resume },
+            other => Self::Disconnected {
+                resume: Box::new(other),
+            },
         }
     }
 
@@ -1182,6 +1183,17 @@ mod tests {
         let disconnected = state.clone().disconnected();
         assert!(matches!(disconnected, GuestJoinState::Disconnected { .. }));
         let restored = disconnected.reconnected();
+        assert_eq!(restored, state);
+    }
+
+    #[test]
+    fn duplicate_disconnected_events_do_not_nest_resume_states() {
+        let state = GuestJoinState::lobby("S", "p1", "Alice", 1);
+        let disconnected = state
+            .clone()
+            .apply_event(GuestJoinEvent::Disconnected)
+            .apply_event(GuestJoinEvent::Disconnected);
+        let restored = disconnected.apply_event(GuestJoinEvent::Reconnected);
         assert_eq!(restored, state);
     }
 }
