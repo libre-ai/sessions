@@ -76,22 +76,71 @@ validate_session() {
 from pathlib import Path
 import json
 import sys
+from urllib.parse import urlsplit
+
+MAX_SESSION_ID_LENGTH = 128
+MAX_TOKEN_LENGTH = 512
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def is_safe_session_id(value):
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_SESSION_ID_LENGTH
+        and all(0x21 <= ord(ch) <= 0x7e and ch not in '/?#&%+' for ch in value)
+    )
+
+
+def is_safe_token(value):
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_TOKEN_LENGTH
+        and all(0x21 <= ord(ch) <= 0x7e and ch not in '&#' for ch in value)
+    )
+
+
+def validate_legacy_join_url(session_id, value):
+    if not is_safe_session_id(session_id) or not isinstance(value, str):
+        fail('unexpected join_url')
+    split = urlsplit(value)
+    if split.scheme or split.netloc or split.fragment or split.path != '/':
+        fail('unexpected join_url')
+    if split.query != f's={session_id}':
+        fail('unexpected join_url')
+
+
+def validate_secure_join_url(session_id, value):
+    if not is_safe_session_id(session_id) or not isinstance(value, str):
+        fail('unexpected secure_join_url')
+    split = urlsplit(value)
+    if split.scheme or split.netloc or split.query:
+        fail('unexpected secure_join_url')
+    if split.path != f'/join/{session_id}':
+        fail('unexpected secure_join_url')
+    if not split.fragment.startswith('token='):
+        fail('unexpected secure_join_url')
+    token = split.fragment[len('token='):]
+    if not is_safe_token(token):
+        fail('unexpected secure_join_url')
+
+
 body = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 if not isinstance(body, dict):
-    raise SystemExit('missing JSON envelope')
+    fail('missing JSON envelope')
 data = body.get('data')
 if not isinstance(data, dict):
-    raise SystemExit('missing data envelope')
-for field in ('session_id', 'host_token'):
-    value = data.get(field)
-    if not isinstance(value, str) or not value:
-        raise SystemExit(f'missing {field}')
-if not isinstance(data.get('join_url'), str) or not isinstance(data.get('secure_join_url'), str):
-    raise SystemExit('missing join URLs')
-if not data['join_url'].startswith('/?s='):
-    raise SystemExit('unexpected join_url')
-if not data['secure_join_url'].startswith('/join/') or '#token=' not in data['secure_join_url']:
-    raise SystemExit('unexpected secure_join_url')
+    fail('missing data envelope')
+session_id = data.get('session_id')
+if not is_safe_session_id(session_id):
+    fail('missing session_id')
+host_token = data.get('host_token')
+if not is_safe_token(host_token):
+    fail('missing host_token')
+validate_legacy_join_url(session_id, data.get('join_url'))
+validate_secure_join_url(session_id, data.get('secure_join_url'))
 PY
 }
 

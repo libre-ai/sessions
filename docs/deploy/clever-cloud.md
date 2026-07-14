@@ -89,5 +89,6 @@ Le smoke vérifie `/health` puis `POST /sessions` sans afficher de JSON, de `hos
 ## Notes
 
 - servir en **HTTPS/WSS** ; `/ws/{session_id}` transporte le token dans la query string, donc ne jamais logger les queries `/ws`
+- la preuve de politique de logs passe par la revue de configuration proxy/drain ; ne pas collecter/copier les logs bruts `/ws?...` comme preuve
 - les secrets ne doivent jamais être copiés dans des exemples réalistes
 - `POST /sessions` crée une session éphémère : le token et le lien de join ne doivent pas être persistés côté client

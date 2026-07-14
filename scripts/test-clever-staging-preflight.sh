@@ -2,6 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python_bin="${PYTHON_BIN:-python3}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -35,13 +36,50 @@ git config user.name "Test User"
 git config user.email "test@example.com"
 git branch -M main
 
-cat > .clever.json <<'JSON'
-{"services":[{"alias":"staging","id":"svc_staging"}]}
-JSON
+fixture="$root/scripts/fixtures/clever-tools-staging.json"
+
+fixture_field() {
+  "$python_bin" - "$fixture" "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+for app in payload.get('apps', []):
+    if app.get('alias') == 'staging':
+        value = app.get(sys.argv[2])
+        if not isinstance(value, str) or not value:
+            raise SystemExit('missing staging fixture field')
+        print(value)
+        raise SystemExit(0)
+raise SystemExit('missing staging fixture')
+PY
+}
+
+scp_from_ssh() {
+  "$python_bin" - "$1" <<'PY'
+from urllib.parse import urlsplit
+import sys
+
+split = urlsplit(sys.argv[1])
+if split.scheme != 'ssh' or not split.hostname:
+    raise SystemExit('expected ssh url')
+user = f"{split.username}@" if split.username else ''
+path = split.path.lstrip('/')
+print(f"{user}{split.hostname}:{path}")
+PY
+}
+
+staging_deploy_url="$(fixture_field deploy_url)"
+staging_git_ssh_url="$(fixture_field git_ssh_url)"
+staging_git_ssh_scp="$(scp_from_ssh "$staging_git_ssh_url")"
+staging_deploy_url_no_slash="${staging_deploy_url%/}"
+
+cp "$root/scripts/fixtures/clever-tools-staging.json" .clever.json
 printf 'main\n' > tracked.txt
 git add .clever.json tracked.txt
 git commit -m "init" >/dev/null
-git remote add cc-staging "$origin"
+git remote add cc-staging "$staging_deploy_url_no_slash"
 git push -u origin main >/dev/null
 
 status_ok="$tmp/status-ok.json"
@@ -433,6 +471,14 @@ expect_failure "invalid-oidc-issuer" "$status_ok" "$env_invalid_oidc_issuer" $'s
 expect_failure "invalid-oidc-redirect" "$status_ok" "$env_invalid_oidc_redirect" $'status -a staging -F json\nenv -a staging -F json'
 expect_failure "invalid-oidc-client-id" "$status_ok" "$env_invalid_oidc_client_id" $'status -a staging -F json\nenv -a staging -F json'
 
+git remote set-url cc-staging "$staging_git_ssh_scp"
+expect_success "ssh-scp-compat" "$status_ok" "$env_success" $'status -a staging -F json\nenv -a staging -F json'
+
+git remote set-url cc-staging "$staging_deploy_url_no_slash"
+git remote set-url cc-staging "https://wrong.example.cleverapps.io"
+expect_failure "remote-mispointed" "$status_ok" "$env_success" ''
+git remote set-url cc-staging "$staging_deploy_url_no_slash"
+
 # Dirty checkout must fail before clever is queried.
 echo dirty >> tracked.txt
 if CALL_LOG="$tmp/dirty.log" STATUS_FIXTURE="$status_ok" ENV_FIXTURE="$env_success" \
@@ -476,11 +522,19 @@ if [[ -s "$tmp/remote.log" ]]; then
   cat "$tmp/remote.log" >&2
   exit 1
 fi
-git remote add cc-staging "$origin"
+git remote add cc-staging "$staging_deploy_url_no_slash"
 
-# Divergence from origin/main must fail.
-echo drift >> tracked.txt
-git commit -am "drift" >/dev/null
+# Divergence from origin/main on the bare origin must fail before clever is queried.
+second_clone="$tmp/second-clone"
+git clone -b main "$origin" "$second_clone" >/dev/null
+(
+  cd "$second_clone"
+  git config user.name "Test User"
+  git config user.email "test@example.com"
+  printf 'remote drift\n' >> tracked.txt
+  git commit -am "remote drift" >/dev/null
+  git push origin main >/dev/null
+)
 if CALL_LOG="$tmp/drift.log" STATUS_FIXTURE="$status_ok" ENV_FIXTURE="$env_success" \
   GIT_BIN=git CLEVER_BIN="$tmp/bin/clever" PYTHON_BIN=python3 PATH="$tmp/bin:$PATH" \
   "$root/scripts/clever-staging-preflight.sh" >/dev/null 2>&1; then

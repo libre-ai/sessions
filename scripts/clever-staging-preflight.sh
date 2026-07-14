@@ -16,41 +16,101 @@ fail() {
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-[[ -z "$("$git_bin" status --porcelain)" ]] || fail "checkout is dirty"
+[[ -z "$($git_bin status --porcelain)" ]] || fail "checkout is dirty"
 [[ "$($git_bin branch --show-current)" == "main" ]] || fail "checkout must be on main"
-[[ "$($git_bin rev-parse HEAD)" == "$($git_bin rev-parse origin/main)" ]] || fail "checkout is not aligned with origin/main"
-if ! "$git_bin" remote get-url cc-staging >/dev/null 2>&1; then
-  fail "missing cc-staging remote"
-fi
 
-clever_files=()
-while IFS= read -r path; do
-  clever_files+=("$path")
-done < <(find "$root" -name .clever.json -type f | LC_ALL=C sort)
-[[ ${#clever_files[@]} -eq 1 ]] || fail "expected exactly one .clever.json"
-clever_config="${clever_files[0]}"
-
-alias_matches="$($python_bin - "$clever_config" <<'PY'
-from pathlib import Path
-import json
+remote_main_output="$(GIT_TERMINAL_PROMPT=0 "$git_bin" ls-remote --exit-code origin refs/heads/main 2>/dev/null)" || fail "checkout is not aligned with origin/main"
+remote_main_sha="$($python_bin - "$remote_main_output" <<'PY'
+import re
 import sys
 
-
-def walk(value):
-    if isinstance(value, dict):
-        for key, nested in value.items():
-            if key == 'alias' and nested == 'staging':
-                yield 1
-            yield from walk(nested)
-    elif isinstance(value, list):
-        for item in value:
-            yield from walk(item)
-
-config = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-print(sum(walk(config)))
+lines = [line for line in sys.argv[1].splitlines() if line.strip()]
+if len(lines) != 1:
+    raise SystemExit('unexpected origin/main ref listing')
+sha, ref = lines[0].split()
+if not re.fullmatch(r'[0-9a-f]{40}', sha):
+    raise SystemExit('unexpected origin/main sha')
+if ref != 'refs/heads/main':
+    raise SystemExit('unexpected origin/main ref')
+print(sha)
 PY
-)"
-[[ "$alias_matches" == "1" ]] || fail "expected exactly one staging alias in .clever.json"
+)" || fail "checkout is not aligned with origin/main"
+[[ "$($git_bin rev-parse HEAD)" == "$remote_main_sha" ]] || fail "checkout is not aligned with origin/main"
+
+clever_config="$root/.clever.json"
+[[ -f "$clever_config" ]] || fail "missing .clever.json"
+
+cc_staging_remote="$("$git_bin" remote get-url cc-staging 2>/dev/null)" || fail "missing cc-staging remote"
+if ! "$python_bin" - "$clever_config" "$cc_staging_remote" <<'PY'
+from pathlib import Path
+import json
+import re
+import sys
+from urllib.parse import urlsplit, urlunsplit
+
+REQUIRED_APP_KEYS = {'app_id', 'org_id', 'deploy_url', 'git_ssh_url', 'name', 'alias'}
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def normalize_git_url(raw):
+    if not isinstance(raw, str):
+        fail('invalid cc-staging remote URL')
+    raw = raw.strip()
+    if not raw:
+        fail('invalid cc-staging remote URL')
+    if '://' in raw:
+        split = urlsplit(raw)
+        if split.scheme not in {'https', 'ssh'}:
+            fail('invalid cc-staging remote URL')
+        if not split.netloc or split.query or split.fragment:
+            fail('invalid cc-staging remote URL')
+        path = split.path.rstrip('/')
+        if path.endswith('.git'):
+            path = path[:-4]
+        return urlunsplit((split.scheme, split.netloc, path, '', ''))
+    match = re.fullmatch(r'(?:(?P<user>[^@/]+)@)?(?P<host>[^:/]+):(?P<path>.+)', raw)
+    if not match:
+        fail('invalid cc-staging remote URL')
+    path = match.group('path').rstrip('/')
+    if path.endswith('.git'):
+        path = path[:-4]
+    user = match.group('user')
+    host = match.group('host')
+    netloc = f'{user}@{host}' if user else host
+    return f'ssh://{netloc}/{path}'
+
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+if not isinstance(payload, dict) or set(payload) != {'apps'}:
+    fail('invalid .clever.json')
+apps = payload.get('apps')
+if not isinstance(apps, list):
+    fail('invalid .clever.json')
+staging = []
+for app in apps:
+    if not isinstance(app, dict) or set(app) != REQUIRED_APP_KEYS:
+        fail('invalid .clever.json')
+    for key in REQUIRED_APP_KEYS:
+        if not isinstance(app[key], str) or not app[key]:
+            fail('invalid .clever.json')
+    if app['alias'] == 'staging':
+        staging.append(app)
+if len(staging) != 1:
+    fail('expected exactly one staging alias in .clever.json')
+actual = normalize_git_url(sys.argv[2])
+expected = {
+    normalize_git_url(staging[0]['deploy_url']),
+    normalize_git_url(staging[0]['git_ssh_url']),
+}
+if actual not in expected:
+    fail('cc-staging remote does not target staging app')
+PY
+then
+  fail "cc-staging remote does not target staging app"
+fi
 
 clever_status_json="$tmp/clever-status.json"
 if ! "$clever_bin" status -a staging -F json > "$clever_status_json"; then
