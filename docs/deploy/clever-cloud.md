@@ -41,14 +41,18 @@ clever env set CC_PRE_BUILD_HOOK './scripts/clever-pre-build.sh'
 
 ## Déploiement staging
 
-L’utilisateur seul exécute la poussée git suivante :
-
-```bash
-DOXALLIA_ALLOW_MAIN_PUSH=1 git -C "$(git rev-parse --show-toplevel)" push cc-staging origin/main:master
-```
+exécuter via le garde local approuvé : `git -C "$(git rev-parse --show-toplevel)" push cc-staging origin/main:master`
 
 - ne pas utiliser `clever deploy`
 - prod est hors scope ici
+
+## Rollback sûr
+
+- noter le SHA `main` avant le push staging
+- en cas d’échec, préparer et relire un revert sur `main`
+- attendre que CI et security repassent au vert
+- rejouer ensuite la même séquence de garde local approuvé puis le push staging
+- pas de force-push, pas de rollback instantané, pas de `clever deploy`
 
 ## Variables pour A
 

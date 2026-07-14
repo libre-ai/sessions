@@ -8,40 +8,53 @@
 # prints JSON, host tokens, join tokens or URL fragments.
 set -euo pipefail
 
-base="${1:?usage: clever-smoke.sh <base-url>}"
-base="${base%/}"
+base_input="${1:?usage: clever-smoke.sh <base-url>}"
 
 curl_bin="${CURL_BIN:-curl}"
 python_bin="${PYTHON_BIN:-python3}"
 
-if [[ "$base" == *'#'* ]]; then
-  echo "smoke failed: base URL must not contain a fragment" >&2
-  exit 1
-fi
+validate_base_url() {
+  local url="$1"
+  if ! "$python_bin" - "$url" <<'PY'
+from urllib.parse import urlsplit
+import sys
 
-scheme="${base%%://*}"
-if [[ "$base" != *://* ]]; then
-  echo "smoke failed: base URL must include a scheme" >&2
-  exit 1
-fi
-is_loopback=0
-case "$base" in
-  http://localhost*|http://127.0.0.1*|http://\[::1\]*) is_loopback=1 ;;
-esac
-if [[ "$is_loopback" -eq 0 && "$scheme" != https ]]; then
-  echo "smoke failed: non-loopback targets must use https" >&2
-  exit 1
-fi
+parts = urlsplit(sys.argv[1])
+try:
+    if parts.scheme not in {'http', 'https'}:
+        raise ValueError
+    if not parts.hostname:
+        raise ValueError
+    if parts.username is not None or parts.password is not None:
+        raise ValueError
+    if parts.query or parts.fragment:
+        raise ValueError
+    if parts.path not in ('', '/'):
+        raise ValueError
+    _ = parts.port
+    if parts.scheme == 'http' and parts.hostname not in {'localhost', '127.0.0.1', '::1'}:
+        raise ValueError
+except ValueError:
+    raise SystemExit(1)
+PY
+  then
+    echo "smoke failed: invalid base URL" >&2
+    exit 1
+  fi
+}
+
+validate_base_url "$base_input"
+base="${base_input%/}"
 
 request_json() {
   local method="$1"
   local url="$2"
   local output="$3"
   if [[ "$method" == GET ]]; then
-    "$curl_bin" --silent --show-error --fail --max-time 10 --max-filesize 1048576 \
+    "$curl_bin" --silent --fail --max-time 10 --max-filesize 1048576 \
       --output "$output" "$url"
   else
-    "$curl_bin" --silent --show-error --fail --max-time 10 --max-filesize 1048576 \
+    "$curl_bin" --silent --fail --max-time 10 --max-filesize 1048576 \
       --request POST --data-binary '' --output "$output" "$url"
   fi
 }
