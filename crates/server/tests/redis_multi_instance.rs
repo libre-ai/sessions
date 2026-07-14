@@ -84,7 +84,7 @@ async fn fanout_crosses_instances_via_redis() {
     let (mut host, _) = connect_async(format!("ws://{a}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{b}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{b}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
 

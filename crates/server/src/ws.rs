@@ -51,12 +51,33 @@ pub async fn ws_handler(
         Ok(claims) => claims,
         Err(_) => return (StatusCode::UNAUTHORIZED, "invalid or expired token").into_response(),
     };
-    let name = match params.name {
-        Some(name) => match validate_join_name(&name) {
-            Some(name) => name,
-            None => return (StatusCode::BAD_REQUEST, "invalid participant name").into_response(),
-        },
-        None => claims.participant_id.clone(),
+    let name = if claims.capability.is_host() {
+        claims.participant_id.clone()
+    } else {
+        match state
+            .store
+            .participant_name(&session_id, &claims.participant_id)
+            .await
+        {
+            Ok(Some(name)) => name,
+            Ok(None) => match params.name {
+                Some(name) => match validate_join_name(&name) {
+                    Some(name) => name,
+                    None => {
+                        return (StatusCode::BAD_REQUEST, "invalid participant name")
+                            .into_response();
+                    }
+                },
+                None => {
+                    return (StatusCode::UNAUTHORIZED, "participant name unavailable")
+                        .into_response();
+                }
+            },
+            Err(_) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "participant unavailable")
+                    .into_response();
+            }
+        }
     };
     ws.on_upgrade(move |socket| handle_socket(socket, session_id, claims, name, state))
 }

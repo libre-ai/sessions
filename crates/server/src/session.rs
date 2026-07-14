@@ -123,6 +123,12 @@ impl Session {
         self.participants.len() as u32
     }
 
+    pub fn participant_name(&self, participant_id: &str) -> Option<String> {
+        self.participants
+            .get(participant_id)
+            .map(|participant| participant.name.clone())
+    }
+
     /// Open a new question at `opened_at_ms` (server clock): clears prior answers
     /// and enters `Asking`.
     pub fn push_question(&mut self, question: Question, opened_at_ms: u64) {

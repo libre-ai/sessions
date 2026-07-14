@@ -81,7 +81,7 @@ async fn sustains_200_participants_under_200ms_p99() {
                 SystemTime::now(),
             )
             .unwrap();
-        let (mut ws, _) = connect_async(format!("{base}?token={token}"))
+        let (mut ws, _) = connect_async(format!("{base}?token={token}&name=Alice"))
             .await
             .unwrap();
         let push_times = push_times.clone();

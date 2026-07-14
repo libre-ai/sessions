@@ -62,6 +62,12 @@ pub trait SessionStore: Send + Sync {
     async fn ensure(&self, session_id: &str, host_id: &str) -> StoreResult<()>;
     /// Add (or re-add) a participant; returns the participant count.
     async fn join(&self, session_id: &str, participant_id: &str, name: &str) -> StoreResult<u32>;
+    /// Look up a registered participant display name without mutating state.
+    async fn participant_name(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<String>>;
     /// Open a question at `opened_at_ms` (host action): clears prior answers,
     /// enters `Asking`.
     async fn push_question(
@@ -145,6 +151,15 @@ impl SessionStore for InMemorySessionStore {
             .get_or_create(session_id, "")
             .lock()
             .join(participant_id, name))
+    }
+
+    async fn participant_name(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+    ) -> StoreResult<Option<String>> {
+        let session = self.sessions.lock().get(session_id).cloned();
+        Ok(session.and_then(|session| session.lock().participant_name(participant_id)))
     }
 
     async fn push_question(

@@ -17,6 +17,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /guest\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -34,9 +35,19 @@ export default defineConfig({
       testMatch: /pwa-smoke\.spec\.ts/,
       use: { ...devices['Pixel 7'] },
     },
+    {
+      name: 'guest-mobile-chromium',
+      testMatch: /guest\.spec\.ts/,
+      use: { ...devices['Pixel 7'], trace: 'off', video: 'off', screenshot: 'off' },
+    },
+    {
+      name: 'guest-mobile-webkit',
+      testMatch: /guest\.spec\.ts/,
+      use: { ...devices['iPhone 13'], trace: 'off', video: 'off', screenshot: 'off' },
+    },
   ],
   webServer: externalTarget ? undefined : {
-    command: 'cd .. && ./scripts/verify-owner-app.sh && INGEST_TOKEN=playwright-explicit-non-secret-000000000000 PORT=3000 cargo run --release --bin presto-server',
+    command: 'cd .. && ./scripts/verify-owner-app.sh && ./scripts/verify-join-app.sh && INGEST_TOKEN=playwright-explicit-non-secret-000000000000 PORT=3000 cargo run --release --bin presto-server',
     url: 'http://localhost:3000/health',
     reuseExistingServer: !process.env.CI && process.env.KEYCLOAK_E2E !== '1',
     timeout: 120000,

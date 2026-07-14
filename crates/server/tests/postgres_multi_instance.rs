@@ -114,7 +114,7 @@ async fn cross_instance_scoring_is_correct() {
     let (mut host, _) = connect_async(format!("ws://{a}/ws/{session}?token={host_token}"))
         .await
         .unwrap();
-    let (mut p1, _) = connect_async(format!("ws://{b}/ws/{session}?token={p_token}"))
+    let (mut p1, _) = connect_async(format!("ws://{b}/ws/{session}?token={p_token}&name=Alice"))
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;

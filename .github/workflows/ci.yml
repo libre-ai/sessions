@@ -25,25 +25,33 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Gate generated assets out of Git
         run: |
-          if git ls-files -- crates/server/static/owner-app | grep -q .; then
-            echo "::error::owner bundle is generated and must not be committed"
+          if git ls-files -- crates/server/static/owner-app crates/server/static/join-app | grep -q .; then
+            echo "::error::generated bundles are generated and must not be committed"
             exit 1
           fi
       - name: Install pinned Dioxus CLI
         run: cargo install dioxus-cli --version 0.7.9 --locked
-      - name: Build twice and verify owner bundle repeatability in the pinned producer
+      - name: Build twice and verify owner and join bundle repeatability in the pinned producer
         run: |
           ./scripts/test-owner-app-reproducible.sh
+          ./scripts/test-join-app-reproducible.sh
           ./scripts/verify-owner-app.sh
-          ./scripts/test-owner-app-package.sh
+          ./scripts/verify-join-app.sh
           ./scripts/package-owner-app.sh
-          find crates/server/static/owner-app -type f -print0 \
+          ./scripts/package-join-app.sh
+          find crates/server/static/owner-app crates/server/static/join-app -type f -print0 \
             | sort -z | xargs -0 sha256sum
       - name: Upload verified owner bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: owner-app-bundle
           path: target/owner-app-bundle/
+          if-no-files-found: error
+      - name: Upload verified join bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: join-app-bundle
+          path: target/join-app-bundle/
           if-no-files-found: error
 
   rust:
@@ -57,8 +65,15 @@ jobs:
         with:
           name: owner-app-bundle
           path: target/owner-app-bundle
+      - name: Download canonical join bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: join-app-bundle
+          path: target/join-app-bundle
       - name: Verify and install canonical owner bundle
         run: ./scripts/install-owner-app.sh target/owner-app-bundle
+      - name: Verify and install canonical join bundle
+        run: ./scripts/install-join-app.sh target/join-app-bundle
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: rustfmt, clippy
@@ -143,8 +158,15 @@ jobs:
         with:
           name: owner-app-bundle
           path: target/owner-app-bundle
+      - name: Download canonical join bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: join-app-bundle
+          path: target/join-app-bundle
       - name: Verify and install canonical owner bundle
         run: ./scripts/install-owner-app.sh target/owner-app-bundle
+      - name: Verify and install canonical join bundle
+        run: ./scripts/install-join-app.sh target/join-app-bundle
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: llvm-tools-preview
@@ -214,8 +236,15 @@ jobs:
         with:
           name: owner-app-bundle
           path: target/owner-app-bundle
+      - name: Download canonical join bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: join-app-bundle
+          path: target/join-app-bundle
       - name: Verify and install canonical owner bundle
         run: ./scripts/install-owner-app.sh target/owner-app-bundle
+      - name: Verify and install canonical join bundle
+        run: ./scripts/install-join-app.sh target/join-app-bundle
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Build presto-server release binary
@@ -344,8 +373,15 @@ jobs:
         with:
           name: owner-app-bundle
           path: target/owner-app-bundle
+      - name: Download canonical join bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: join-app-bundle
+          path: target/join-app-bundle
       - name: Verify and install canonical owner bundle
         run: ./scripts/install-owner-app.sh target/owner-app-bundle
+      - name: Verify and install canonical join bundle
+        run: ./scripts/install-join-app.sh target/join-app-bundle
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Build server
