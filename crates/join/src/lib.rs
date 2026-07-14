@@ -29,7 +29,6 @@ struct JoinCredentials {
 #[cfg(target_arch = "wasm32")]
 struct JoinListeners {
     _offline: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
-    _online: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -110,35 +109,8 @@ pub fn App() -> Element {
         let _ =
             window.add_event_listener_with_callback("offline", offline.as_ref().unchecked_ref());
 
-        let state_for_online = state;
-        let reconnect_attempts_for_online = reconnect_attempts;
-        let connection_epoch_for_online = connection_epoch;
-        let heartbeat_seen_for_online = heartbeat_seen;
-        let participant_credentials_for_online = participant_credentials;
-        let online = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-            move |_| {
-                if let Some(credentials) = participant_credentials_for_online.read().clone() {
-                    let current = state_for_online.read().clone();
-                    if !matches!(current, GuestJoinState::Disconnected { .. }) {
-                        return;
-                    }
-                    schedule_reconnect(
-                        credentials,
-                        state_for_online,
-                        reconnect_attempts_for_online,
-                        connection_epoch_for_online,
-                        heartbeat_seen_for_online,
-                    );
-                }
-            },
-        ));
-        let _ = window.add_event_listener_with_callback("online", online.as_ref().unchecked_ref());
-
         JOIN_LISTENERS.with(|slot| {
-            *slot.borrow_mut() = Some(JoinListeners {
-                _offline: offline,
-                _online: online,
-            });
+            *slot.borrow_mut() = Some(JoinListeners { _offline: offline });
         });
     });
 
@@ -343,6 +315,9 @@ fn trigger_join_disconnect(
     heartbeat_seen: Signal<u64>,
     participant_credentials: Signal<Option<JoinCredentials>>,
 ) {
+    if matches!(state.read().clone(), GuestJoinState::Disconnected { .. }) {
+        return;
+    }
     if let Some(credentials) = participant_credentials.read().clone() {
         mark_join_disconnected(
             credentials,
@@ -363,6 +338,9 @@ fn request_join_reconnect(
     heartbeat_seen: Signal<u64>,
     participant_credentials: Signal<Option<JoinCredentials>>,
 ) {
+    if matches!(state.read().clone(), GuestJoinState::Disconnected { .. }) {
+        return;
+    }
     if let Some(credentials) = participant_credentials.read().clone() {
         mark_join_disconnected(
             credentials,
