@@ -60,7 +60,7 @@ OIDC subject maps to opaque browser session. Every internal token contains user,
 
 ## Runtime boundaries
 
-Bun owns HTTP/WebSocket protocol, event persistence, reconnect, audience projection and provider adapter. Rust owns Biscuit verification/authorizer policy and MAY own source/evidence validation through shared context/proof crates. RAG/vector retrieval is not authority and cannot bypass attached-source IDs. Redis adapters remain behind ephemeral interfaces.
+Bun owns HTTP/WebSocket protocol, event persistence, reconnect, audience projection and provider adapter. Rust owns Biscuit verification/authorizer policy; the shared Proof capability validates source/evidence references before approval. RAG/vector retrieval is not authority and cannot bypass attached-source IDs. Redis adapters remain behind ephemeral interfaces.
 
 ## Accessibility and degraded mode
 
