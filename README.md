@@ -1,3 +1,7 @@
+> [!WARNING]
+> **Frozen on 2026-07-16 — reserved as the future home of Sessions ([monorepo ADR-0008](https://github.com/libre-ai/libre-ai/blob/main/docs/adr/0008-multi-repo-target-topology-and-brand.md)).**
+> Sessions is being rebuilt from locked contracts in the canonical base repository [`libre-ai/libre-ai`](https://github.com/libre-ai/libre-ai) (target: `apps/sessions`). This repository will reopen as the real product repository when the owner activates it. Everything below describes the pre-freeze state and no longer reflects the current architecture or roadmap.
+
 <p align="center">
   <img src=".github/assets/repository-card.svg" alt="Libre AI Sessions, represented by participants connected to a shared sourced session." width="100%">
 </p>
