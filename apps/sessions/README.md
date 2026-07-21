@@ -35,6 +35,25 @@ is strictly contiguous; a single creation; revision never rewinds
   provider synthesis, audience projections and export manifests, and the
   participant UI.
 
+## Increment 4 — command service (the composed vertical)
+
+`src/app/execute-command.ts` composes the whole vertical for one action inside the
+caller's tenant transaction. `executeSessionCommand(executor, principal, rawEvent,
+recordedAt)` runs, fail-closed and cheapest-first:
+
+1. `validateEvent` — structure (→ `sessions.cursor_invalid`);
+2. `authorizeAction(role, type)` — the locked policy, **before any I/O** (→
+   `sessions.membership_required`);
+3. `loadSessionState` + `reduce` — ordering/identity/revision (→ `cursor_invalid`
+   / `tenant_mismatch` / `revision_stale`);
+4. `appendEvent` — persist; a concurrent writer taking the same sequence surfaces
+   as `cursor_invalid` (the stream advanced past the append point).
+
+It returns `accepted` (the event + the advanced state) or `refused` (the exact
+code). Verified end-to-end against the real PostgreSQL barrier (PGlite): the
+accepted path writes the log; an unauthorized action writes **nothing**; and the
+structural, ordering, tenant and revision refusals each fire.
+
 ## Increment 3 — authorization matrix (sessions-v1 policy)
 
 `src/authz/session-authorization.ts` mirrors the LOCKED authorizer policy
