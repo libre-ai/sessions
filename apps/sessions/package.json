@@ -11,5 +11,11 @@
     "check:bun": "bun ../../tools/quality/check-bun-minimum.ts",
     "pretest": "bun run check:bun",
     "test": "bun test"
+  },
+  "dependencies": {
+    "@libre-ai/data": "workspace:*"
+  },
+  "devDependencies": {
+    "@libre-ai/testing": "workspace:*"
   }
 }

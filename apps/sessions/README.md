@@ -31,9 +31,31 @@ is strictly contiguous; a single creation; revision never rewinds
 
 ### Not yet built (deliberately deferred)
 
-- Persistence (PostgreSQL, RLS, migrations), the WebSocket/reconnect transport,
-  the HTTP API and Biscuit authorization, provider synthesis, audience
-  projections and export manifests, and the participant UI.
+- The WebSocket/reconnect transport, the HTTP API and Biscuit authorization,
+  provider synthesis, audience projections and export manifests, and the
+  participant UI.
+
+## Increment 2 — append-only event persistence (PostgreSQL / RLS)
+
+`migrations/0001_sessions.sql` and `src/persistence/session-event-store.ts`
+persist the session event stream in PostgreSQL behind the tenant barrier
+(`packages/data`):
+
+- **`session_events`** is an **append-only** table: a `tenant_id`-format `CHECK`,
+  `FORCE` row-level security keyed on the `app.tenant_id` GUC, and a grant of
+  `SELECT, INSERT` only — no `UPDATE`/`DELETE`, so the causal log is immutable even
+  to the application role. The composite key `(tenant_id, session_id, sequence)`
+  makes a replayed sequence conflict rather than fork.
+- **`appendEvent`** inserts a validated event within the caller's tenant
+  transaction, asserting the event's tenant matches the active context (defense in
+  depth above RLS) and raising `SessionSequenceConflictError` on a replay.
+- **`loadEvents`** / **`loadSessionState`** read a session's stream in causal order
+  and rebuild state by folding it back through the domain reducer; a stream that
+  does not reduce is surfaced as `SessionStreamCorruptError`, never silently used.
+
+Verified against the real PostgreSQL barrier (PGlite): round-trip, reduction,
+replay conflict, append-only grant (UPDATE/DELETE denied), and cross-tenant RLS
+isolation.
 
 ## License
 
