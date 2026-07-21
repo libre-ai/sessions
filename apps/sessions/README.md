@@ -35,6 +35,26 @@ is strictly contiguous; a single creation; revision never rewinds
   provider synthesis, audience projections and export manifests, and the
   participant UI.
 
+## Increment 3 — authorization matrix (sessions-v1 policy)
+
+`src/authz/session-authorization.ts` mirrors the LOCKED authorizer policy
+`contracts/authz/sessions-v1.datalog` in TypeScript, so the app refuses before
+touching state (the datalog stays the source of truth — a conformance test parses
+it and fails if the matrix drifts). Deny-by-default.
+
+- `authorizeAction(role, eventType)` — producing a mutating event requires its
+  operation; a role without it → `sessions.membership_required`. Owner may do
+  everything; facilitator all but `add-member`/`delete`; participant only
+  `join`/`submit`; observer no mutation.
+- `authorizeRead(role, audience, isContributionOwner)` — owner/facilitator read
+  any audience; a participant reads the `session` audience or a `private`
+  contribution only when they own it; an observer reads only `session`; anything
+  else → `sessions.audience_forbidden`.
+
+Tenant scoping (`resource_tenant`) is enforced structurally by RLS and the
+reducer, not here. Export-content rules (`private_export_forbidden`) and provider
+attenuation stay deferred.
+
 ## Increment 2 — append-only event persistence (PostgreSQL / RLS)
 
 `migrations/0001_sessions.sql` and `src/persistence/session-event-store.ts`
