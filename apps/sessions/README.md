@@ -6,6 +6,28 @@ and human approval gates every shared outcome.
 
 Work package: `WP-G3-S01`.
 
+## Increment 5 — cockpit (accessible SSR read view)
+
+`src/server/handler.ts` + `src/ui/sessions-cockpit.tsx` serve the read-only
+sessions cockpit, server-rendered and usable **without JavaScript**. Per the spec's
+runtime boundary the view is rendered from a contract fixture (`src/ui/fixture.ts`)
+— no real session, transport or orchestrator integration until a bounded work
+package and conformance review are approved.
+
+- `createSessionsHandler` routes `/` to the SSR document and `/api/health` to a
+  JSON status; an unknown route is `404`.
+- `SessionsCockpit` renders an ordered, accessible table (a `<caption>`, `scope`
+  column/row headers, a skip link and a `main` landmark). The session lifecycle is
+  conveyed **as text, never colour**: the cumulative flags map to
+  `Active → Close → Exportée → Supprimée` (the most-advanced terminal stage
+  reached), with the revision and event count alongside.
+
+Verified: the static render is a well-formed `<!doctype html>` document in French,
+the table exposes its caption and header scopes, every fixture session is listed,
+each lifecycle label renders, and no inline `style=` carries meaning; the handler
+serves the cockpit, health, and a 404. Interactivity (command journeys, live
+regions, audience projections) arrives in later increments.
+
 ## Increment 1 — session event validator and append-only reducer
 
 `src/domain/session-event.ts` is the pure, offline heart of the session event

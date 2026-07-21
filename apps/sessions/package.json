@@ -13,7 +13,10 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@libre-ai/data": "workspace:*"
+    "@libre-ai/data": "workspace:*",
+    "@libre-ai/web-platform": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@libre-ai/testing": "workspace:*"
