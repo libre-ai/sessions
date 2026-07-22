@@ -32,21 +32,22 @@ Sessions supports sourced collective work where owners/facilitators control memb
 
 **Events:** `MemberAdded`, `SessionCreated`, `SourceAttached`, `ParticipantJoined`, `ContributionSubmitted`, `SynthesisDrafted`, `OutcomeApproved`, `OutcomeRejected`, `SessionClosed`, `SessionExported`, `SessionDeleted`.
 
-Authoritative session stream is append-only by tenant/session revision. WebSocket frames carry event cursor and command IDs. Presence is ephemeral and cannot authorize or prove participation.
+Authoritative session stream is append-only by tenant/session revision. WebSocket frames carry event cursor and command IDs. Presence is ephemeral and cannot authorize or prove participation. When `collab_enabled`, participants co-edit the DRAFT outcome in real time through a sovereign end-to-end-encrypted collaboration brick (CRDT deltas sealed with a per-epoch group key derived only from participants' private keys via MLS RFC 9420; the self-hosted relay forwards ciphertext only and can never derive the key); every convergence point is recorded as an append-only `CollabCheckpointRecorded` event. Real-time editing applies to draft state only: `RequestSynthesis` freezes the CRDT and human `ApproveOutcome` makes the outcome immutable — the approval gate is never weakened by collaboration. This capability degrades cleanly: a session with `collab_enabled=false`, or an unreachable relay, remains fully usable through the authoritative append-only stream (`sessions.collab_unavailable` surfaces the degraded mode).
 
 ## Refusal matrix
 
-| Code | Refusal |
-| --- | --- |
-| `sessions.membership_required` | subject lacks active membership/role |
-| `sessions.tenant_mismatch` | token, membership and session tenant differ |
-| `sessions.audience_forbidden` | actor requests content outside audience policy |
-| `sessions.private_export_forbidden` | export would include private contribution by default |
-| `sessions.source_unapproved` | synthesis references a source not attached/validated |
-| `sessions.outcome_unapproved` | client requests publication/export as approved |
-| `sessions.cursor_invalid` | reconnect cursor is unknown or ahead of stream |
-| `sessions.revision_stale` | command targets stale session revision |
-| `sessions.provider_unavailable` | generation dependency unavailable/budget exceeded |
+| Code                                | Refusal                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `sessions.membership_required`      | subject lacks active membership/role                                                        |
+| `sessions.tenant_mismatch`          | token, membership and session tenant differ                                                 |
+| `sessions.audience_forbidden`       | actor requests content outside audience policy                                              |
+| `sessions.private_export_forbidden` | export would include private contribution by default                                        |
+| `sessions.source_unapproved`        | synthesis references a source not attached/validated                                        |
+| `sessions.outcome_unapproved`       | client requests publication/export as approved                                              |
+| `sessions.cursor_invalid`           | reconnect cursor is unknown or ahead of stream                                              |
+| `sessions.revision_stale`           | command targets stale session revision                                                      |
+| `sessions.provider_unavailable`     | generation dependency unavailable/budget exceeded                                           |
+| `sessions.collab_unavailable`       | real-time collaboration relay unreachable; session continues in degraded (append-only) mode |
 
 Provider failure leaves an attributable failed draft request and allows manual outcome authoring.
 
