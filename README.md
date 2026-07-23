@@ -1,88 +1,79 @@
-> [!WARNING]
-> **Frozen on 2026-07-16 — reserved as the future home of Sessions ([monorepo ADR-0008](https://github.com/libre-ai/libre-ai/blob/main/docs/adr/0008-multi-repo-target-topology-and-brand.md)).**
-> Sessions is being rebuilt from locked contracts in the canonical base repository [`libre-ai/libre-ai`](https://github.com/libre-ai/libre-ai) (target: `apps/sessions`). This repository will reopen as the real product repository when the owner activates it. Everything below describes the pre-freeze state and no longer reflects the current architecture or roadmap.
+**English** · [Français](README.fr.md)
 
-<p align="center">
-  <img src=".github/assets/repository-card.svg" alt="Libre AI Sessions, represented by participants connected to a shared sourced session." width="100%">
-</p>
+> [!NOTE]
+> **Reserved · future home of Sessions** — rebuilt in the canonical base repository [`libre-ai/libre-ai`](https://github.com/libre-ai/libre-ai) ([multi-repo topology, ADR-0008](https://github.com/libre-ai/libre-ai/blob/main/docs/adr/0008-multi-repo-target-topology-and-brand.md)).
+> This repository will reopen as the real product repository when the owner activates it, consuming the base as a versioned dependency. The foundations described below are **being built now** — with links to the code that already exists.
 
-# Libre AI Sessions
+# Sessions
 
-Source-grounded learning and facilitation sessions with citations, roles and bounded delegation.
+**Source-grounded collective learning and facilitation.** Bring a group together around sourced materials — articles, evidence, expert input — with explicit roles (facilitator, participant, observer), audience rules for each contribution, and a **human approval gate** before any shared outcome is published. Never a silent synthesis; never an export that reveals private input by default.
 
-[![CI](https://github.com/libre-ai/sessions/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/libre-ai/sessions/actions/workflows/ci.yml)
-[![Security](https://github.com/libre-ai/sessions/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/libre-ai/sessions/actions/workflows/security.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+The canonical brief it answers: _"How do we run a real-time, sourced collective learning session where every output is attributable and approval is mandatory?"_ — on data that participants own, in a space where evidence is cited, and where a facilitator can revoke sources or pause the session without losing history.
 
-## Status
+## Why it's different
 
-| | |
-| --- | --- |
-| Maturity | **Contract-first** |
-| Evidence posture | executable local MVP evidence / not hosted |
-| Works today | owner+guest Dioxus/WASM; create/join/answer/reveal/leaderboard/late join/reconnect; in-process OIDC protocol tests; bounded process-local corpus; retrieve → generate → verify → approve + citations; shell-only PWA; reproducible bundles; CI/security green |
-| Not yet proven | real Keycloak, Clever HTTPS/WSS, proxy logs, physical phone, live DB/Redis, load, production |
-| Historical IDs | `rumble-lm-*` and `presto-*` identifiers are retained where they are code contracts |
+- **Approval before publication.** Facilitators request a synthesis from bounded sources and participants' contributions; the output remains draft until a human explicitly approves it. Generation is helper, not authority.
+- **Audience-scoped by default.** Every contribution carries an audience policy (public, shared with group, private). An export only includes content the requester is authorized to see; private input never leaks into shared outcomes silently.
+- **Append-only and auditable.** All events — participants joining, contributions submitted, syntheses approved — are immutable and row-level-secured by organization. Revocation blocks future synthesis but never rewrites past evidence.
+- **Sourced and bounded.** Synthesis can only reference sources explicitly attached and validated by the facilitator. RAG/retrieval is not authority; attached sources are.
+- **Real-time, resilient collaboration.** Participants co-edit draft outcomes in real time when a self-hosted relay is available; the session degrades gracefully to append-only mode if the relay is unreachable, never losing data.
+- **Fail-closed access.** An unknown participant, a missing role in the session, or a stale cursor is rejected outright. Never silently degraded.
 
-Runtime scaffolding is evidence of boundaries, not a finished product claim. See [`docs/product-readiness.md`](docs/product-readiness.md) for the canonical cockpit.
+## Status — spec-published, foundations under construction
 
-## Contract proof
+Sessions is being built from a locked specification. It is **not released yet**; append-only persistence and authorization come first, and a good part of it already exists and is proven in the base repository:
 
-The P0 core validates a source-grounded session flow:
+| Foundation                                            | State                | Evidence                                                                                                                                                                                |
+| ----------------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Session event validator & append-only reducer**     | ✅ built             | Unit tested state transitions and idempotency ([#165](https://github.com/libre-ai/libre-ai/pull/165))                                                                                   |
+| **Append-only event persistence with RLS**            | ✅ built, integrated | PostgreSQL row-level security, tenant isolation, cursor-based reconnect ([#173](https://github.com/libre-ai/libre-ai/pull/173))                                                         |
+| **Authorization matrix & Biscuit policy**             | ✅ built, conformant | Membership roles, resource scope (session/contribution/outcome), revocation ([#174](https://github.com/libre-ai/libre-ai/pull/174))                                                     |
+| **Command service & vertical composition**            | ✅ built             | Domain commands (CreateSession, JoinSession, SubmitContribution, ApproveOutcome), live ([#175](https://github.com/libre-ai/libre-ai/pull/175))                                          |
+| **Accessible SSR cockpit — read view**                | ✅ built, HTTP ready | Keyboard navigation, session state read-through, event stream polling ([#179](https://github.com/libre-ai/libre-ai/pull/179))                                                           |
+| **Real-time collaboration amendments — spec**         | ✅ spec-signed       | Owner-ratified collab design: CRDT + MLS E2EE, self-hosted relay, CollabCheckpointRecorded events, approval gate never weakened ([#198](https://github.com/libre-ai/libre-ai/pull/198)) |
+| **Collaboration brick (CRDT + MLS) — implementation** | ⏳ next              | Sovereign end-to-end-encrypted co-editing; ciphertext-only relay; graceful degradation to append-only                                                                                   |
+| **Command surface — write UI, export, deletion**      | ⏳ next              | Draft/approve workflows, audience-scoped export, retention and session closure                                                                                                          |
+| **Generation & evidence adapter**                     | ⏳ next              | Bounded synthesis from sources/contributions, attenuated Biscuit for provider, draft failure handling                                                                                   |
+| **Multi-instance & privacy qualification**            | ⏳ next              | Two-instance reconnect, private-export proof, cross-tenant denial, human approval journey                                                                                               |
 
-- sources and provenance are required;
-- generated material remains draft-only until validation;
-- participant exports exclude private responses by default;
-- delegations are scoped, expiring, revocable and least-privilege;
-- analytics are aggregate-only by default.
+This repository is `private` until the owner activates it for public opening (wave 4). **Benchmark target:** Miro — real-time collaborative facilitation tooling, reached through explicit approval and append-only events rather than real-time consensus.
 
-The fixture-only server exposes:
+## How it works
 
-```text
-GET  /p0/contract/proof
-POST /p0/stub/run
-```
+1. **Facilitate** — a facilitator creates a session, sets an audience policy for contributions (public, shared, private), and attaches validated sources (documents, expert responses, prior evidence).
+2. **Participate** — participants join with scoped membership, contribute under the audience rules, and reconnect from a cursor without re-submitting contributions. Presence is ephemeral and cannot authorize.
+3. **Synthesis** — the facilitator requests a synthesis from sources and contributions in scope; the output is drafted by a generation provider, but remains **draft only** until the facilitator explicitly approves it.
+4. **Export & close** — an authorized actor exports an audience-specific bundle (only seeing content they can access), and the owner closes or deletes the session per retention contract. All events remain immutable.
 
-Neither endpoint claims to call a real model provider, durable store or complete authorization infrastructure.
+## Architecture — built from interoperable bricks
 
-## Verify locally
+Sessions is a product assembled from independently versioned bricks; each is usable and testable on its own, and the product is their composition (the multi-repo target of [ADR-0008](https://github.com/libre-ai/libre-ai/blob/main/docs/adr/0008-multi-repo-target-topology-and-brand.md)).
 
-`presto-server` embeds a generated Dioxus bundle. On a clean checkout, install the pinned Dioxus CLI and build that bundle first (it is intentionally ignored by Git):
+| Brick                                     | Role                                                | Interface it exposes / consumes                                                                                               |
+| ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **`sessions-core`** (TypeScript / Bun)    | Deterministic state machine and event reducer       | Domain commands, append-only event stream, audience projection, reconnect cursor logic                                        |
+| **`@libre-ai/web-platform`**              | SSR / Bun BFF foundation                            | Request handler, WebSocket upgrade, server-side session evaluation, database query interface                                  |
+| **`@libre-ai/data`**                      | Organization, session, and contribution persistence | PostgreSQL driver, row-level security policies, migration framework                                                           |
+| **`collab-core`** (CRDT + MLS, Rust/WASM) | Real-time collaborative draft editing               | E2EE participant synchronization, ciphertext-only relay interface, CollabCheckpointRecorded event integration (⏳ planned)    |
+| **Contracts**                             | Locked interoperability surface                     | `session-event.v1`, `session-export.v1`, `evidence-report.v1`, `sessions.v1.yaml` OpenAPI, `sessions-v1.datalog` authz policy |
 
-```bash
-cargo install dioxus-cli --version 0.7.9 --locked
-./scripts/build-owner-app.sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-```
+The host (Bun server) holds the authorization token and evaluates commands against Biscuit policy; the event reducer runs deterministically local; real-time collab is capability-isolated (the relay receives only ciphertext, never cryptographic keys).
 
-See [`docs/`](docs/) for the current contracts and testing notes.
+## Where the work happens
 
-### Bounded stack traversal
+All active development is in the base repository, under:
 
-The current local replay crosses Proof Kit UI inspection, static PostgreSQL inspection, the `presto-server` artifact manifest and an Agent Factory planning-only handoff protected by a short-lived Biscuit token:
+- `apps/sessions` — the product host (SSR cockpit, event persistence, command service, UI)
+- `src/domain` — state machine, event definitions, audience logic
+- `src/persistence` — PostgreSQL RLS, reconnect, event cursor
+- `src/authz` — Biscuit authorization policy, role validation
+- `src/server` — WebSocket and HTTP command handlers
+- `src/ui` — accessible read/write cockpit (React 19)
+- `contracts/` — locked session event, export and API schemas
+- [`docs/apps/sessions.md`](https://github.com/libre-ai/libre-ai/blob/main/docs/apps/sessions.md) — the full product specification
 
-```bash
-./scripts/generate-stack-proof.sh
-```
-
-The redacted machine reports and explicit limitations are recorded in [`docs/evidence/stack-traversal-2026-07-13.md`](docs/evidence/stack-traversal-2026-07-13.md). This proves a local technical traversal, not a complete user session, hosted availability or production authorization.
-
-## Boundaries
-
-Sessions owns the learner, facilitator and participant workflow. It may hand off explicit source, planning, inspection and artifact contracts to independent infrastructure. It does not own generic ingestion, agent orchestration, client-platform primitives or long-term memory.
-
-## Next milestone
-
-Promote the executable local MVP evidence to hosted proof: close #109 in staging, then finalize retention/BYOK and persistence/multi-instance. See [`docs/product-readiness.md`](docs/product-readiness.md).
-
-## Contributing
-
-- [Contribution guide](CONTRIBUTING.md)
-- [Roadmap](ROADMAP.md)
-- [Security policy](SECURITY.md)
+To follow progress or contribute, open issues and pull requests in [`libre-ai/libre-ai`](https://github.com/libre-ai/libre-ai). This repository stays reserved until activation.
 
 ## License
 
-[MIT](LICENSE).
+EUPL-1.2.
