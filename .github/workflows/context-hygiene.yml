@@ -1,0 +1,41 @@
+name: Context hygiene
+
+# Blocks private identifiers and machine-local paths from entering the public
+# tree. Patterns are written with a character class around their first letter
+# so this workflow never contains the literal identifier it bans. Lines
+# carrying the `allow-local-path` marker are exempt from the path check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  context-hygiene:
+    name: No private identifiers or machine-local paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Banned private identifiers (hard fail)
+        run: |
+          set -euo pipefail
+          banned='[d]oxallia'
+          if git grep -I -n -i -E -e "$banned" -- .; then
+            echo "::error::Banned private identifier found (pattern: $banned)."
+            exit 1
+          fi
+          echo "OK: no banned identifier."
+      - name: Machine-local paths (hard fail)
+        run: |
+          set -euo pipefail
+          local_path='/Users/[i]fi6567'
+          hits="$(git grep -I -n -E -e "$local_path" -- . | grep -v 'allow-local-path' || true)"
+          if [ -n "$hits" ]; then
+            printf '%s\n' "$hits"
+            echo "::error::Machine-local path found (pattern: $local_path)."
+            exit 1
+          fi
+          echo "OK: no machine-local path."
