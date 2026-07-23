@@ -1,0 +1,11 @@
+{
+  "name": "Sessions collaborative events",
+  "product": "libre-ai/sessions",
+  "dataCategories": ["communication", "audit"],
+  "purposes": ["collaborative-work", "compliance-audit"],
+  "legalBasis": "contract",
+  "recipients": ["internal agents"],
+  "retentionRule": "sessions-content",
+  "dataSubjectType": "end-user",
+  "subjectRightsImplemented": ["access", "erasure"]
+}

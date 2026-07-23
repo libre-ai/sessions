@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@libre-ai/data": "workspace:*",
+    "@libre-ai/rgpd-kit": "workspace:*",
     "@libre-ai/web-platform": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:"
