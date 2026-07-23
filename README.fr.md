@@ -36,7 +36,7 @@ Sessions est en construction à partir d'une spécification verrouillée. Il **n
 | **Adaptateur génération & preuve**                            | ⏳ suite                | Synthèse bornée à partir de sources/contributions, Biscuit atténué pour fournisseur, gestion d'échecs de brouillon                                                                                               |
 | **Qualification multi-instance & confidentialité**            | ⏳ suite                | Reconnexion deux-instances, preuve d'export privée, déni cross-tenant, parcours d'approbation humain                                                                                                             |
 
-Ce dépôt est une réserve publique, volontairement sans code produit jusqu'à l'activation (vague 4). **Cible de référence :** Miro — outillage de facilitation collaborative en temps réel, atteint par approbation explicite et événements append-only plutôt que consensus temps réel.
+Ce dépôt est une réserve publique ; l'implémentation legacy qu'il porte encore est gelée pour référence, et la reconstruction se passe dans le dépôt de base jusqu'à l'activation (vague 4). **Cible de référence :** Miro — outillage de facilitation collaborative en temps réel, atteint par approbation explicite et événements append-only plutôt que consensus temps réel.
 
 ## Comment ça fonctionne
 

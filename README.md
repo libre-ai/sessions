@@ -36,7 +36,7 @@ Sessions is being built from a locked specification. It is **not released yet**;
 | **Generation & evidence adapter**                     | ⏳ next              | Bounded synthesis from sources/contributions, attenuated Biscuit for provider, draft failure handling                                                                                   |
 | **Multi-instance & privacy qualification**            | ⏳ next              | Two-instance reconnect, private-export proof, cross-tenant denial, human approval journey                                                                                               |
 
-This repository is a public reserved home, intentionally without product code until activation (wave 4). **Benchmark target:** Miro — real-time collaborative facilitation tooling, reached through explicit approval and append-only events rather than real-time consensus.
+This repository is a public reserved home; the legacy implementation it still carries is frozen for reference, and the rebuild happens in the base repository until activation (wave 4). **Benchmark target:** Miro — real-time collaborative facilitation tooling, reached through explicit approval and append-only events rather than real-time consensus.
 
 ## How it works
 
