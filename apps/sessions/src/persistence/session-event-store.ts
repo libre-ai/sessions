@@ -6,6 +6,7 @@
 // folding the persisted stream back through the domain reducer.
 
 import { requireTenantContext, type SqlExecutor } from "@libre-ai/data";
+import { deriveSubjectDigest } from "@libre-ai/rgpd-kit";
 import {
   type ActorKind,
   type EventType,
@@ -88,11 +89,16 @@ export async function appendEvent(
   const tenantId = requireTenantContext();
   if (event.tenantId !== tenantId) throw new SessionTenantMismatchError();
 
+  // A human actor is a potential RGPD data subject: its opaque tenant-scoped
+  // digest is computed once here so the rights read paths resolve subjects by
+  // one indexed equality (0003_actor_digest.sql enforces it structurally).
+  const actorDigest =
+    event.actor.kind === "human" ? await deriveSubjectDigest(tenantId, event.actor.id) : null;
   const result = await executor.query(
     `INSERT INTO session_events (
        tenant_id, session_id, sequence, event_id, revision, type,
-       actor_kind, actor_id, occurred_at, data, recorded_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       actor_kind, actor_id, actor_digest, occurred_at, data, recorded_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (tenant_id, session_id, sequence) DO NOTHING`,
     [
       tenantId,
@@ -103,6 +109,7 @@ export async function appendEvent(
       event.type,
       event.actor.kind,
       event.actor.id,
+      actorDigest,
       event.occurredAt,
       JSON.stringify(event.data),
       recordedAt,

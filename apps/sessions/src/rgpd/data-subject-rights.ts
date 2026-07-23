@@ -84,24 +84,16 @@ async function resolveSubjectActors(
   tenantId: string,
   subjectDigest: string,
 ): Promise<readonly string[]> {
-  // The log stores plaintext actor ids while the port speaks digests: digest
-  // every distinct human actor of the tenant and keep the matches. The
-  // explicit tenant_id predicate is defense in depth over RLS (K4 finding:
-  // never rely on the barrier alone), and no plaintext enters any signature.
-  // TODO(rgpd-scale): O(distinct actors) sha-256 per request is fine at
-  // walking-skeleton scale but unbounded; persist an indexed actor_digest at
-  // insertion before any tenant can hold thousands of distinct actors.
+  // The append path persists the opaque actor_digest (0003_actor_digest.sql,
+  // enforced structurally for human actors), so resolving a subject is one
+  // indexed equality — no plaintext in any signature, no per-request
+  // hashing. The explicit tenant_id predicate is defense in depth over RLS
+  // (K4 finding: never rely on the barrier alone).
   const actors = await tx.query<ActorRow>(
-    "SELECT DISTINCT actor_id FROM session_events WHERE actor_kind = 'human' AND tenant_id = $1",
-    [tenantId],
+    "SELECT DISTINCT actor_id FROM session_events WHERE actor_digest = $1 AND tenant_id = $2",
+    [subjectDigest, tenantId],
   );
-  const matches: string[] = [];
-  for (const row of actors.rows) {
-    if ((await deriveSubjectDigest(tenantId, row.actor_id)) === subjectDigest) {
-      matches.push(row.actor_id);
-    }
-  }
-  return matches;
+  return actors.rows.map((row) => row.actor_id);
 }
 
 async function isTombstoned(
@@ -115,6 +107,54 @@ async function isTombstoned(
     [tenantId, subjectDigest],
   );
   return tombstone.rows.length > 0;
+}
+
+interface SubjectExport {
+  readonly dataExport: {
+    readonly schemaVersion: "libre-ai.sessions.subject-export.v1";
+    readonly events: readonly unknown[];
+  };
+}
+
+// Shared by access (Art. 15) and portability (Art. 20): both export exactly
+// the rows the subject authored, tombstone-checked first. They differ only in
+// intent — access informs the subject, portability transfers to another
+// controller — which the result types carry (categories vs format).
+async function collectSubjectExport(
+  tx: SqlExecutor,
+  tenantId: string,
+  subjectDigest: string,
+): Promise<SubjectExport | { readonly refusal: string }> {
+  if (await isTombstoned(tx, tenantId, subjectDigest)) {
+    return { refusal: "sessions.rgpd.subject_erased" };
+  }
+  const actors = await resolveSubjectActors(tx, tenantId, subjectDigest);
+  if (actors.length === 0) {
+    return { refusal: "sessions.rgpd.subject_unknown" };
+  }
+  const events: unknown[] = [];
+  for (const actorId of actors) {
+    const rows = await tx.query(
+      `SELECT session_id, sequence, event_id, revision, type, occurred_at, data, recorded_at
+       FROM session_events
+       WHERE actor_kind = 'human' AND actor_id = $1 AND tenant_id = $2
+       ORDER BY session_id, sequence`,
+      [actorId, tenantId],
+    );
+    for (const row of rows.rows) {
+      events.push({
+        sessionId: row.session_id,
+        sequence: row.sequence,
+        eventId: row.event_id,
+        revision: row.revision,
+        type: row.type,
+        occurredAt: row.occurred_at,
+        data: row.data,
+        recordedAt: row.recorded_at,
+      });
+    }
+  }
+  return { dataExport: { schemaVersion: "libre-ai.sessions.subject-export.v1", events } };
 }
 
 export function createSessionsDataSubjectRights(deps: SessionsRgpdDeps): DataSubjectRightsPort {
@@ -143,40 +183,15 @@ export function createSessionsDataSubjectRights(deps: SessionsRgpdDeps): DataSub
     async handleAccessRequest(tenantId, subjectDigest): Promise<AccessRequestResult> {
       const requestId = deps.newRequestId();
       return withTenantDbTransaction(deps.executor, tenantId, async (tx) => {
-        if (await isTombstoned(tx, tenantId, subjectDigest)) {
-          return { status: "refused", requestId, refusal: "sessions.rgpd.subject_erased" };
-        }
-        const actors = await resolveSubjectActors(tx, tenantId, subjectDigest);
-        if (actors.length === 0) {
-          return { status: "refused", requestId, refusal: "sessions.rgpd.subject_unknown" };
-        }
-        const events: unknown[] = [];
-        for (const actorId of actors) {
-          const rows = await tx.query(
-            `SELECT session_id, sequence, event_id, revision, type, occurred_at, data, recorded_at
-             FROM session_events
-             WHERE actor_kind = 'human' AND actor_id = $1 AND tenant_id = $2
-             ORDER BY session_id, sequence`,
-            [actorId, tenantId],
-          );
-          for (const row of rows.rows) {
-            events.push({
-              sessionId: row.session_id,
-              sequence: row.sequence,
-              eventId: row.event_id,
-              revision: row.revision,
-              type: row.type,
-              occurredAt: row.occurred_at,
-              data: row.data,
-              recordedAt: row.recorded_at,
-            });
-          }
+        const collected = await collectSubjectExport(tx, tenantId, subjectDigest);
+        if ("refusal" in collected) {
+          return { status: "refused", requestId, refusal: collected.refusal };
         }
         return {
           status: "fulfilled",
           requestId,
           subjectDigest,
-          dataExport: { schemaVersion: "libre-ai.sessions.subject-export.v1", events },
+          dataExport: collected.dataExport,
           exportedAt: deps.now(),
           categories: SESSIONS_CATEGORIES.map((declaration) => declaration.category),
         };
@@ -193,11 +208,18 @@ export function createSessionsDataSubjectRights(deps: SessionsRgpdDeps): DataSub
           tenantId,
           owner: "sessions",
           subjectDigests: [subjectDigest],
-          // Self-service request: attribution is the opaque digest itself —
-          // the caller authorized the actor before invoking the port.
-          requestedBy: subjectDigest,
+          // Self-service request: attribution is the opaque subject itself,
+          // shaped to the deletion-receipt.v1 requestedBy pattern
+          // (^usr_[a-z0-9]{16,64}$) — the digest prefix cross-references
+          // subjectDigests, never plaintext. The caller authorized the actor
+          // before invoking the port.
+          requestedBy: `usr_${subjectDigest.slice(0, 32)}`,
           requestedAt: now,
           completedAt: now,
+          // Append-only authority store: the receipt's `deleted` outcome
+          // attests the accepted logical deletion; the qualifier tells the
+          // auditor physical compaction follows the retention path.
+          postgresqlReasonCode: "deletion.deferred-compaction",
           deleteActiveRows: async (tx) => {
             if (await isTombstoned(tx, tenantId, subjectDigest)) {
               throw new AlreadyErasedSentinel();
@@ -258,12 +280,22 @@ export function createSessionsDataSubjectRights(deps: SessionsRgpdDeps): DataSub
       };
     },
 
-    async handlePortabilityRequest(): Promise<PortabilityRequestResult> {
-      return {
-        status: "refused",
-        requestId: deps.newRequestId(),
-        refusal: "sessions.rgpd.not_implemented",
-      };
+    async handlePortabilityRequest(tenantId, subjectDigest): Promise<PortabilityRequestResult> {
+      const requestId = deps.newRequestId();
+      return withTenantDbTransaction(deps.executor, tenantId, async (tx) => {
+        const collected = await collectSubjectExport(tx, tenantId, subjectDigest);
+        if ("refusal" in collected) {
+          return { status: "refused", requestId, refusal: collected.refusal };
+        }
+        return {
+          status: "fulfilled",
+          requestId,
+          dataExport: collected.dataExport,
+          // Art. 20: structured, commonly used, machine-readable.
+          format: "application/json",
+          exportedAt: deps.now(),
+        };
+      });
     },
 
     async listDataCategories(): Promise<readonly DataCategoryDeclaration[]> {

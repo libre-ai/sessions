@@ -7,5 +7,5 @@
   "recipients": ["internal agents"],
   "retentionRule": "sessions-content",
   "dataSubjectType": "end-user",
-  "subjectRightsImplemented": ["access", "erasure"]
+  "subjectRightsImplemented": ["access", "erasure", "portability"]
 }

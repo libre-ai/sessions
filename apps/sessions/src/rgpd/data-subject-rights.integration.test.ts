@@ -197,6 +197,14 @@ describe("handleErasureRequest", () => {
     expect(receipt?.subjectDigests).toEqual([digest]);
     expect(receipt?.owner).toBe("sessions");
     expect(receipt?.status).toBe("complete");
+    // Contract conformance (deletion-receipt.v1 requestedBy pattern):
+    // self-service attribution as usr_ + digest prefix, no plaintext.
+    expect(receipt?.requestedBy).toBe(`usr_${digest.slice(0, 32)}`);
+    // Append-only log: the receipt qualifies the accepted logical deletion
+    // so an auditor sees physical compaction is deferred to retention.
+    const postgresql = receipt?.stores.find((store) => store.store === "postgresql");
+    expect(postgresql?.outcome).toBe("deleted");
+    expect(postgresql?.reasonCode).toBe("deletion.deferred-compaction");
 
     const tombstones = await withTenantDbTransaction(tdb.db, TENANT_A, (tx) =>
       tx.query<{ subject_digest: string; receipt_id: string }>(
@@ -240,15 +248,36 @@ describe("handleErasureRequest", () => {
   });
 });
 
-describe("deferred rights and categories", () => {
-  test("restriction and portability refuse sessions.rgpd.not_implemented", async () => {
+describe("portability, deferred rights and categories", () => {
+  test("portability (Art. 20) exports the subject's rows in a machine-readable format", async () => {
+    const port = makePort();
+    const digest = await deriveSubjectDigest(TENANT_B, "member-alice");
+    const result = await port.handlePortabilityRequest(TENANT_B, digest);
+    expect(result.status).toBe("fulfilled");
+    if (result.status === "fulfilled") {
+      expect(result.format).toBe("application/json");
+      const dataExport = result.dataExport as {
+        schemaVersion: string;
+        events: readonly { type: string }[];
+      };
+      expect(dataExport.schemaVersion).toBe("libre-ai.sessions.subject-export.v1");
+      expect(dataExport.events.map((event) => event.type)).toEqual(["participant-joined"]);
+    }
+  });
+
+  test("portability refuses an erased subject like access does", async () => {
+    const port = makePort();
+    const digest = await deriveSubjectDigest(TENANT_A, "member-alice");
+    expect(await port.handlePortabilityRequest(TENANT_A, digest)).toMatchObject({
+      status: "refused",
+      refusal: "sessions.rgpd.subject_erased",
+    });
+  });
+
+  test("restriction refuses sessions.rgpd.not_implemented (deferred)", async () => {
     const port = makePort();
     const digest = await deriveSubjectDigest(TENANT_B, "member-alice");
     expect(await port.handleRestrictionRequest(TENANT_B, digest)).toMatchObject({
-      status: "refused",
-      refusal: "sessions.rgpd.not_implemented",
-    });
-    expect(await port.handlePortabilityRequest(TENANT_B, digest)).toMatchObject({
       status: "refused",
       refusal: "sessions.rgpd.not_implemented",
     });

@@ -81,6 +81,75 @@ describe("session_deleted_subjects", () => {
   });
 });
 
+describe("session_events.actor_digest (0003)", () => {
+  test("a human event without its digest is structurally rejected", async () => {
+    await expect(
+      tdb.db.query(
+        `INSERT INTO session_events
+           (tenant_id, session_id, sequence, event_id, revision, type, actor_kind, actor_id, actor_digest, occurred_at, data, recorded_at)
+         VALUES ($1, 'urn:libre-ai:session:s-floor', 1, 'urn:libre-ai:event:e-floor', 0,
+                 'session-created', 'human', 'owner-alpha', NULL, $2, '{}', $2)`,
+        [TENANT_A, NOW],
+      ),
+    ).rejects.toThrow();
+  });
+
+  test("a malformed digest is rejected, a system actor carries none", async () => {
+    await expect(
+      tdb.db.query(
+        `INSERT INTO session_events
+           (tenant_id, session_id, sequence, event_id, revision, type, actor_kind, actor_id, actor_digest, occurred_at, data, recorded_at)
+         VALUES ($1, 'urn:libre-ai:session:s-floor', 1, 'urn:libre-ai:event:e-floor', 0,
+                 'session-created', 'human', 'owner-alpha', 'user@example.com', $2, '{}', $2)`,
+        [TENANT_A, NOW],
+      ),
+    ).rejects.toThrow();
+    await tdb.db.query(
+      `INSERT INTO session_events
+         (tenant_id, session_id, sequence, event_id, revision, type, actor_kind, actor_id, actor_digest, occurred_at, data, recorded_at)
+       VALUES ($1, 'urn:libre-ai:session:s-floor-sys', 1, 'urn:libre-ai:event:e-floor-sys', 0,
+               'session-created', 'system', 'scheduler', NULL, $2, '{}', $2)`,
+      [TENANT_A, NOW],
+    );
+  });
+});
+
+describe("0003 backfill on a non-empty log", () => {
+  test("pre-existing human rows get the exact deriveSubjectDigest value", async () => {
+    // A deployment whose log already holds human events must be able to
+    // apply 0003: the in-SQL backfill must reproduce byte-for-byte the
+    // TypeScript derivation the RGPD read paths use.
+    const { deriveSubjectDigest } = await import("@libre-ai/rgpd-kit");
+    const { readFile, readdir } = await import("node:fs/promises");
+    const staged = await createTestDatabase();
+    try {
+      await staged.applyMigrations(DATA_MIGRATIONS);
+      const files = (await readdir(SESSIONS_MIGRATIONS)).filter((f) => f.endsWith(".sql")).sort();
+      for (const file of files.filter((f) => !f.startsWith("0003"))) {
+        await staged.db.exec(await readFile(join(SESSIONS_MIGRATIONS, file), "utf8"));
+      }
+      await staged.db.query(
+        `INSERT INTO session_events
+           (tenant_id, session_id, sequence, event_id, revision, type, actor_kind, actor_id, occurred_at, data, recorded_at)
+         VALUES ($1, 'urn:libre-ai:session:s-legacy', 1, 'urn:libre-ai:event:e-legacy', 0,
+                 'session-created', 'human', 'owner-legacy', $2, '{}', $2)`,
+        [TENANT_A, NOW],
+      );
+      const migration0003 = files.find((f) => f.startsWith("0003"));
+      if (migration0003 === undefined) throw new Error("0003 migration missing");
+      await staged.db.exec(await readFile(join(SESSIONS_MIGRATIONS, migration0003), "utf8"));
+      const backfilled = await staged.db.query<{ actor_digest: string }>(
+        "SELECT actor_digest FROM session_events WHERE actor_id = 'owner-legacy'",
+      );
+      expect(backfilled.rows[0]?.actor_digest).toBe(
+        await deriveSubjectDigest(TENANT_A, "owner-legacy"),
+      );
+    } finally {
+      await staged.close();
+    }
+  });
+});
+
 describe("session_subject_audit", () => {
   test("audit rows are tenant-isolated and append-only", async () => {
     await withTenantDbTransaction(tdb.db, TENANT_A, async (tx) => {

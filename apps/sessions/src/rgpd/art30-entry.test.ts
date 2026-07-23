@@ -10,9 +10,9 @@ describe("apps/sessions/art30-register.json", () => {
     const activity = validateProcessingActivity(entry);
     expect(activity.product).toBe("libre-ai/sessions");
     expect(activity.retentionRule).toBe("sessions-content");
-    // Restriction and portability are deferred typed refusals, so they are
-    // deliberately NOT declared as implemented.
-    expect(activity.subjectRightsImplemented).toEqual(["access", "erasure"]);
+    // Restriction stays a deferred typed refusal, so it is deliberately NOT
+    // declared as implemented; portability (Art. 20) is.
+    expect(activity.subjectRightsImplemented).toEqual(["access", "erasure", "portability"]);
   });
 
   test("renders into the generated register", () => {

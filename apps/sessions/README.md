@@ -125,10 +125,12 @@ Sessions is the first adopter of `@libre-ai/rgpd-kit`
 tombstone/audit tables, its own deletion receipts, no cross-context table.
 
 - **Port implementation** — `src/rgpd/data-subject-rights.ts` implements
-  `DataSubjectRightsPort`: access (Art. 15) and erasure (Art. 17) fulfilled;
-  restriction and portability refuse `sessions.rgpd.not_implemented`
-  (deferred, typed). All surfaces past verification speak opaque
-  tenant-scoped sha-256 digests — never plaintext identifiers.
+  `DataSubjectRightsPort`: access (Art. 15), erasure (Art. 17) and
+  portability (Art. 20, `application/json` export) fulfilled; restriction
+  refuses `sessions.rgpd.not_implemented` (deferred, typed). All surfaces
+  past verification speak opaque tenant-scoped sha-256 digests — never
+  plaintext identifiers; subjects resolve through the indexed `actor_digest`
+  column computed at append time (`0003_actor_digest.sql`).
 - **Erasure semantics** — `session_events` is append-only, so Art. 17 removes
   **logical access in the accepted transaction**: `executeActiveDeletion`
   writes the `session_deleted_subjects` tombstone and the deletion receipt
