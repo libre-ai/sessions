@@ -170,16 +170,38 @@ tombstone/audit tables, its own deletion receipts, no cross-context table.
   invariant BINDS the future export increment: it must record recipients per
   disclosure, so that a later restriction/erasure/rectification can trigger
   per-recipient notification, and the subject can ask for the list.
-- **Cross-invariant with retention** — the rule the companion
-  retention/compaction increment must implement and acceptance-test: a
-  subject in `restricted` or `lift-pending` state is NEVER swept by the
-  retention/compaction path (`packages/data`'s expired-record selection); the
-  sweep's exclusion reads `session_restricted_subjects`. No sweep exists in
-  `packages/data` yet, so nothing enforces this today — it binds that
-  increment's future implementation. A restricted-then-erased subject remains
-  compactable: the erasure request IS the subject's own Art. 18(2) consent to
-  that one processing (deletion), so it supersedes the restriction on
-  everything else.
+- **Cross-invariant with retention** — the retention/compaction sweep is
+  implemented (`packages/data`'s `runRetentionSweep` driven by this app's
+  `sessionsCompactionSpec`, `src/rgpd/retention.ts`) and acceptance-tested
+  (`src/rgpd/retention.integration.test.ts`). The unit of physical deletion is
+  the WHOLE session stream (G-A session-lifecycle: the causal log rejects
+  row-level holes), a session ages by `max(recorded_at)` of its stream
+  (server-set, not the forgeable `occurred_at`), and it is swept only when its
+  newest event is past the `sessions-content` window. A subject in `restricted`
+  or `lift-pending` state is NEVER swept: the sweep excludes the whole session,
+  first in the advisory selection and again in an in-transaction phase-2
+  re-check (the guard against a restriction or a fresh event landing between the
+  two phases) — named deferral, not silent: that re-check holds only absent a
+  concurrent append under a real multi-connection Postgres (unreachable in v1's
+  single-connection PGlite/owner-run CLI, no server write path wired yet); the
+  G4 closure plan is a single-statement `DELETE` with the predicates embedded
+  plus an advisory lock shared with the append path, or `SERIALIZABLE` with
+  retry (see the comment at `compactUnit`'s guard). A restricted-then-erased
+  subject remains compactable: the erasure request IS the subject's own Art.
+  18(2) consent to that one processing
+  (deletion), so it supersedes the restriction on everything else. Erasure is
+  evidenced physically through the sweep's report `compactedReceiptIds` (the
+  deferred-compaction receipts of tombstoned subjects whose rows a compaction
+  removes); tombstones, audit rows and restriction rows are themselves never
+  swept. The legal-hold pre-check (`holds`) is a named constant-empty deferral
+  until a hold registry exists. Grants deviation: the retention role holds
+  read-only `SELECT` on `session_restricted_subjects` and
+  `session_deleted_subjects` (`0005_retention_grants.sql`) so the phase-2
+  re-check and receipt collection can run under the retention barrier — no write
+  grant, so both evidence tables stay unsweepable by grant. The sweep runs from
+  the owner-run CLI:
+  `bun tools/ops/run-retention.ts --pgdata <dir> --tenant <ten_...>`; no
+  scheduler until G4.
 - **Erasure semantics** — `session_events` is append-only, so Art. 17 removes
   **logical access in the accepted transaction**: `executeActiveDeletion`
   writes the `session_deleted_subjects` tombstone and the deletion receipt
