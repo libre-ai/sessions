@@ -31,7 +31,9 @@ import {
   deriveSubjectDigest,
   type ErasureRequestResult,
   InvalidSubjectIdentifierError,
+  isRestrictionGround,
   type PortabilityRequestResult,
+  type RestrictionGround,
   type RestrictionRequestResult,
   validateDataSubjectRequest,
 } from "@libre-ai/rgpd-kit";
@@ -81,11 +83,22 @@ type PortResult =
   | RestrictionRequestResult
   | PortabilityRequestResult;
 
-interface ParsedBody {
-  readonly rightType: DataSubjectRightType;
+interface NonRestrictionParsedBody {
+  readonly rightType: Exclude<DataSubjectRightType, "restriction">;
   readonly subjectIdentifier: string;
   readonly tenantId: string;
 }
+
+interface RestrictionParsedBody {
+  readonly rightType: "restriction";
+  readonly subjectIdentifier: string;
+  readonly tenantId: string;
+  // Art. 18(1) ground: belongs to the subject, enters through the request
+  // (rgpd-kit port contract), never invented by this handler.
+  readonly ground: RestrictionGround;
+}
+
+type ParsedBody = NonRestrictionParsedBody | RestrictionParsedBody;
 
 function envelope(data: unknown, meta: Record<string, unknown>, status: number): Response {
   return Response.json({ data, meta }, { status });
@@ -108,8 +121,26 @@ function parseBody(raw: unknown): ParsedBody | null {
   if (typeof candidate.tenantId !== "string" || !PRIVATE_TENANT_ID.test(candidate.tenantId)) {
     return null;
   }
+  const rightType = candidate.rightType as DataSubjectRightType;
+  // The Art. 18(1) ground belongs to the subject and must enter through the
+  // request: required (and validated) on restriction, and rejected on every
+  // other right rather than silently ignored.
+  if (rightType === "restriction") {
+    if (!isRestrictionGround(candidate.ground)) {
+      return null;
+    }
+    return {
+      rightType,
+      subjectIdentifier: candidate.subjectIdentifier,
+      tenantId: candidate.tenantId,
+      ground: candidate.ground,
+    };
+  }
+  if (candidate.ground !== undefined) {
+    return null;
+  }
   return {
-    rightType: candidate.rightType as DataSubjectRightType,
+    rightType,
     subjectIdentifier: candidate.subjectIdentifier,
     tenantId: candidate.tenantId,
   };
@@ -154,7 +185,7 @@ export function createDataSubjectRequestHandler(
       case "erasure":
         return deps.port.handleErasureRequest(body.tenantId, subjectDigest);
       case "restriction":
-        return deps.port.handleRestrictionRequest(body.tenantId, subjectDigest);
+        return deps.port.handleRestrictionRequest(body.tenantId, subjectDigest, body.ground);
       case "portability":
         return deps.port.handlePortabilityRequest(body.tenantId, subjectDigest);
       case "rectification":

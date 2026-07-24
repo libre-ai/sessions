@@ -125,12 +125,61 @@ Sessions is the first adopter of `@libre-ai/rgpd-kit`
 tombstone/audit tables, its own deletion receipts, no cross-context table.
 
 - **Port implementation** — `src/rgpd/data-subject-rights.ts` implements
-  `DataSubjectRightsPort`: access (Art. 15), erasure (Art. 17) and
-  portability (Art. 20, `application/json` export) fulfilled; restriction
-  refuses `sessions.rgpd.not_implemented` (deferred, typed). All surfaces
-  past verification speak opaque tenant-scoped sha-256 digests — never
-  plaintext identifiers; subjects resolve through the indexed `actor_digest`
-  column computed at append time (`0003_actor_digest.sql`).
+  `DataSubjectRightsPort`: access (Art. 15), erasure (Art. 17), portability
+  (Art. 20, `application/json` export) and restriction (Art. 18) fulfilled.
+  `handleRestrictionRequest` is a refusal ladder, design-fixed order: a
+  subject who is erased, unknown, or already restricted is refused
+  (`subject_erased` / `subject_unknown` / `already_restricted`); otherwise the
+  subject-supplied Art. 18(1) ground is recorded and the request is fulfilled
+  with that ground and the count of affected records. All surfaces past
+  verification speak opaque tenant-scoped sha-256 digests — never plaintext
+  identifiers; subjects resolve through the indexed `actor_digest` column
+  computed at append time (`0003_actor_digest.sql`).
+- **The restriction invariant** — this is the binding read-path contract, not
+  a description of wiring that exists today: any surface that discloses,
+  transmits, derives from or destroys the subject's contributions MUST
+  consult `isRestricted` (`src/rgpd/restriction.ts`) first — not just export
+  and provider synthesis. That is why `isRestricted` is exported: v1 has no
+  participant-facing transport that serves contributions to other
+  participants, no export pipeline, and no synthesis/provider surface yet, so
+  the invariant currently binds only their FUTURE implementations; it is
+  consulted today only by the restriction flow itself. The ONE named
+  exception, decided in the design, is the state fold (`loadSessionState` +
+  the domain reducer): rebuilding `SessionState` from the event log is
+  storage-integrity mechanics, it discloses nothing by itself, and carving it
+  out is an explicit, reviewable stance rather than a silent gap.
+- **What Art. 18(2) actually pauses** — restriction is neither erasure nor a
+  read block on the subject: storage, the subject's own access/portability/
+  erasure (Art. 15/17/20), and the subject's new contributions all stay
+  allowed while restricted. What pauses is serving the subject's
+  contributions to OTHER participants, exports, provider synthesis, and
+  retention sweeps — every surface the invariant above binds.
+- **The lift is two-step (Art. 18(3))** — `requestLift` opens the notice
+  obligation: processing stays paused, and the audit trail records
+  `sessions.rgpd.notice_required`. `confirmLift` completes the lift only once
+  that obligation is discharged. v1's notice channel is an owner attestation
+  recorded directly on the audit row (owner decision 2026-07-24) — no
+  external notice channel exists yet. The two steps are joined by a synthetic
+  `lift_<entry_seq>` id. The state store (`session_restricted_subjects`,
+  `0004_restriction.sql`) is append-only — a lift or a re-restriction is
+  always a new row, never an `UPDATE` — so the current state is always the
+  row with the highest `entry_seq`.
+- **Art. 19 recipients registry** — v1 records zero recipients: no export
+  pipeline has ever run, so the Art. 19 duty to notify recipients of a
+  restriction, erasure or rectification is vacuously satisfied today. The
+  invariant BINDS the future export increment: it must record recipients per
+  disclosure, so that a later restriction/erasure/rectification can trigger
+  per-recipient notification, and the subject can ask for the list.
+- **Cross-invariant with retention** — the rule the companion
+  retention/compaction increment must implement and acceptance-test: a
+  subject in `restricted` or `lift-pending` state is NEVER swept by the
+  retention/compaction path (`packages/data`'s expired-record selection); the
+  sweep's exclusion reads `session_restricted_subjects`. No sweep exists in
+  `packages/data` yet, so nothing enforces this today — it binds that
+  increment's future implementation. A restricted-then-erased subject remains
+  compactable: the erasure request IS the subject's own Art. 18(2) consent to
+  that one processing (deletion), so it supersedes the restriction on
+  everything else.
 - **Erasure semantics** — `session_events` is append-only, so Art. 17 removes
   **logical access in the accepted transaction**: `executeActiveDeletion`
   writes the `session_deleted_subjects` tombstone and the deletion receipt
@@ -145,8 +194,10 @@ tombstone/audit tables, its own deletion receipts, no cross-context table.
   append-only stores carry a dedicated outcome/reason code in
   `executeActiveDeletion`.
 - **Audit trail** — `session_subject_audit` (append-only, FORCE RLS) records
-  `received` and the terminal `fulfilled`/`refused` state per request;
-  `detail` carries refusal codes only.
+  `received` and the terminal `fulfilled`/`refused` state per request, plus
+  the Art. 18(3) lift's `in-progress`/`fulfilled` notice pair; `detail`
+  carries reason codes only (refusal codes and the lift-notice codes
+  `sessions.rgpd.notice_required`/`notice_attested`), never free text.
 - **Request handler** — `src/rgpd/request-handler.ts` is an exported factory,
   **not mounted** on the cockpit routes: the runtime boundary above stays
   locked until `WP-G3-S01`'s `sessions-authz-review` human gate. Authorization

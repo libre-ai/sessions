@@ -32,6 +32,7 @@ import {
   type PortabilityRequestResult,
   type RestrictionRequestResult,
 } from "@libre-ai/rgpd-kit";
+import { isRestricted, restrict } from "./restriction";
 
 export interface SessionsRgpdDeps {
   readonly executor: SqlExecutor;
@@ -270,14 +271,38 @@ export function createSessionsDataSubjectRights(deps: SessionsRgpdDeps): DataSub
       }
     },
 
-    async handleRestrictionRequest(): Promise<RestrictionRequestResult> {
-      // Deferred (README, design §6): restriction needs a flag store and a
-      // read-path contract of its own; refusing typed beats pretending.
-      return {
-        status: "refused",
-        requestId: deps.newRequestId(),
-        refusal: "sessions.rgpd.not_implemented",
-      };
+    async handleRestrictionRequest(
+      tenantId,
+      subjectDigest,
+      ground,
+    ): Promise<RestrictionRequestResult> {
+      const requestId = deps.newRequestId();
+      const now = deps.now();
+      return withTenantDbTransaction(deps.executor, tenantId, async (tx) => {
+        // Refusal ladder, design-fixed order: erased → unknown → already
+        // restricted, then the accepted Art. 18(1) restriction.
+        if (await isTombstoned(tx, tenantId, subjectDigest)) {
+          return { status: "refused", requestId, refusal: "sessions.rgpd.subject_erased" };
+        }
+        // The subject's event count doubles as the unknown gate (no rows) and
+        // the affectedRecords figure (what processing now pauses). actor_digest
+        // is set only on human rows (0003), so this equals the human events.
+        const counted = await tx.query<{ count: string | number }>(
+          "SELECT count(*) AS count FROM session_events WHERE actor_digest = $1 AND tenant_id = $2",
+          [subjectDigest, tenantId],
+        );
+        const affectedRecords = Number(counted.rows[0]?.count ?? 0);
+        if (affectedRecords === 0) {
+          return { status: "refused", requestId, refusal: "sessions.rgpd.subject_unknown" };
+        }
+        if (await isRestricted(tx, tenantId, subjectDigest)) {
+          return { status: "refused", requestId, refusal: "sessions.rgpd.already_restricted" };
+        }
+        // The ground belongs to the subject (port contract); it rides back on
+        // the fulfillment and onto the append-only state row.
+        await restrict(tx, tenantId, subjectDigest, ground, requestId, now);
+        return { status: "fulfilled", requestId, restrictedAt: now, affectedRecords, ground };
+      });
     },
 
     async handlePortabilityRequest(tenantId, subjectDigest): Promise<PortabilityRequestResult> {
