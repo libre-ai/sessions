@@ -5,7 +5,7 @@ members = ["crates/app", "crates/core", "crates/join", "crates/rag", "crates/ser
 [workspace.package]
 edition = "2024"
 rust-version = "1.97"
-license = "MIT"
+license = "EUPL-1.2"
 repository = "https://github.com/libre-ai/sessions"
 
 [workspace.dependencies]

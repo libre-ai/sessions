@@ -19,6 +19,19 @@ allow = [
     "BSL-1.0",              # Boost Software License (permissive — NOT Business Source)
     "CDLA-Permissive-2.0", # permissive data license
 ]
+# The `allow` list above is the INBOUND policy for third-party dependencies and
+# is unchanged. The first-party workspace crates are OUTBOUND `EUPL-1.2` (see
+# LICENSING at https://github.com/libre-ai/libre-ai/blob/main/LICENSING.md), so
+# they are named one by one here instead of widening the inbound allow-list:
+# a third-party EUPL dependency must still be reviewed explicitly.
+exceptions = [
+    { allow = ["EUPL-1.2"], crate = "presto-core" },
+    { allow = ["EUPL-1.2"], crate = "presto-rag" },
+    { allow = ["EUPL-1.2"], crate = "presto-server" },
+    { allow = ["EUPL-1.2"], crate = "rumble-lm-app" },
+    { allow = ["EUPL-1.2"], crate = "rumble-lm-join" },
+    { allow = ["EUPL-1.2"], crate = "rumble-lm-ui" },
+]
 confidence-threshold = 0.9
 
 [advisories]
