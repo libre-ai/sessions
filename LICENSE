@@ -7,7 +7,9 @@ The licence for each file is declared through SPDX metadata and REUSE.toml:
   inspection manifest and the workflows under `.github/` — first-party software
   and runtime policy by default;
 - Apache-2.0: the interoperability contracts under `docs/contracts/` and their
-  synthetic fixtures;
+  synthetic fixtures, and the generated design-system assets under
+  `crates/ui/fixtures/portal/` together with the token and theme sheets they
+  emit under `crates/ui/src/` — client-facing design output;
 - CC-BY-4.0: editorial documentation and first-party project records.
 
 Full licence texts are stored in LICENSES/.
