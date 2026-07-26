@@ -7,9 +7,9 @@
 //! project the public `Grounded` variant.
 
 use presto_core::api::{ConfidentialityLevel, RagQueryResponse, SourceCitation};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+use crate::integrity::hash_fields;
 use crate::notebook_rag::{
     NotebookCandidate, fixture_document_id, fixture_source_section_id, fixture_source_text,
     fixture_title, scoped_source_hash,
@@ -319,19 +319,6 @@ pub(crate) fn normalize_query(query: &str) -> String {
         .map(str::to_lowercase)
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn hash_fields(fields: &[&str]) -> String {
-    let mut hasher = Sha256::new();
-    for field in fields {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 const fn classification_name(level: ConfidentialityLevel) -> &'static str {

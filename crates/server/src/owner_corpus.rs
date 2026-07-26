@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::approved_claims::{
     APPROVED_UPLOAD_BYTES, APPROVED_UPLOAD_SHA256, APPROVED_UPLOAD_TITLE,
 };
+use crate::integrity::hash_fields;
 
 pub const MAX_FILE_BYTES: usize = 256 * 1024;
 pub const MAX_FILENAME_BYTES: usize = 128;
@@ -312,19 +313,6 @@ pub(crate) fn scoped_artifact_hash(
 
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-fn hash_fields(fields: &[&str]) -> String {
-    let mut hasher = Sha256::new();
-    for field in fields {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    hasher
-        .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()

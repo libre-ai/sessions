@@ -12,11 +12,11 @@ use presto_rag::corpus::{Chunk, CorpusError, RetrievalScope, Retrieved, Retrieve
 use presto_rag::generate::generate_from_chunk;
 use presto_rag::provider::{AiError, AiProvider};
 use presto_rag::verify::verify_grounding;
-use sha2::{Digest, Sha256};
 
 use crate::approved_claims::{
     APPROVED_UPLOAD_ANSWER, APPROVED_UPLOAD_BYTES, APPROVED_UPLOAD_SHA256, APPROVED_UPLOAD_TITLE,
 };
+use crate::integrity::hash_fields;
 use crate::owner_corpus::{OwnerCorpusStore, scoped_artifact_hash};
 
 const FIXTURE_SOURCE: &str = "La France a pour capitale Paris. Paris est la capitale de la France.";
@@ -295,19 +295,6 @@ fn short_scope_hash(space_id: &str) -> String {
     hash_fields(&["notebook-fixture-space-v1", space_id])
         .chars()
         .take(16)
-        .collect()
-}
-
-fn hash_fields(fields: &[&str]) -> String {
-    let mut hasher = Sha256::new();
-    for field in fields {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 

@@ -364,23 +364,10 @@ impl OwnerAuth {
             return Err(OwnerAuthError::Unauthenticated);
         }
 
-        let capabilities = [
-            ("read", SpaceCapability::Read),
-            ("contribute", SpaceCapability::Contribute),
-            ("add_document", SpaceCapability::AddDocument),
-            ("invite", SpaceCapability::Invite),
-            ("manage_members", SpaceCapability::ManageMembers),
-            ("delete_space", SpaceCapability::DeleteSpace),
-        ]
-        .into_iter()
-        .filter_map(|(name, capability)| {
-            claims
-                .caps
-                .iter()
-                .any(|cap| cap == name)
-                .then_some(capability)
-        })
-        .collect();
+        let capabilities = SpaceCapability::ALL
+            .into_iter()
+            .filter(|capability| claims.caps.iter().any(|cap| cap == capability.name()))
+            .collect();
 
         Ok(AuthenticatedOwner {
             user: session.user,
@@ -412,6 +399,22 @@ impl OwnerAuth {
 
     /// Revalidates an already authenticated request immediately before a
     /// security-sensitive side effect or publication.
+    ///
+    /// The role is re-read from the membership authority and re-authorized
+    /// through [`SpaceRole::can`], the single capability matrix. It previously
+    /// compared `required_capability == "add_document"` and let every other
+    /// name through unauthorized. That was not exploitable — the only other
+    /// name ever passed is `"read"`, which the matrix grants to every role —
+    /// but it failed *open*: adding a route with `"invite"`,
+    /// `"manage_members"` or `"delete_space"` would have skipped the recheck
+    /// silently, letting a downgraded member keep the capability until the
+    /// session expired. Going through the matrix is exhaustive by
+    /// construction, so a new capability is covered the day it exists.
+    ///
+    /// An unparseable capability name denies. The name reaching here comes
+    /// from a literal at the call site, so `None` means the caller asked for a
+    /// capability the contract does not define — refusing is the only safe
+    /// reading of that.
     pub(crate) async fn recheck_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -424,7 +427,10 @@ impl OwnerAuth {
         )
         .await
         .map_err(|_| OwnerAuthError::Unauthenticated)?;
-        if required_capability == "add_document" && role < Role::Contributor {
+        let Some(capability) = SpaceCapability::from_name(required_capability) else {
+            return Err(OwnerAuthError::Unauthenticated);
+        };
+        if !role.as_space_role().can(capability) {
             return Err(OwnerAuthError::Unauthenticated);
         }
         Ok(())
@@ -474,14 +480,7 @@ impl OwnerAuth {
         let subject = "test-owner-subject".to_string();
         let cap_names: Vec<&str> = capabilities
             .iter()
-            .map(|capability| match capability {
-                SpaceCapability::Read => "read",
-                SpaceCapability::Contribute => "contribute",
-                SpaceCapability::AddDocument => "add_document",
-                SpaceCapability::Invite => "invite",
-                SpaceCapability::ManageMembers => "manage_members",
-                SpaceCapability::DeleteSpace => "delete_space",
-            })
+            .map(|capability| capability.name())
             .collect();
         let biscuit = capability_authority
             .mint_space_token(
@@ -1096,6 +1095,119 @@ mod tests {
         assert!(auth.same_origin_cookie_request(&headers));
         headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
         assert!(!auth.same_origin_cookie_request(&headers));
+    }
+
+    /// Builds an `OwnerAuth` whose membership authority holds exactly one
+    /// member at `role`, plus the `AuthenticatedOwner` a handler would already
+    /// be holding when it calls `recheck_owner`.
+    async fn recheck_fixture(role: Role) -> (OwnerAuth, AuthenticatedOwner) {
+        let membership = Arc::new(InMemoryMembershipStore::new());
+        let subject = "subject-under-test".to_string();
+        let space_id = "space-under-test";
+        membership
+            .upsert_member(space_id, &subject, role)
+            .await
+            .expect("in-memory upsert cannot fail");
+        let auth = OwnerAuth {
+            provider: None,
+            membership,
+            capability_authority: Arc::new(Auth::generate()),
+            public_origin: Some("https://app.example".into()),
+            login_admission: TokenBucket::new(LOGIN_RATE_BURST, LOGIN_RATE_PER_SEC),
+            pending_logins: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
+        };
+        let owner = AuthenticatedOwner {
+            user: CurrentUser {
+                actor_id: "actor_test".to_string(),
+                display_name: None,
+                personal_space_id: space_id.to_string(),
+            },
+            space: CurrentSpace {
+                space: SpaceSummary {
+                    id: space_id.to_string(),
+                    name: "Test space".to_string(),
+                    role: SpaceRole::Owner,
+                    capabilities: Vec::new(),
+                    max_confidentiality: ConfidentialityLevel::Internal,
+                },
+            },
+            effective_clearance: ConfidentialityLevel::Public,
+            subject,
+        };
+        (auth, owner)
+    }
+
+    #[tokio::test]
+    async fn recheck_authorizes_every_capability_through_the_matrix() {
+        // The regression this pins: the recheck used to compare
+        // `required_capability == "add_document"` and let every other name
+        // through unauthorized. A Viewer therefore passed the recheck for
+        // "manage_members" and "delete_space" — not reachable from a route
+        // today, but fail-open by construction. Each capability must now be
+        // authorized against the same matrix the rest of the system uses.
+        for role in Role::ALL {
+            let (auth, owner) = recheck_fixture(role).await;
+            for capability in SpaceCapability::ALL {
+                let allowed = auth.recheck_owner(&owner, capability.name()).await.is_ok();
+                assert_eq!(
+                    allowed,
+                    role.as_space_role().can(capability),
+                    "{role:?} / {} disagrees with SpaceRole::can",
+                    capability.name()
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn recheck_preserves_the_behaviour_of_the_two_live_capabilities() {
+        // The only two names any route passes today. Their verdicts must be
+        // exactly what they were before the matrix was wired in, or this
+        // change would deny traffic that used to succeed.
+        for role in Role::ALL {
+            let (auth, owner) = recheck_fixture(role).await;
+            assert!(
+                auth.recheck_owner(&owner, "read").await.is_ok(),
+                "read was never role-checked and must stay open for {role:?}"
+            );
+            assert_eq!(
+                auth.recheck_owner(&owner, "add_document").await.is_ok(),
+                role >= Role::Contributor,
+                "add_document verdict changed for {role:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recheck_denies_an_unknown_capability_name() {
+        // Fail closed: a name the contract does not define must not be read as
+        // "no restriction applies".
+        let (auth, owner) = recheck_fixture(Role::Owner).await;
+        for name in ["", "READ", "read ", "publish", "*"] {
+            assert_eq!(
+                auth.recheck_owner(&owner, name).await,
+                Err(OwnerAuthError::Unauthenticated),
+                "{name:?} must be denied even for an Owner"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recheck_denies_a_revoked_member_whatever_the_capability() {
+        let (auth, owner) = recheck_fixture(Role::Owner).await;
+        auth.membership
+            .revoke_member(&owner.space.space.id, &owner.subject)
+            .await
+            .unwrap();
+        for capability in SpaceCapability::ALL {
+            assert_eq!(
+                auth.recheck_owner(&owner, capability.name()).await,
+                Err(OwnerAuthError::Unauthenticated),
+                "revocation must win over {}",
+                capability.name()
+            );
+        }
     }
 
     #[tokio::test]

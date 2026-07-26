@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
+use presto_core::api::SpaceRole;
 
 use crate::authz::AuthzError;
 
@@ -21,6 +22,34 @@ pub enum Role {
     Inviter,
     Admin,
     Owner,
+}
+
+impl Role {
+    /// The API-facing role this membership role denotes.
+    ///
+    /// The two enums are declared independently — this one is the storage
+    /// authority, `SpaceRole` is the wire contract — so authorization decisions
+    /// must cross the boundary explicitly rather than by assuming the
+    /// discriminants line up. `roles_and_space_roles_stay_aligned` pins that
+    /// they do; if a variant is ever added to one and not the other, that test
+    /// fails instead of an authorization check silently shifting by one rank.
+    pub fn as_space_role(self) -> SpaceRole {
+        match self {
+            Self::Viewer => SpaceRole::Viewer,
+            Self::Contributor => SpaceRole::Contributor,
+            Self::Inviter => SpaceRole::Inviter,
+            Self::Admin => SpaceRole::Admin,
+            Self::Owner => SpaceRole::Owner,
+        }
+    }
+
+    pub const ALL: [Self; 5] = [
+        Self::Viewer,
+        Self::Contributor,
+        Self::Inviter,
+        Self::Admin,
+        Self::Owner,
+    ];
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +216,49 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    #[test]
+    fn roles_and_space_roles_stay_aligned() {
+        // `Role` (storage authority) and `SpaceRole` (wire contract) are
+        // declared in different crates. Authorization crosses that boundary, so
+        // pin both the mapping and the ordering: a variant added to one and not
+        // the other must fail here rather than shift a rank check by one.
+        assert_eq!(Role::ALL.len(), 5);
+        for (i, role) in Role::ALL.into_iter().enumerate() {
+            for (j, other) in Role::ALL.into_iter().enumerate() {
+                assert_eq!(
+                    role < other,
+                    role.as_space_role() < other.as_space_role(),
+                    "ordering diverges between Role and SpaceRole at ({i}, {j})"
+                );
+            }
+        }
+        assert_eq!(Role::Viewer.as_space_role(), SpaceRole::Viewer);
+        assert_eq!(Role::Owner.as_space_role(), SpaceRole::Owner);
+    }
+
+    #[test]
+    fn the_matrix_reproduces_the_previous_add_document_rule() {
+        use presto_core::api::SpaceCapability;
+
+        // The rule `recheck_owner` used to hardcode was
+        // `add_document && role < Contributor -> deny`. Routing through the
+        // matrix must reproduce it exactly, for every role.
+        for role in Role::ALL {
+            assert_eq!(
+                role.as_space_role().can(SpaceCapability::AddDocument),
+                role >= Role::Contributor,
+                "add_document verdict changed for {role:?}"
+            );
+            // "read" was the only other name ever passed, and it was never
+            // role-checked. The matrix must therefore grant it to every role,
+            // or the change would deny a request that used to succeed.
+            assert!(
+                role.as_space_role().can(SpaceCapability::Read),
+                "read must stay unrestricted for {role:?}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn revoked_member_is_denied_a_sensitive_op_despite_a_valid_token() {
