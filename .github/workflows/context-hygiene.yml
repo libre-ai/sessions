@@ -85,3 +85,10 @@ jobs:
 
       - name: Duplicate file contents (hard fail)
         run: ./scripts/check-duplicate-contents.sh
+
+      # Reasons only over tracked files (the two advisory configs and
+      # Cargo.lock), so it needs no Rust toolchain, no advisory database and no
+      # network — which is what lets a supply-chain invariant live in this job
+      # instead of a workflow whose check would not be required.
+      - name: Advisory waiver lifecycle (hard fail)
+        run: ./scripts/check-advisory-waivers.sh

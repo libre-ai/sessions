@@ -40,8 +40,15 @@ yanked = "deny"
 # (not vulnerable) transitive macro dep; remove once an upstream dep drops it.
 # OIDC JWT verification uses the AWS-LC backend, so the vulnerable `rsa` crate
 # and its former RUSTSEC-2023-0071 waiver are absent from the locked graph.
+#
+# Each entry carries a machine-checked trailing marker,
+#     # waiver: crate=<name> expires=<YYYY-MM-DD>
+# verified by `scripts/check-advisory-waivers.sh` in the required tracked-tree
+# hygiene job: undated, expired, or naming a crate absent from `Cargo.lock` is a
+# hard fail. The marker is a comment because cargo-deny 0.19 accepts only `id`
+# and `reason` in a structured ignore entry and rejects an `expiration` key.
 ignore = [
-    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained (transitive; no vuln)
+    "RUSTSEC-2026-0173", # waiver: crate=proc-macro-error2 expires=2027-01-31
 ]
 
 [bans]
