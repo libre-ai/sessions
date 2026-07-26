@@ -22,7 +22,14 @@ Verified against `Cargo.toml`, `scripts/`, and `e2e/package.json`:
 
 ## CI gates
 
-- `Context hygiene` (`.github/workflows/context-hygiene.yml`) — the only workflow in this repository.
+Two workflows, contributing one required check each. The check names below are
+the exact strings branch protection matches on `main`; renaming a job means
+updating that protection in the same move.
+
+| Required check         | Workflow                                | Enforces                                                                                                                                                                                                                                                  |
+| ---------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Tracked tree hygiene` | `.github/workflows/context-hygiene.yml` | Tree-level hard-fail invariants over `git ls-files`: no private identifier, no machine-local path (marker `allow-local-path` exempts a line), no offending symlink target, no undeclared duplicate file contents (`scripts/check-duplicate-contents.sh`). |
+| `REUSE compliance`     | `.github/workflows/licensing.yml`       | Every tracked file carries an unambiguous copyright and licence declaration, per `REUSE.toml`.                                                                                                                                                            |
 
 ## Links
 

@@ -16,11 +16,13 @@ name: Context hygiene
 # already is a required check and already reasons over the same file listing,
 # so a new tree-level invariant belongs in it.
 #
-# Naming debt, deliberate and owner-arbitrable: the job's `name` is the string
-# branch protection matches on, and it now under-describes what the job
-# enforces. Renaming it here would drop the required check until protection is
-# updated to the new name, leaving a window with nothing required. The rename
-# and the protection update have to happen together; this PR does neither.
+# The job's `name` is deliberately the category ("tracked tree hygiene"), not an
+# enumeration of the controls below. That name is the exact string branch
+# protection matches on, so it is configuration living outside this repository:
+# every rename costs a coordinated protection update, and a PR carrying the
+# rename cannot report the old name. Naming the category means adding a control
+# never forces that manoeuvre. Do not narrow it back to a list of steps, and do
+# not change it to track what the steps happen to check today.
 on:
   push:
     branches: [main]
@@ -32,7 +34,7 @@ permissions:
 
 jobs:
   context-hygiene:
-    name: No private identifiers or machine-local paths
+    name: Tracked tree hygiene
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
