@@ -107,6 +107,19 @@ pub(crate) async fn upload(
     }
 }
 
+/// Projects an authentication failure raised on this API route.
+///
+/// Only `Unauthenticated` is reachable here. This function is fed exclusively
+/// by `authenticate_sensitive_headers` and `recheck_owner`, and neither
+/// constructs any other variant — `Capacity` is raised only in `begin_login`
+/// and `finish_login` (owner_auth.rs), which render through
+/// `owner_auth::error_response`, never through this mapper.
+///
+/// The grouped arm below therefore maps four variants that cannot arrive. It
+/// disagrees with `rag_query::owner_error`, which splits `Capacity` out as 429
+/// where this returns 503. Left as-is deliberately: see the note on that
+/// function. `the_unreachable_arms_are_pinned` fails if either side is edited
+/// without the other.
 fn auth_error(error_kind: OwnerAuthError) -> Response {
     match error_kind {
         OwnerAuthError::Unauthenticated => error(StatusCode::UNAUTHORIZED, "unauthenticated"),
@@ -171,6 +184,55 @@ mod tests {
     use crate::{AppState, app};
 
     const ORIGIN: &str = "http://localhost:3000";
+
+    #[test]
+    fn the_unreachable_arms_are_pinned() {
+        // Records the full projection of both API auth mappers, including the
+        // arms no call site can reach. Two facts are pinned:
+        //
+        // 1. `Unauthenticated` — the only reachable variant — is 401 in both.
+        //    Any divergence *here* would be a real, observable inconsistency.
+        // 2. `Capacity` is 429 in rag_query and 503 here. Unobservable today,
+        //    and left unresolved on purpose: 429 and 503 are different promises
+        //    to a client and nothing in the codebase decides between them. This
+        //    assertion exists so that editing one side without the other fails
+        //    a test, turning a silent drift into a deliberate arbitration.
+        let status = |r: Response| r.status();
+        assert_eq!(
+            status(auth_error(OwnerAuthError::Unauthenticated)),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status(crate::rag_query::tests::owner_error_for_test(
+                OwnerAuthError::Unauthenticated
+            )),
+            StatusCode::UNAUTHORIZED,
+            "the one reachable variant must agree across both mappers"
+        );
+        assert_eq!(
+            status(auth_error(OwnerAuthError::Capacity)),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status(crate::rag_query::tests::owner_error_for_test(
+                OwnerAuthError::Capacity
+            )),
+            StatusCode::TOO_MANY_REQUESTS,
+            "known divergence on an unreachable arm — see the note on owner_error"
+        );
+        for kind in [
+            OwnerAuthError::Configuration,
+            OwnerAuthError::Unavailable,
+            OwnerAuthError::InvalidRequest,
+        ] {
+            assert_eq!(status(auth_error(kind)), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                status(crate::rag_query::tests::owner_error_for_test(kind)),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{kind:?} already agrees across both mappers"
+            );
+        }
+    }
 
     fn authenticated_state(space_id: &str, capabilities: &[SpaceCapability]) -> (AppState, String) {
         let authority = Arc::new(Auth::generate());

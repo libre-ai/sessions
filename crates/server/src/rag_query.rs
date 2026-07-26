@@ -135,6 +135,22 @@ pub(crate) async fn query(
     }
 }
 
+/// Projects an authentication failure raised on this API route.
+///
+/// Only `Unauthenticated` is reachable here. This function is fed exclusively
+/// by `authenticate_sensitive_headers` and `recheck_owner`, and neither
+/// constructs any other variant — `Capacity` is raised only in `begin_login`
+/// and `finish_login` (owner_auth.rs), which render through
+/// `owner_auth::error_response`, never through this mapper.
+///
+/// That matters because this arm and its counterpart in
+/// `owner_corpus_http::auth_error` disagree: `Capacity` is 429 here and 503
+/// there. The disagreement is unobservable today for the reason above, and it
+/// is left as-is deliberately — 429 ("retry") and 503 ("service down") are
+/// different promises to a client, and picking one on an unreachable arm would
+/// be an API contract decision taken on no evidence. `the_unreachable_arms_are_pinned`
+/// makes the divergence fail a test the day either side is edited, so it stays
+/// a recorded choice instead of drifting silently.
 fn owner_error(error_kind: OwnerAuthError) -> Response {
     match error_kind {
         OwnerAuthError::Unauthenticated => error(StatusCode::UNAUTHORIZED, "unauthenticated"),
@@ -164,7 +180,7 @@ fn error(status: StatusCode, code: &'static str) -> Response {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::convert::Infallible;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -187,6 +203,12 @@ mod tests {
     use crate::{AppState, app};
 
     const ORIGIN: &str = "http://localhost:3000";
+
+    /// Exposes the private mapper so `owner_corpus_http` can pin both
+    /// projections side by side in one test.
+    pub(crate) fn owner_error_for_test(error_kind: OwnerAuthError) -> Response {
+        owner_error(error_kind)
+    }
 
     fn authenticated_app(
         space_id: &str,
