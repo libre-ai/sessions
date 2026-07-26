@@ -1,0 +1,156 @@
+name: Rust
+
+# Correctness and supply-chain gates for the Rust workspace.
+#
+# The two checks that were required on `main` before this workflow existed
+# ("Tracked tree hygiene", "REUSE compliance") both reason over the *tracked
+# tree*: they prove the repository declares itself honestly. Neither compiles a
+# line of Rust. `ci.yml` and `security.yml`, which did, were retired with the
+# legacy product CI, so between that retirement and this workflow nothing ran
+# `cargo test`, `cargo deny` or `cargo audit` anywhere.
+#
+# The jobs below are split by *determinism*, not by topic, because the split
+# decides which of them can safely be a required check:
+#
+#   - `Rust quality gates` and `Supply-chain policy` are pure functions of the
+#     commit. Same tree in, same verdict out. They can block a merge.
+#   - `Advisory watch` consults the RustSec database over the network, which
+#     changes daily and independently of this repository. A required check that
+#     can turn `main` red without a single commit is a check people learn to
+#     ignore, so this one reports and never blocks.
+#
+# Adding a job here does not make it required: the required set is branch
+# protection configuration, matched by the job's `name` string. See AGENTS.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Advisory watch is only useful if it runs when nobody is pushing: a new
+    # RustSec advisory against a locked dependency is precisely the event that
+    # arrives without a commit.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+# The quality job installs a CLI and builds two WASM bundles before it can say
+# anything, so superseded pushes must not keep burning a runner.
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Rust quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.97.0
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # Fail fast and legibly. Every step below needs the dependency graph to
+      # resolve, and this workspace declares two crates from a git repository
+      # (`libre-ai/context-kit`, see `Cargo.toml`). Without this step the first
+      # symptom would be a cargo authentication error surfacing only after the
+      # multi-minute Dioxus CLI install, which reads as a CI problem rather
+      # than as the dependency problem it is.
+      - name: Resolve the dependency graph
+        run: cargo fetch --locked
+
+      # `crates/server/build.rs` hard-fails when `static/owner-app` or
+      # `static/join-app` is absent, and both are deliberately gitignored
+      # (they are build output, not source). So `presto-server` — which holds
+      # the large majority of the suite — cannot even compile on a clean
+      # checkout until the Dioxus bundles are produced. This is why a test job
+      # here is not a two-line `cargo test` step.
+      - name: Install pinned Dioxus CLI
+        run: |
+          set -euo pipefail
+          if dx --version 2>/dev/null | grep -q '^dioxus 0\.7\.9 '; then
+            echo "dioxus-cli 0.7.9 already present (restored from cache)."
+          else
+            cargo install dioxus-cli --version 0.7.9 --locked
+          fi
+
+      - name: Build the owner and join bundles
+        run: |
+          set -euo pipefail
+          ./scripts/build-owner-app.sh
+          ./scripts/build-join-app.sh
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      # `--all-targets --all-features` is deliberate: without it the integration
+      # tests under `crates/*/tests` and the examples are not built at all.
+      # Tests needing Postgres, Redis or a live AI route carry `#[ignore]` with
+      # the reason in the attribute, so they self-skip here instead of failing.
+      - name: Test
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: WASM portability (client crates)
+        run: cargo check -p presto-core -p rumble-lm-ui -p rumble-lm-app --target wasm32-unknown-unknown
+
+  supply-chain:
+    name: Supply-chain policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # `bans`, `licenses` and `sources` read only `Cargo.lock`, `deny.toml`
+      # and per-version crate metadata. Published crate versions are immutable
+      # on crates.io and the cargo-deny binary is pinned by this action's SHA,
+      # so the verdict is a function of the commit alone. `cargo metadata` does
+      # not execute build scripts, so this job needs no Dioxus bundle and no
+      # compilation.
+      #
+      # `advisories` is excluded on purpose and lives in `advisory-watch`.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v3
+        with:
+          command: check bans licenses sources
+
+  advisory-watch:
+    name: Advisory watch (report only)
+    runs-on: ubuntu-latest
+    # Never blocks: the RustSec database and crates.io yank state both change
+    # without any commit here. Read the log, do not gate on the tick.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@5626e41434f03ab3022d9685405c0645c879f441 # cargo-audit
+
+      # cargo-audit and cargo-deny disagree by design and both are kept.
+      # cargo-deny reasons over the *compiled* graph, so a crate that is pinned
+      # in `Cargo.lock` but gated behind an unactivated feature is filtered out
+      # and never inspected. cargo-audit reasons over `Cargo.lock` itself and so
+      # sees those entries. The lock-level view is the wider one for yanks, and
+      # a yanked pin is worth surfacing even when nothing compiles it.
+      #
+      # It runs first because it parses `Cargo.lock` directly and resolves no
+      # dependency graph, so it is the only supply-chain view here that still
+      # reports while the `context-kit` git source is unreachable.
+      - name: RustSec audit (lock-level view)
+        run: cargo audit
+
+      # `if: always()` so a failure above — today, graph resolution — cannot
+      # silently skip this and leave the job looking merely "failed" when one
+      # of its two views actually ran.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v3
+        if: always()
+        with:
+          command: check advisories

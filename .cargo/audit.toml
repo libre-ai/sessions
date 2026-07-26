@@ -1,13 +1,21 @@
 # cargo-audit config — mirrors deny.toml's advisory policy so the two agree.
 #
-# Neither gate currently runs in CI: the workflows that invoked them
-# (`ci.yml`, `security.yml`) were retired with the legacy product CI when this
-# repository became a reserved shell. Both configs are kept accurate against the
-# locked graph so that reactivation is a workflow change and not an archaeology
-# exercise — but the claim "enforced in CI" is not true today and is no longer
-# made here. `scripts/check-advisory-waivers.sh`, wired into the required
-# tracked-tree hygiene job, is what actually holds these two files to the graph
-# in the meantime.
+# Both gates run again in `.github/workflows/rust.yml`, after a window in which
+# neither did: the workflows that invoked them (`ci.yml`, `security.yml`) were
+# retired with the legacy product CI when this repository became a reserved
+# shell, and nothing replaced them.
+#
+# This file is consumed by the `Advisory watch (report only)` job, which is
+# deliberately non-blocking. Advisory results depend on the RustSec database and
+# on crates.io yank state, both of which change without any commit here, so
+# gating a merge on them would mean a red `main` produced by someone else's
+# publication. The deterministic half of the supply-chain policy — bans,
+# licences and sources, which read only `Cargo.lock` and `deny.toml` — is a
+# separate `Supply-chain policy` job precisely so that it *can* block.
+#
+# `scripts/check-advisory-waivers.sh`, wired into the required tracked-tree
+# hygiene job, remains the check that holds this file and `deny.toml` to the
+# locked graph: it is tracked-tree-only, so it stays green without a network.
 #
 # Every entry below carries a machine-checked trailing marker:
 #     # waiver: crate=<name> expires=<YYYY-MM-DD>
