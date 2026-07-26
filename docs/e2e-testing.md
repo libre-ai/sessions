@@ -23,7 +23,7 @@ These tests exercise the deployed browser surface. Deeper protocol and scoring c
 - browser dependencies installed by Playwright;
 - un bundle owner généré et vérifié avec `./scripts/build-owner-app.sh` (Dioxus CLI 0.7.9).
 
-Postgres and Redis are optional for the current e2e flow: when `DATABASE_URL` / `REDIS_URL` are absent, the server uses in-memory state and fixture content. CI still provides Postgres + Redis because other integration jobs use them.
+Postgres and Redis are optional for the current e2e flow: when `DATABASE_URL` / `REDIS_URL` are absent, the server uses in-memory state and fixture content. No CI job provides Postgres or Redis today: the workflow that started those services was retired with the legacy product CI, and the Rust tests that need them self-skip via `#[ignore]` rather than fail.
 
 For the real owner auth gate, Docker Compose, `curl`, and Python 3 are also required. No Keycloak credential is tracked: `scripts/keycloak-dev.sh` creates random values in the ignored `dev/keycloak/.env` with mode 0600.
 
@@ -82,7 +82,6 @@ The test first proves that an OIDC callback initiated by browser A is rejected w
 ./scripts/keycloak-dev.sh reset  # also deletes generated credentials
 ```
 
-
 Playwright will:
 
 1. vérifier le bundle owner présent, puis démarrer le serveur Rust depuis la racine avec `PORT=3000`;
@@ -111,15 +110,20 @@ npx playwright show-report
 
 ## CI Integration
 
-The `.github/workflows/ci.yml` includes an `e2e` job that:
+**There is no e2e job in CI today, and the Playwright suite blocks nothing.**
+`.github/workflows/ci.yml`, which carried it, was retired with the legacy
+product CI (`598b1d4`). The Rust workspace regained its gates in
+`.github/workflows/rust.yml`; the browser suite did not, and is run locally with
+the commands above.
 
-1. télécharge le paquet owner construit une seule fois depuis le checkout courant et vérifie sa liste de fichiers et tous ses SHA-256;
-2. starts Postgres 16+pgvector + Redis 7;
-3. builds `presto-server`, qui embarque donc exactement ce paquet vérifié;
-4. installs the lockfile-pinned Chromium, Firefox and WebKit engines with `npm ci` and `playwright install`;
-5. runs the complete Chromium suite plus only the dedicated smoke on Firefox, WebKit and mobile Chromium;
-6. uploads the HTML report as a CI artifact.
+The retired job is described here because reinstating it is a known piece of
+work, not a design to be rediscovered. It:
 
-Tests must pass before merge.
+1. téléchargeait le paquet owner construit une seule fois depuis le checkout courant et vérifiait sa liste de fichiers et tous ses SHA-256;
+2. started Postgres 16+pgvector + Redis 7;
+3. built `presto-server`, qui embarquait donc exactement ce paquet vérifié;
+4. installed the lockfile-pinned Chromium, Firefox and WebKit engines with `npm ci` and `playwright install`;
+5. ran the complete Chromium suite plus only the dedicated smoke on Firefox, WebKit and mobile Chromium;
+6. uploaded the HTML report as a CI artifact.
 
-Le job CI mock est la preuve déterministe complète upload→query. The real Keycloak browser test remains a **documented manual pre-merge gate**, not CI-blocking and never mocked: the default GitHub job has no nested container orchestration and no secret credential input by design. When `KEYCLOAK_E2E=1`, Playwright refuses to reuse a server already listening on port 3000 and always starts the binary from the current checkout. The blocking deterministic protocol integration is `owner_auth::tests::full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out`, `owner_auth::tests::callback_is_bound_to_initiating_browser_and_consumed_on_mismatch`, and the other adversarial owner-auth tests. They start an in-process HTTP OIDC provider and exercise discovery, token POST/PKCE, RS256/JWKS validation and the complete Axum router. CI runs them in `cargo test --workspace --all-features`. A maintainer records the separate manual Keycloak result on the pull request before merge; it must not be described as CI-blocking.
+La suite mock est la preuve déterministe complète upload→query, exécutée localement — elle ne tourne dans aucun job CI depuis le retrait de `ci.yml`. The real Keycloak browser test remains a **documented manual pre-merge gate**, not CI-blocking and never mocked: the default GitHub job has no nested container orchestration and no secret credential input by design. When `KEYCLOAK_E2E=1`, Playwright refuses to reuse a server already listening on port 3000 and always starts the binary from the current checkout. The blocking deterministic protocol integration is `owner_auth::tests::full_login_projects_dtos_bootstraps_once_replays_safely_and_logs_out`, `owner_auth::tests::callback_is_bound_to_initiating_browser_and_consumed_on_mismatch`, and the other adversarial owner-auth tests. They start an in-process HTTP OIDC provider and exercise discovery, token POST/PKCE, RS256/JWKS validation and the complete Axum router. CI runs them in `cargo test --workspace --all-targets --all-features`, in the `Rust quality gates` job of `.github/workflows/rust.yml`. A maintainer records the separate manual Keycloak result on the pull request before merge; it must not be described as CI-blocking.
