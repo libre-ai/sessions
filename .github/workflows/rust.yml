@@ -35,6 +35,12 @@ on:
 permissions:
   contents: read
 
+# The quality job installs a CLI and builds two WASM bundles before it can say
+# anything, so superseded pushes must not keep burning a runner.
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -52,6 +58,15 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # Fail fast and legibly. Every step below needs the dependency graph to
+      # resolve, and this workspace declares two crates from a git repository
+      # (`libre-ai/context-kit`, see `Cargo.toml`). Without this step the first
+      # symptom would be a cargo authentication error surfacing only after the
+      # multi-minute Dioxus CLI install, which reads as a CI problem rather
+      # than as the dependency problem it is.
+      - name: Resolve the dependency graph
+        run: cargo fetch --locked
 
       # `crates/server/build.rs` hard-fails when `static/owner-app` or
       # `static/join-app` is absent, and both are deliberately gitignored
@@ -117,10 +132,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v3
-        with:
-          command: check advisories
-
       - uses: taiki-e/install-action@5626e41434f03ab3022d9685405c0645c879f441 # cargo-audit
 
       # cargo-audit and cargo-deny disagree by design and both are kept.
@@ -129,5 +140,17 @@ jobs:
       # and never inspected. cargo-audit reasons over `Cargo.lock` itself and so
       # sees those entries. The lock-level view is the wider one for yanks, and
       # a yanked pin is worth surfacing even when nothing compiles it.
+      #
+      # It runs first because it parses `Cargo.lock` directly and resolves no
+      # dependency graph, so it is the only supply-chain view here that still
+      # reports while the `context-kit` git source is unreachable.
       - name: RustSec audit (lock-level view)
         run: cargo audit
+
+      # `if: always()` so a failure above — today, graph resolution — cannot
+      # silently skip this and leave the job looking merely "failed" when one
+      # of its two views actually ran.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v3
+        if: always()
+        with:
+          command: check advisories

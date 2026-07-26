@@ -5,6 +5,21 @@ Last verified: 427b231
 
 This is the canonical maturity cockpit for the repository.
 
+> **Blocker — the workspace does not build from a clean checkout.** `Cargo.toml`
+> takes `gear-loader` and `gear-memory` from
+> `https://github.com/libre-ai/context-kit` at rev `f0c10bf3`. That repository
+> **no longer exists**: HTTP 404 anonymously and authenticated, absent from the
+> organisation's repository list, absent from crates.io, and not in the
+> `libre-ai/libre-ai` tree. CI cannot resolve the dependency graph, so
+> `cargo test`, `cargo deny` and `cargo build` all fail before doing any work.
+>
+> Every "proven local+CI" row below therefore rests on a **local cargo cache**
+> (`~/.cargo/git/db/context-kit-*`) that no clean machine can repopulate. The
+> local suite genuinely passes — 305 passed, 0 failed, 17 ignored on 2026-07-26
+> — but it passes only on a machine that fetched the source before it
+> disappeared. Read the CI columns accordingly until the source is restored,
+> relocated, or vendored.
+
 ## Legend
 
 - proven local+CI — exercised locally and in CI
@@ -74,10 +89,10 @@ Not yet proven in a real environment:
 
 ## Security / operations
 
-| Capability                | Status               | Implementation                                                                                                                                                                  | Evidence                                                                                                                                                                               | Real-environment proof | Remaining gate                                                                                                  |
-| ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| CI and supply-chain gates | proven local+CI      | fmt/clippy/test and WASM portability; `cargo deny` split into a lock-deterministic policy check and a report-only advisory watch alongside `cargo audit`; tree-level guardrails | `.github/workflows/rust.yml` (`Rust quality gates`, `Supply-chain policy`, `Advisory watch (report only)`); `.github/workflows/context-hygiene.yml`; `.github/workflows/licensing.yml` | none beyond local/CI   | add `Rust quality gates` and `Supply-chain policy` to branch protection — until then they run but block nothing |
-| Deployment topology       | implemented-unhosted | owner/corpus/membership are process-local; owner path is mono-instance                                                                                                          | `docs/deploy/clever-cloud.md`; `security/owner-web-auth.md`                                                                                                                            | no deployment yet      | staged host proof and persistence/multi-instance adapter                                                        |
+| Capability                | Status               | Implementation                                                                                                                                                                  | Evidence                                                                                                                                                                               | Real-environment proof                                                                                                             | Remaining gate                                                                                                                                                                                                                                                                                                                              |
+| ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI and supply-chain gates | partial              | fmt/clippy/test and WASM portability; `cargo deny` split into a lock-deterministic policy check and a report-only advisory watch alongside `cargo audit`; tree-level guardrails | `.github/workflows/rust.yml` (`Rust quality gates`, `Supply-chain policy`, `Advisory watch (report only)`); `.github/workflows/context-hygiene.yml`; `.github/workflows/licensing.yml` | tree-level checks green in CI; every Rust-compiling check red, blocked on the missing `context-kit` source (see the blocker above) | restore the dependency source, then add `Rust quality gates` and `Supply-chain policy` to branch protection. Both are wired and pass locally; neither can be made required while the graph does not resolve. `cargo audit` is the only supply-chain view that reports in CI today, because it parses `Cargo.lock` without resolving a graph |
+| Deployment topology       | implemented-unhosted | owner/corpus/membership are process-local; owner path is mono-instance                                                                                                          | `docs/deploy/clever-cloud.md`; `security/owner-web-auth.md`                                                                                                                            | no deployment yet                                                                                                                  | staged host proof and persistence/multi-instance adapter                                                                                                                                                                                                                                                                                    |
 
 ## Promotion gates
 
