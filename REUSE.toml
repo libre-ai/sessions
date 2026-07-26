@@ -84,3 +84,26 @@ path = [
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Libre AI contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Code vendored from the `libre-ai/context-kit` repository at rev `f0c10bf3`,
+# where it was published under `MIT` with its own copyright line. That repository
+# was deleted upstream; this workspace is now the home of the two crates
+# (docs/adr/0006-vendor-gear-crates.md).
+#
+# Both fields differ from every block above, and neither is a formality. The
+# holder is the individual author named in the upstream `LICENSE`, not the
+# project's collective attribution: relicensing first-party code to the
+# workspace's `EUPL-1.2` is the copyright holder's call, and an agent
+# transcribing it would be asserting a grant nobody made. So the code keeps the
+# licence it was published under, and `LICENSES/MIT.txt` carries that notice
+# verbatim — which is also how MIT's "the above copyright notice ... shall be
+# included in all copies" is satisfied without vendoring two byte-identical
+# `LICENSE` files (the duplicate-contents gate would reject that, correctly).
+#
+# This block is last on purpose: annotations resolve last-match-wins within this
+# file, so it must sit after the `crates/**` reciprocal default it overrides.
+[[annotations]]
+path = ["crates/gear-loader/**", "crates/gear-memory/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Constantin Jais"
+SPDX-License-Identifier = "MIT"
