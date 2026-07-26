@@ -1,0 +1,27 @@
+# Vendored from `libre-ai/context-kit` at rev f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5
+# (crate `loader/`). That repository no longer exists; this workspace is now the
+# home of the code. Provenance and the pruning rationale: docs/adr/0006-vendor-gear-crates.md
+#
+# `license` is NOT inherited from the workspace: this crate stays under the MIT
+# grant it was published with, and the copyright notice belongs to its author.
+# The workspace default is EUPL-1.2 and would misstate the grant on these bytes.
+[package]
+name = "gear-loader"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "Sovereign rich-document ingestion: contract-first extraction and normalization."
+
+[lib]
+name = "gear_loader"
+path = "src/lib.rs"
+
+# `async-trait`, `libc` and `tempfile` were dependencies of the two pruned
+# modules (`quarantine_store`, `worker`) and of nothing else, so they left the
+# graph with them.
+[dependencies]
+regex = "1"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"

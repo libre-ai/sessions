@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/app", "crates/core", "crates/join", "crates/rag", "crates/server", "crates/ui"]
+members = [
+  "crates/app",
+  "crates/core",
+  "crates/gear-loader",
+  "crates/gear-memory",
+  "crates/join",
+  "crates/rag",
+  "crates/server",
+  "crates/ui",
+]
 
 [workspace.package]
 edition = "2024"
@@ -22,8 +31,13 @@ dioxus = { version = "0.7", default-features = false, features = ["macro", "html
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "macros"] }
-gear-loader = { git = "https://github.com/libre-ai/context-kit", rev = "f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5" }
-gear-memory = { git = "https://github.com/libre-ai/context-kit", rev = "f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5", default-features = false }
+# Vendored from `libre-ai/context-kit` (deleted upstream) — see
+# docs/adr/0006-vendor-gear-crates.md. These were `git`+`rev` dependencies until
+# the source repository disappeared, which made the workspace unbuildable from a
+# clean checkout. `gear-memory` no longer needs `default-features = false`: the
+# `sqlite` feature it was suppressing does not exist here any more.
+gear-loader = { path = "crates/gear-loader" }
+gear-memory = { path = "crates/gear-memory" }
 
 [profile.release]
 strip = true

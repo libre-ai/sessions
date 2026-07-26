@@ -1,0 +1,35 @@
+# Vendored from `libre-ai/context-kit` at rev f0c10bf38f7d4ef7241f0a00616fe4fc1dfc9ab5
+# (crate `memory/`). That repository no longer exists; this workspace is now the
+# home of the code. Provenance and the pruning rationale: docs/adr/0006-vendor-gear-crates.md
+#
+# `license` is NOT inherited from the workspace: this crate stays under the MIT
+# grant it was published with, and the copyright notice belongs to its author.
+# The workspace default is EUPL-1.2 and would misstate the grant on these bytes.
+[package]
+name = "gear-memory"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "Local-first source, memory and provenance substrate: SourceRef custody over a file store."
+
+[lib]
+name = "gear_memory"
+path = "src/lib.rs"
+
+# The upstream `sqlite` feature (and its `rusqlite` dependency, which bundles and
+# compiles a C SQLite) was dropped rather than merely left off. As a workspace
+# member this crate is built by `cargo clippy/test --all-features`, which would
+# switch that feature back on and pull the C toolchain into a gate for code no
+# consumer calls. `presto-server` used `default-features = false` precisely to
+# avoid it; dropping the feature makes that intent structural.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+# `parsing` is added on top of the workspace features: RFC 3339 timestamps are
+# parsed back when a SourceRef is read from the store.
+time = { workspace = true, features = ["parsing"] }
+
+[dev-dependencies]
+tempfile = "3"
