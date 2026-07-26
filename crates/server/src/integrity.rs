@@ -165,9 +165,11 @@ mod tests {
         let digest = hash_fields(&["space-1", "section-1", "text"]);
         assert_eq!(digest, hash_fields(&["space-1", "section-1", "text"]));
         assert_eq!(digest.len(), 64, "SHA-256 is 32 bytes -> 64 hex chars");
-        assert!(digest
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
+        assert!(
+            digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
+        );
         assert_ne!(
             digest,
             hash_fields(&["space-2", "section-1", "text"]),

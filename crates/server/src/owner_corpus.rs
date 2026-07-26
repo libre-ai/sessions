@@ -404,9 +404,11 @@ mod tests {
             )
             .unwrap();
         assert!(store.approved_artifact("space-a").unwrap().is_none());
-        assert!(store.state.lock().unwrap().spaces["space-a"][0]
-            .content
-            .is_none());
+        assert!(
+            store.state.lock().unwrap().spaces["space-a"][0]
+                .content
+                .is_none()
+        );
     }
 
     #[test]

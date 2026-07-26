@@ -56,6 +56,40 @@ pub enum SpaceCapability {
     DeleteSpace,
 }
 
+impl SpaceCapability {
+    /// The wire name of this capability, as it appears in a capability token
+    /// and in the `required_capability` argument threaded through the server's
+    /// authentication seam.
+    pub fn name(self) -> &'static str {
+        use SpaceCapability::{AddDocument, Contribute, DeleteSpace, Invite, ManageMembers, Read};
+        match self {
+            Read => "read",
+            Contribute => "contribute",
+            AddDocument => "add_document",
+            Invite => "invite",
+            ManageMembers => "manage_members",
+            DeleteSpace => "delete_space",
+        }
+    }
+
+    /// Parses a wire name. `None` for an unknown name, so a caller that
+    /// authorizes on the result denies rather than skips — a capability this
+    /// enum does not know about must never be treated as unrestricted.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|cap| cap.name() == name)
+    }
+
+    /// Every capability, in ascending order of the role required to hold it.
+    pub const ALL: [Self; 6] = [
+        Self::Read,
+        Self::Contribute,
+        Self::AddDocument,
+        Self::Invite,
+        Self::ManageMembers,
+        Self::DeleteSpace,
+    ];
+}
+
 impl SpaceRole {
     pub fn can(self, capability: SpaceCapability) -> bool {
         use SpaceCapability::{AddDocument, Contribute, DeleteSpace, Invite, ManageMembers, Read};
@@ -69,18 +103,10 @@ impl SpaceRole {
     }
 
     pub fn capabilities(self) -> Vec<SpaceCapability> {
-        use SpaceCapability::{AddDocument, Contribute, DeleteSpace, Invite, ManageMembers, Read};
-        [
-            Read,
-            Contribute,
-            AddDocument,
-            Invite,
-            ManageMembers,
-            DeleteSpace,
-        ]
-        .into_iter()
-        .filter(|cap| self.can(*cap))
-        .collect()
+        SpaceCapability::ALL
+            .into_iter()
+            .filter(|cap| self.can(*cap))
+            .collect()
     }
 }
 
@@ -246,6 +272,57 @@ mod tests {
         assert!(SpaceRole::Admin.can(SpaceCapability::ManageMembers));
         assert!(!SpaceRole::Admin.can(SpaceCapability::DeleteSpace));
         assert!(SpaceRole::Owner.can(SpaceCapability::DeleteSpace));
+    }
+
+    #[test]
+    fn capability_names_round_trip_and_are_distinct() {
+        for capability in SpaceCapability::ALL {
+            assert_eq!(
+                SpaceCapability::from_name(capability.name()),
+                Some(capability)
+            );
+        }
+        let mut names: Vec<&str> = SpaceCapability::ALL.iter().map(|c| c.name()).collect();
+        names.sort_unstable();
+        let distinct = names.len();
+        names.dedup();
+        assert_eq!(names.len(), distinct, "two capabilities share a wire name");
+    }
+
+    #[test]
+    fn an_unknown_capability_name_does_not_parse() {
+        // A caller that authorizes on `from_name` must deny, never skip.
+        for name in ["", "READ", "read ", "admin", "delete", "add_documents", "*"] {
+            assert_eq!(
+                SpaceCapability::from_name(name),
+                None,
+                "{name:?} must not parse as a capability"
+            );
+        }
+    }
+
+    #[test]
+    fn every_capability_is_listed_in_all() {
+        // `ALL` drives name parsing and the capability projection, so an added
+        // variant left out of it would be silently unreachable. Matching
+        // exhaustively makes the compiler enforce membership.
+        for capability in SpaceCapability::ALL {
+            let listed = match capability {
+                SpaceCapability::Read
+                | SpaceCapability::Contribute
+                | SpaceCapability::AddDocument
+                | SpaceCapability::Invite
+                | SpaceCapability::ManageMembers
+                | SpaceCapability::DeleteSpace => true,
+            };
+            assert!(listed);
+        }
+        assert_eq!(SpaceCapability::ALL.len(), 6);
+        assert_eq!(SpaceRole::Owner.capabilities().len(), 6);
+        assert_eq!(
+            SpaceRole::Viewer.capabilities(),
+            vec![SpaceCapability::Read]
+        );
     }
 
     #[test]

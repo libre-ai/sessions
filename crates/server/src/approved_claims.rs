@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use crate::integrity::hash_fields;
 use crate::notebook_rag::{
-    fixture_document_id, fixture_source_section_id, fixture_source_text, fixture_title,
-    scoped_source_hash, NotebookCandidate,
+    NotebookCandidate, fixture_document_id, fixture_source_section_id, fixture_source_text,
+    fixture_title, scoped_source_hash,
 };
-use crate::owner_corpus::{scoped_artifact_hash, OwnerCorpusStore};
+use crate::owner_corpus::{OwnerCorpusStore, scoped_artifact_hash};
 
 /// The sole owner-upload artifact independently pre-approved by exact bytes and
 /// SHA-256. Any byte variation remains Pending in the corpus store.
@@ -358,16 +358,20 @@ mod tests {
             FIXTURE_CLAIMS[0].computed_template_hash(),
             TEMPLATE_CONTROL_HASH
         );
-        assert!(internal
-            .issue_permit("space-a", ConfidentialityLevel::Public, FIXTURE_ALIASES[2])
-            .is_none());
-        assert!(internal
-            .issue_permit(
-                "space-a",
-                ConfidentialityLevel::Internal,
-                FIXTURE_ALIASES[2]
-            )
-            .is_some());
+        assert!(
+            internal
+                .issue_permit("space-a", ConfidentialityLevel::Public, FIXTURE_ALIASES[2])
+                .is_none()
+        );
+        assert!(
+            internal
+                .issue_permit(
+                    "space-a",
+                    ConfidentialityLevel::Internal,
+                    FIXTURE_ALIASES[2]
+                )
+                .is_some()
+        );
     }
 
     #[test]
