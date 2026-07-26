@@ -7,14 +7,14 @@
 //! project the public `Grounded` variant.
 
 use presto_core::api::{ConfidentialityLevel, RagQueryResponse, SourceCitation};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+use crate::integrity::hash_fields;
 use crate::notebook_rag::{
-    NotebookCandidate, fixture_document_id, fixture_source_section_id, fixture_source_text,
-    fixture_title, scoped_source_hash,
+    fixture_document_id, fixture_source_section_id, fixture_source_text, fixture_title,
+    scoped_source_hash, NotebookCandidate,
 };
-use crate::owner_corpus::{OwnerCorpusStore, scoped_artifact_hash};
+use crate::owner_corpus::{scoped_artifact_hash, OwnerCorpusStore};
 
 /// The sole owner-upload artifact independently pre-approved by exact bytes and
 /// SHA-256. Any byte variation remains Pending in the corpus store.
@@ -321,19 +321,6 @@ pub(crate) fn normalize_query(query: &str) -> String {
         .join(" ")
 }
 
-fn hash_fields(fields: &[&str]) -> String {
-    let mut hasher = Sha256::new();
-    for field in fields {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 const fn classification_name(level: ConfidentialityLevel) -> &'static str {
     match level {
         ConfidentialityLevel::Public => "public",
@@ -371,20 +358,16 @@ mod tests {
             FIXTURE_CLAIMS[0].computed_template_hash(),
             TEMPLATE_CONTROL_HASH
         );
-        assert!(
-            internal
-                .issue_permit("space-a", ConfidentialityLevel::Public, FIXTURE_ALIASES[2])
-                .is_none()
-        );
-        assert!(
-            internal
-                .issue_permit(
-                    "space-a",
-                    ConfidentialityLevel::Internal,
-                    FIXTURE_ALIASES[2]
-                )
-                .is_some()
-        );
+        assert!(internal
+            .issue_permit("space-a", ConfidentialityLevel::Public, FIXTURE_ALIASES[2])
+            .is_none());
+        assert!(internal
+            .issue_permit(
+                "space-a",
+                ConfidentialityLevel::Internal,
+                FIXTURE_ALIASES[2]
+            )
+            .is_some());
     }
 
     #[test]
