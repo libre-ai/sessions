@@ -28,7 +28,7 @@ parking_lot = "0.12.5"
 biscuit-auth = "6.0.0"
 # Permissively licensed AWS-LC backend for local OIDC signature verification
 # (SP-A inc-1): no AWS service or data flow, and no vulnerable RustCrypto RSA path.
-jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 # Keyed content-integrity tags (HMAC-SHA256) for the SP-B grounding moat.
 hmac = "0.13"
 sha2 = "0.11"
