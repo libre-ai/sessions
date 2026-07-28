@@ -33,7 +33,7 @@ jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_r
 hmac = "0.13"
 sha2 = "0.11"
 subtle = "2.6"
-base64 = "0.22"
+base64 = "0.23"
 getrandom = "0.4"
 reqwest.workspace = true
 async-trait.workspace = true
