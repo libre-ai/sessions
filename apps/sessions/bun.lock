@@ -1,0 +1,53 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@libre-ai/sessions",
+      "dependencies": {
+        "@libre-ai/contracts-authority": "github:libre-ai/contracts#ee144f03cf7d3deeda02a9fcd5e10377c2e99cb4",
+        "@libre-ai/data": "github:libre-ai/data#338b55e7a57b7b594a2517f63b0eefa4f89479a0",
+        "@libre-ai/rgpd-kit": "github:libre-ai/rgpd-kit#64b9da3f5dd2ca7a35377e0206ff72a40b8240c5",
+        "@libre-ai/web-platform": "github:libre-ai/web-platform#a0754b69b4205e31a0c560f9729bd8d2d8556357",
+        "react": "19.2.7",
+        "react-dom": "19.2.7",
+      },
+      "devDependencies": {
+        "@libre-ai/testing": "github:libre-ai/testing#f7476c16dc93aa6ab68c51947f85ba7d4957e27e",
+      },
+    },
+  },
+  "packages": {
+    "@electric-sql/pglite": ["@electric-sql/pglite@0.5.4", "", {}, "sha512-yYZUyyXrHU7tPlCjwZQJ6hIG9DscdCCn7Uk0mYKwC1FeHX286AbcmFveMiRBEak8e9iPupjsoVImN3yJZVed2g=="],
+
+    "@libre-ai/contracts-authority": ["@libre-ai/contracts-authority@github:libre-ai/contracts#ee144f0", { "dependencies": { "ajv": "8.20.0", "ajv-formats": "3.0.1", "entities": "8.0.0" } }, "libre-ai-contracts-ee144f0", "sha512-onNB1IIbj5o7pSO02xnks1bofJdZktmZSk/ZqsqfQ+k9ZbhXuPwxnE/JyyS3VaJGrOYdOie5V7aNm0UrOJshEQ=="],
+
+    "@libre-ai/data": ["@libre-ai/data@github:libre-ai/data#338b55e", { "peerDependencies": { "@libre-ai/contracts-authority": "github:libre-ai/contracts#ee144f03cf7d3deeda02a9fcd5e10377c2e99cb4" } }, "libre-ai-data-338b55e", "sha512-qqezmAOjFu2l9SoMV0XX0b7zF3beyRadbPjT+2XxVjvH4X3NyZgWuOc6zWH1JEo5EDHHKgQC9eYCEXQhy7jKZg=="],
+
+    "@libre-ai/rgpd-kit": ["@libre-ai/rgpd-kit@github:libre-ai/rgpd-kit#64b9da3", {}, "libre-ai-rgpd-kit-64b9da3", "sha512-OGYMcwexB0W29ow3coc7cyEWOlj/hBRNFHHD39skByXZg7Mc1qsJ4sxNcbKTqKBjiNz7MqYVSO71x4G3fbE4DA=="],
+
+    "@libre-ai/testing": ["@libre-ai/testing@github:libre-ai/testing#f7476c1", { "dependencies": { "@electric-sql/pglite": "0.5.4" } }, "libre-ai-testing-f7476c1", "sha512-GiVIi0GeFVo8aQvokbvrNrE4rWSnkj563E4yY8IHilPCVLi8OD+my6sKz09fmo7/eIILMWAR78xeQUy7cnPteg=="],
+
+    "@libre-ai/web-platform": ["@libre-ai/web-platform@github:libre-ai/web-platform#a0754b6", { "peerDependencies": { "react": "19.2.7", "react-dom": "19.2.7" } }, "libre-ai-web-platform-a0754b6", "sha512-dBaaMGNVqAwJwudkK5Y0Uq9M+nDkpKF9xHR2PWxX8571NRT8R1EgRGGVIq3t6PNzl7BcwIgoE8Ke7iJpjslOMA=="],
+
+    "ajv": ["ajv@8.20.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
+
+    "ajv-formats": ["ajv-formats@3.0.1", "", { "dependencies": { "ajv": "^8.0.0" } }, "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ=="],
+
+    "entities": ["entities@8.0.0", "", {}, "sha512-zwfzJecQ/Uej6tusMqwAqU/6KL2XaB2VZ2Jg54Je6ahNBGNH6Ek6g3jjNCF0fG9EWQKGZNddNjU5F1ZQn/sBnA=="],
+
+    "fast-deep-equal": ["fast-deep-equal@3.1.3", "", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
+
+    "fast-uri": ["fast-uri@3.1.4", "", {}, "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw=="],
+
+    "json-schema-traverse": ["json-schema-traverse@1.0.0", "", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
+
+    "react": ["react@19.2.7", "", {}, "sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ=="],
+
+    "react-dom": ["react-dom@19.2.7", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.7" } }, "sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ=="],
+
+    "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
+
+    "scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
+  }
+}

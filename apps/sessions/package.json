@@ -13,13 +13,14 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@libre-ai/data": "workspace:*",
-    "@libre-ai/rgpd-kit": "workspace:*",
-    "@libre-ai/web-platform": "workspace:*",
-    "react": "catalog:",
-    "react-dom": "catalog:"
+    "@libre-ai/data": "github:libre-ai/data#338b55e7a57b7b594a2517f63b0eefa4f89479a0",
+    "@libre-ai/rgpd-kit": "github:libre-ai/rgpd-kit#64b9da3f5dd2ca7a35377e0206ff72a40b8240c5",
+    "@libre-ai/web-platform": "github:libre-ai/web-platform#a0754b69b4205e31a0c560f9729bd8d2d8556357",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "@libre-ai/contracts-authority": "github:libre-ai/contracts#ee144f03cf7d3deeda02a9fcd5e10377c2e99cb4"
   },
   "devDependencies": {
-    "@libre-ai/testing": "workspace:*"
+    "@libre-ai/testing": "github:libre-ai/testing#f7476c16dc93aa6ab68c51947f85ba7d4957e27e"
   }
 }

@@ -12,9 +12,8 @@ const DATA_MIGRATIONS = join(
   import.meta.dir,
   "..",
   "..",
-  "..",
-  "..",
-  "packages",
+  "node_modules",
+  "@libre-ai",
   "data",
   "migrations",
 );

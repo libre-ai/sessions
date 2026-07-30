@@ -79,7 +79,19 @@ describe("authorizeRead — audience policy", () => {
 
 describe("conformance to the locked sessions-v1.datalog", () => {
   const policy = readFileSync(
-    join(import.meta.dir, "..", "..", "..", "..", "contracts", "authz", "sessions-v1.datalog"),
+    join(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "..",
+    "node_modules",
+    "@libre-ai",
+    "contracts-authority",
+    "contracts",
+    "authz",
+    "sessions-v1.datalog",
+  ),
     "utf8",
   );
 
