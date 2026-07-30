@@ -1,0 +1,100 @@
+# Fiche d'état du projet — autorité de l'état depuis ADR-0020 (design §6.2).
+# La section statut du README est générée depuis cette fiche (sentinelles),
+# jamais éditée à la main ; l'avancement est calculé, jamais déclaré.
+schema_version: libre-ai.project.v1
+project: sessions
+repository: libre-ai/sessions
+kind: product
+layer: couche-1
+statement:
+  for: "les formatrices, formateurs et facilitateurs"
+  who_faces: "des supports de session sans sources et des délégations floues"
+  enables: "préparer et animer des sessions ancrées dans des sources citées, avec des rôles et une délégation bornée"
+  producing:
+    - "des sessions tracées et citables, aux droits RGPD outillés de bout en bout"
+  without_depending_on:
+    - "aucune conservation au-delà des durées déclarées, aucune délégation implicite"
+summary: "Sessions d'apprentissage et de facilitation ancrées dans des sources citées, rôles et délégation bornée (couche 1)."
+current_situation: >-
+  L'application Sessions (flux d'événements, autorisation conforme au datalog verrouillé, droits RGPD sur la machinerie de rétention de la brique data) est greffée et verte ; le parcours de facilitation complet reste à assembler.
+scope:
+  - "sessions sourcées avec citations"
+  - "rôles et délégation bornée"
+  - "droits RGPD outillés (accès, effacement, restriction)"
+non_goals:
+  - "contenu sans source"
+  - "conservation illimitée"
+dependencies:
+  - on: libre-ai/data
+    why: "rétention, effacement et transactions multi-tenant"
+    pinned: "git-dep épinglée par SHA dans le manifest de ce repo"
+  - on: libre-ai/rgpd-kit
+    why: "machinerie des droits RGPD"
+    pinned: "git-dep épinglée par SHA dans le manifest de ce repo"
+  - on: libre-ai/web-platform
+    why: "socle applicatif Bun.serve + React"
+    pinned: "git-dep épinglée par SHA dans le manifest de ce repo"
+  - on: libre-ai/testing
+    why: "Postgres éphémère des tests d'intégration"
+    pinned: "git-dep épinglée par SHA dans le manifest de ce repo"
+  - on: libre-ai/contracts
+    why: "autorité des contrats (datalog sessions-v1)"
+    pinned: "git-dep épinglée par SHA dans le manifest de ce repo"
+  - on: libre-ai/governance
+    why: "gabarit de flotte et gates de qualité"
+    pinned: "git-dep épinglée par SHA dans le manifest de ce repo"
+maturity: usable
+confidence: medium
+exposure: spec-published
+freshness:
+  last_verified_on: "2026-07-30"
+hypothesis: >
+  Append-only contributions with a facilitator approval gate deliver
+  Miro/Mural-class facilitation utility while preserving a complete,
+  unbroken audit trail of who contributed what.
+evidence_required:
+  - parity audit against the 62-feature Miro+Mural map (docs/parity/audits/PARITY-sessions-miro.md)
+  - the 6 T1 amendments shipped (voting, soft timers, client-side undo, templates, outline/zoom, accessibility)
+  - audit-trail completeness demonstrated on a real facilitated session
+promotion_criteria:
+  - to: usable-verifiable
+    when: covered traits >= 40 of 62 (baseline 16) and the 6 ABSENT-T1 closed
+  - to: proven
+    when: covered traits >= 50 of 62 across two consecutive parity audits
+kill_predicates:
+  - id: parity-stagnation
+    predicate: covered_traits < 30 of 62
+    window: two consecutive parity audits after wave-4 activation
+    source: docs/parity/audits/PARITY-sessions-miro.md
+  - id: audit-trail-breach
+    predicate: a private facilitator mode (rejected arbitration) enters the covered set
+    source: docs/parity/audits/PARITY-sessions-miro.md
+benchmark:
+  product: Miro
+  url: https://miro.com
+scope_stability: stable
+phases:
+  - id: activation
+    title: Activation multi-repo (γ 3.5)
+    exit_criteria:
+      - id: graft-green
+        text: Contenu greffé depuis le hub avec son histoire, workspace autonome vert en CI réelle, description dégelée.
+        weight: 2
+        status: accepted
+        evidence:
+          date: "2026-07-30"
+          reference: "gate-acceptance-log 2026-07-30 (ligne 3.5), PR hub #286"
+  - id: facilitation
+    title: Parcours de facilitation complet
+    exit_criteria:
+      - id: facilitation-done
+        text: Préparation, animation et clôture d'une session avec citations et délégation bornée, parcours e2e verts.
+        weight: 4
+        status: pending
+  - id: exposure
+    title: Exposition vérifiable
+    exit_criteria:
+      - id: promotion-met
+        text: Les conditions de promotion vers usable-verifiable déclarées par cette fiche (promotion_criteria) sont réunies et vérifiées.
+        weight: 4
+        status: pending
