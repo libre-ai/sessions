@@ -47,24 +47,29 @@ maturity: usable
 confidence: medium
 exposure: spec-published
 freshness:
-  last_verified_on: "2026-07-30"
+  last_verified_on: "2026-08-18"
 hypothesis: >
   Append-only contributions with a facilitator approval gate deliver
   Miro/Mural-class facilitation utility while preserving a complete,
   unbroken audit trail of who contributed what.
 evidence_required:
   - parity audit against the 62-feature Miro+Mural map (docs/parity/audits/PARITY-sessions-miro.md)
-  - the 6 T1 amendments shipped (voting, soft timers, client-side undo, templates, outline/zoom, accessibility)
+  - the 6 T1 amendments plus the minimal canvas surface shipped and measured on a real facilitated session (voting, soft timers, client-side undo, templates, outline/zoom, accessibility, canvas)
   - audit-trail completeness demonstrated on a real facilitated session
+  - the realtime-collaboration phase's OpenMLS integration and its security audit, gated by the owner-signed crypto resolution in libre-ai/governance's docs/parity/design/DESIGN-collab-v2-signable.md (K4 sign-off 2026-07-23, section 11)
 promotion_criteria:
   - to: usable-verifiable
-    when: covered traits >= 40 of 62 (baseline 16) and the 6 ABSENT-T1 closed
+    when: >-
+      the facilitation phase's dogfooding milestone (the 6 T1 amendments plus
+      the minimal canvas surface, evidenced on shipped code) is accepted, and
+      covered traits >= 40 of 62 (baseline 16) — the trait count is never
+      evaluated before that milestone
   - to: proven
-    when: covered traits >= 50 of 62 across two consecutive parity audits
+    when: covered traits >= 50 of 62 across two consecutive parity audits, after usable-verifiable is reached
 kill_predicates:
   - id: parity-stagnation
     predicate: covered_traits < 30 of 62
-    window: two consecutive parity audits after wave-4 activation
+    window: two consecutive parity audits after the facilitation phase's dogfooding milestone is accepted
     source: docs/parity/audits/PARITY-sessions-miro.md
   - id: audit-trail-breach
     predicate: a private facilitator mode (rejected arbitration) enters the covered set
@@ -86,15 +91,101 @@ phases:
           reference: "gate-acceptance-log 2026-07-30 (ligne 3.5), PR hub #286"
   - id: facilitation
     title: Parcours de facilitation complet
+    note: >-
+      Éclatée en livrables mécaniques depuis les 6 amendements T1 de l'audit
+      docs/parity/audits/PARITY-sessions-miro.md (2026-07-22, libre-ai/governance)
+      plus une surface de canvas minimale (décision owner 2026-08-18) : sans
+      canvas, le benchmark Miro déclaré par cette fiche n'a aucune surface
+      livrée à mesurer.
     exit_criteria:
-      - id: facilitation-done
-        text: Préparation, animation et clôture d'une session avec citations et délégation bornée, parcours e2e verts.
-        weight: 4
+      - id: t1-voting
+        text: >-
+          `AddPoll` command and `PollSubmitted` event ship in the domain
+          protocol (docs/apps/sessions.md); votes are tallied in the
+          append-only event stream and the facilitator explicitly approves
+          the outcome via `ApproveOutcome` — no automatic decision from a
+          tally.
+        weight: 1
+        status: pending
+      - id: t1-timers
+        text: >-
+          Soft session timers ship as ephemeral presence/WebSocket beacon
+          state (no new event type, no mutation lock); the facilitator can
+          extend or end a timer, and an unattended timer never blocks or
+          forces a state transition.
+        weight: 1
+        status: pending
+      - id: t1-undo
+        text: >-
+          Client-side undo/redo ships for the local editing buffer only; a
+          submitted contribution stays append-only and immutable post-submit
+          — no undo path can rewrite the authoritative stream.
+        weight: 1
+        status: pending
+      - id: t1-templates
+        text: >-
+          `CreateSession` accepts a `template` parameter (`retrospective` |
+          `brainstorm`, org-curated, pre-filled configuration) and the
+          created session reflects the chosen structure from
+          `SessionCreated`.
+        weight: 1
+        status: pending
+      - id: t1-navigation
+        text: >-
+          `ListFrames` query ships and returns frame/section data for
+          outline navigation; zoom/pan stay client-owned visual state with
+          no authority over the event stream.
+        weight: 1
+        status: pending
+      - id: t1-accessibility
+        text: >-
+          Keyboard-only and screen-reader E2E coverage passes for the full
+          facilitation journey (prepare/animate/close); new events carry
+          ARIA labels and polite announcements without stealing focus.
+        weight: 1
+        status: pending
+      - id: facilitation-canvas
+        text: >-
+          A minimal canvas surface ships — frames/sections, stickies or an
+          equivalent bounded content model, pan/zoom — as the concrete
+          substrate the T1 navigation, templates and voting amendments
+          render on.
+        weight: 2
+        status: pending
+  - id: realtime-collaboration
+    title: Collaboration temps réel (premier consommateur collab-core/collab-relay)
+    note: >-
+      Gatée sur le design owner-signé
+      docs/parity/design/DESIGN-collab-v2-signable.md (libre-ai/governance,
+      K4 crypto sign-off 2026-07-23, section 11) : aucun increment
+      d'implémentation avant l'intégration OpenMLS et son audit.
+    exit_criteria:
+      - id: collab-core-first-consumer
+        text: >-
+          Sessions becomes the first real consumer of
+          `collab-core`/`collab-relay` (Loro CRDT sealed with an MLS RFC
+          9420 per-epoch group key, self-hosted ciphertext-only relay); the
+          increment is gated on the OpenMLS integration landing and its
+          security audit, per the owner-signed crypto resolution in
+          libre-ai/governance's docs/parity/design/DESIGN-collab-v2-signable.md
+          §11 (K4 sign-off 2026-07-23). `collab_enabled` real-time
+          co-editing, the `CollabCheckpointRecorded` event and the
+          `sessions.collab_unavailable` degraded-mode path
+          (docs/apps/sessions.md) are exercised by unit and E2E tests on
+          shipped code.
+        weight: 6
         status: pending
   - id: exposure
     title: Exposition vérifiable
     exit_criteria:
       - id: promotion-met
-        text: Les conditions de promotion vers usable-verifiable déclarées par cette fiche (promotion_criteria) sont réunies et vérifiées.
+        text: >-
+          Les conditions de promotion déclarées par cette fiche
+          (promotion_criteria) sont réunies et vérifiées — jamais avant le
+          jalon dogfooding (phase facilitation acceptée) : la cible v1
+          mesure les 6 amendements T1 et la surface canvas sur du code
+          livré ; les seuils de comptage de traits (40 puis 50 sur 62)
+          restent des horizons suivants, évalués seulement une fois ce
+          jalon franchi.
         weight: 4
         status: pending
