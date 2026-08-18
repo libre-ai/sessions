@@ -31,5 +31,4 @@ Doctrine lives upstream: https://raw.githubusercontent.com/libre-ai/governance/m
 - Check real state before editing: `git status --short` and `bun run check`.
 - English for code, comments and this file; French stays the human
   conversation language elsewhere.
-- Never commit a machine-local absolute path (e.g. `/Users/...`); use
-  repo-relative paths or `~`.
+- Never commit a machine-local absolute path; use repo-relative paths or `~`.
