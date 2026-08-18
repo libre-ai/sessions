@@ -13,8 +13,8 @@ Pour les formatrices, formateurs et facilitateurs, qui rencontre des supports de
 - Maturité : usable
 - Exposition : spec-published
 - Confiance : medium
-- Preuves vérifiées le : 2026-07-30
-- Avancement : 20 % du périmètre actuellement déclaré
+- Preuves vérifiées le : 2026-08-18
+- Avancement : 10 % du périmètre actuellement déclaré
 
 <!-- libre-ai:project-status:end -->
 
